@@ -1,6 +1,6 @@
 (test
  (name test)
- (libraries os_seq eio eio.mock eio_fs fmt alcotest)
+ (libraries os_seq provenance eio eio.mock eio_fs fmt alcotest)
  (deps
   (source_tree traces)
   scripts/generate.sh

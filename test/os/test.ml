@@ -106,75 +106,30 @@ let check (os : os) i (name, ops) () =
       | None | Some _ -> ())
     ops
 
-(* The trace's provenance, its leading "# key: value" lines. *)
-let provenance_keys =
-  [
-    "script";
-    "script revision";
-    "script digest";
-    "recorded";
-    "macos os";
-    "macos filesystem";
-    "macos mount";
-    "macos user";
-    "macos eio_posix";
-    "linux os";
-    "linux image";
-    "linux filesystem";
-    "linux mount";
-    "linux user";
-    "linux eio_posix";
-  ]
-
-let provenance () =
-  In_channel.with_open_text "traces/fs.csv" In_channel.input_lines
-  |> List.filter_map (fun line ->
-      match String.index_opt line ':' with
-      | Some i when String.starts_with ~prefix:"# " line ->
-          Some
-            ( String.sub line 2 (i - 2),
-              String.trim (String.sub line (i + 1) (String.length line - i - 1))
-            )
-      | _ -> None)
-
-let read file = In_channel.with_open_bin file In_channel.input_all
-
-(* The code that decides every outcome; generate.sh decides only where it
-   runs, which the other lines record. *)
-let script_digest () =
-  Digest.to_hex
-    (Digest.string (read "scripts/record.ml" ^ read "seq/os_seq.ml"))
-
-let pinned_image () =
-  let prefix = "image=\"" in
-  match
-    List.find_opt
-      (String.starts_with ~prefix)
-      (String.split_on_char '\n' (read "scripts/generate.sh"))
-  with
-  | Some l ->
-      let n = String.length prefix in
-      String.sub l n (String.length l - n - 1)
-  | None -> Alcotest.fail "scripts/generate.sh pins no image"
-
+(* record.ml and os_seq.ml decide every outcome; generate.sh decides only
+   where they run, which the other lines record. *)
 let test_provenance () =
-  let meta = provenance () in
-  (* opam answers "--" for a package the switch lacks. *)
-  let measured v =
-    v <> "" && v <> "--" && not (String.starts_with ~prefix:"unknown" v)
-  in
-  let get k =
-    match List.assoc_opt k meta with
-    | Some v when measured v -> v
-    | _ -> Alcotest.failf "traces/fs.csv has no measured %S: regenerate it" k
-  in
-  List.iter (fun k -> ignore (get k)) provenance_keys;
-  Alcotest.(check string)
-    "recorded by scripts/record.ml and seq/os_seq.ml as they are"
-    (script_digest ()) (get "script digest");
-  Alcotest.(check string)
-    "recorded in the image scripts/generate.sh pins" (pinned_image ())
-    (get "linux image")
+  Provenance.check ~trace:"traces/fs.csv"
+    ~keys:
+      [
+        "script";
+        "script revision";
+        "script digest";
+        "recorded";
+        "macos os";
+        "macos filesystem";
+        "macos mount";
+        "macos user";
+        "macos eio_posix";
+        "linux os";
+        "linux image";
+        "linux filesystem";
+        "linux mount";
+        "linux user";
+        "linux eio_posix";
+      ]
+    ~code:[ "scripts/record.ml"; "seq/os_seq.ml" ]
+    ~script:"scripts/generate.sh"
 
 let suite (os : os) =
   ( os_name os,
