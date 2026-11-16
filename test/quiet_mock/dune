@@ -1,0 +1,18 @@
+; Quiet_mock is private to eio_fs: its source is compiled in here.
+
+(copy_files#
+ (files ../../lib/quiet_mock.{ml,mli}))
+
+(test
+ (name test)
+ (libraries
+  hermetic
+  eio_fs
+  eio
+  eio.utils
+  eio.unix
+  psq
+  mtime
+  domain-local-await
+  unix
+  alcotest))
