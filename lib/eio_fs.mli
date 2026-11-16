@@ -2,11 +2,11 @@
 
     [Eio_fs] provides a filesystem ({!Fs}) that lives entirely in the process, a
     way to embed a directory tree into an OCaml module at compile time
-    ({!Crunch}), and a fault-injecting wrapper ({!Chaos}). Each call to {!Fs.v},
-    {!Fs.load}, {!Crunch.load} or {!run} makes a filesystem of its own: two of
-    them share no file.
+    ({!Crunch}), and chaos tests ({!Chaos}). Each call to {!Fs.v}, {!Fs.load},
+    {!Crunch.load} or {!run} makes a filesystem of its own: two of them share no
+    file.
 
-    {!Nofollow}, {!Path} and {!Chaos} work on any {!Eio} backend, the in-memory
+    {!Nofollow}, {!Tree} and {!Chaos} work on any {!Eio} backend, the in-memory
     one included.
 
     Where Linux and macOS differ, a filesystem follows one, chosen by [?os]:
@@ -181,10 +181,10 @@ val run :
     place of the host's, that answers as [os] (defaults to [`Linux]) does, whose
     times are read from [clock], as {!Fs.v} reads them. Unlike [Eio_main.run],
     it starts no event loop and installs no effect handler: call it inside one,
-    such as [Eio_main.run] or [Eio_mock.Backend.run]. [env] holds the root and
-    the current directory of the new filesystem. The current directory is the
-    directory at the absolute path [cwd] (defaults to ["/"]), made with its
-    missing ancestors, mode [0o755], before [fn] runs. Like a process's, it
+    such as [Eio_main.run] or [Eio_mock.Backend.run]. [fn]'s argument holds the
+    root and the current directory of the new filesystem. The current directory
+    is the directory at the absolute path [cwd] (defaults to ["/"]), made with
+    its missing ancestors, mode [0o755], before [fn] runs. Like a process's, it
     follows that directory through a rename. Both run as [user] (defaults to
     {!root}). Root owns the tree and gives [user] the current directory.
 
@@ -256,12 +256,10 @@ module Crunch : sig
 end
 
 module Chaos = Chaos
-(** An adversarial filesystem wrapper for fault-injection testing. *)
+(** Filesystem faults and power cuts, for tests of Eio programs. *)
 
-(** Helpers over standard {!Eio.Path} values. The lexical arithmetic on the
-    strings those values carry (what a path's components are, and which
-    spellings name one object) is {!Eio_fs_path}, in [eio-fs.path]. *)
-module Path : sig
+(** Walks over the tree under an {!Eio.Path.t}, on any backend. *)
+module Tree : sig
   type usage = {
     allocated_bytes : int64;
         (** The bytes every entry's allocated 512-byte blocks hold, whatever its
@@ -280,10 +278,8 @@ module Path : sig
       without following symbolic links. The walk is breadth-first, at most
       [max_fibers] workers per level (defaults to [32]).
 
-      Filesystem errors are propagated, so a caller deciding whether to remove a
-      tree fails closed.
-
-      @raise Invalid_argument if [max_fibers] is not positive. *)
+      @raise Invalid_argument if [max_fibers] is not positive.
+      @raise Eio.Io as a stat or a listing of the walk raises. *)
 
   val iter :
     ?max_fibers:int ->

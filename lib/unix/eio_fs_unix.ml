@@ -527,7 +527,7 @@ module Link = struct
 
   let with_parent ?(create = `Never) (input : _ Eio.Path.t) fn =
     let dir, path = (input :> Eio.Fs.dir_ty Eio.Path.t) in
-    let original = Eio_fs.Path.name input in
+    let original = Eio_fs.Tree.name input in
     let components =
       match components path with
       | Ok components -> components

@@ -43,7 +43,7 @@ let refused_parent root path fn =
   | exception (Eio.Io _ as e) ->
       Alcotest.(check bool)
         "names the path" true
-        (contains (Eio_fs.Path.name (root / path)) (Printexc.to_string e))
+        (contains (Eio_fs.Tree.name (root / path)) (Printexc.to_string e))
 
 let mkdir = `If_missing 0o755
 
@@ -54,7 +54,7 @@ let refusal ?kind root path result =
       List.iter
         (fun expected ->
           Alcotest.(check bool) expected true (contains expected message))
-        ([ Eio_fs.Path.name (root / path); "repair" ] @ Option.to_list kind)
+        ([ Eio_fs.Tree.name (root / path); "repair" ] @ Option.to_list kind)
 
 let test_missing_parents () =
   with_dir @@ fun root ->
@@ -212,7 +212,7 @@ let read_refused ~kind root path =
       Alcotest.(check bool) kind true (contains kind message);
       Alcotest.(check bool)
         "names the path" true
-        (contains (Eio_fs.Path.name (root / path)) message)
+        (contains (Eio_fs.Tree.name (root / path)) message)
 
 let test_read_regular () =
   with_dir @@ fun root ->
@@ -236,7 +236,7 @@ let test_read_symlink_leaf () =
   | Error message ->
       Alcotest.(check bool)
         "names the path" true
-        (contains (Eio_fs.Path.name (root / "library")) message)
+        (contains (Eio_fs.Tree.name (root / "library")) message)
 
 let test_read_directory_leaf () =
   with_dir @@ fun root ->

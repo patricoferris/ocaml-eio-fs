@@ -30,7 +30,7 @@ assert (Eio.Path.load Eio.Path.(fs / "hello") = "world")
 ```
 
 `Eio_fs.Fs.load dir` returns a new in-memory filesystem holding a copy of the
-tree at `dir`. `Eio_fs.Path.pp_tree` prints a tree on any backend.
+tree at `dir`. `Eio_fs.Tree.pp_tree` prints a tree on any backend.
 
 ## Chaos tests
 

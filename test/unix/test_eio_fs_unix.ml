@@ -865,7 +865,7 @@ let test_path_usage_counts_allocated_tree_without_following_links () =
           Float.max mtime stat.mtime ))
       (0L, 0.) paths
   in
-  let usage = Eio_fs.Path.usage dir in
+  let usage = Eio_fs.Tree.usage dir in
   Alcotest.(check int64)
     "allocated blocks, with the symlink counted once" expected_bytes
     usage.allocated_bytes;
@@ -886,7 +886,7 @@ let test_path_usage_counts_the_files_a_copy_would_move () =
   Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "a") "a";
   Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "sub/b") "payload";
   Eio.Path.symlink ~link_to:"sub" (dir / "link");
-  let usage = Eio_fs.Path.usage dir in
+  let usage = Eio_fs.Tree.usage dir in
   Alcotest.(check int) "regular files, and nothing else" 2 usage.files;
   Alcotest.(check int64)
     "the length of those files, summed" 8L usage.apparent_bytes;
@@ -903,7 +903,7 @@ let test_path_iter_visits_each_entry_once () =
   Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "sub/b") "payload";
   Eio.Path.symlink ~link_to:"sub" (dir / "link");
   let seen = ref [] in
-  Eio_fs.Path.iter ~max_fibers:2
+  Eio_fs.Tree.iter ~max_fibers:2
     (fun path (stat : Eio.File.Stat.t) ->
       let name = if path == dir then "." else Filename.basename (snd path) in
       let kind =
@@ -930,7 +930,7 @@ let test_path_iter_visits_each_entry_once () =
    directory that holds nothing as content. *)
 let test_path_usage_of_an_empty_tree_moves_nothing () =
   with_real_dir @@ fun dir ->
-  let usage = Eio_fs.Path.usage dir in
+  let usage = Eio_fs.Tree.usage dir in
   Alcotest.(check int) "no files" 0 usage.files;
   Alcotest.(check int64) "no bytes to carry" 0L usage.apparent_bytes
 
@@ -941,7 +941,7 @@ let test_path_usage_of_an_empty_tree_moves_nothing () =
 let test_name_is_the_host_spelling () =
   with_real_dir @@ fun dir ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "image.raw") "payload";
-  let name = Eio_fs.Path.name (dir / "image.raw") in
+  let name = Eio_fs.Tree.name (dir / "image.raw") in
   Alcotest.(check string)
     "a path on the host filesystem is named by its native spelling"
     (Eio.Path.native_exn (dir / "image.raw"))
@@ -961,7 +961,7 @@ let test_name_of_a_member_of_an_opened_subtree () =
   Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "shadow") "root:x:0:0:::\n";
   Eio.Switch.run @@ fun sw ->
   let member = Eio.Path.open_subtree ~sw dir / "shadow" in
-  let name = Eio_fs.Path.name member in
+  let name = Eio_fs.Tree.name member in
   Alcotest.(check string)
     "a member of an opened subtree is named by its full native path"
     (Eio.Path.native_exn (dir / "shadow"))
@@ -971,7 +971,7 @@ let test_name_of_a_member_of_an_opened_subtree () =
     (Sys.file_exists name);
   Alcotest.(check string)
     "one file answers to one name, whichever capability reached it"
-    (Eio_fs.Path.name (dir / "shadow"))
+    (Eio_fs.Tree.name (dir / "shadow"))
     name
 
 (* renameat2(2) and renameatx_np(2) exist only on Linux and Darwin; elsewhere
@@ -1218,7 +1218,7 @@ let test_revoke_writes () =
   Eio.Path.save ~create:(`Exclusive 0o644) (tree / "sub" / "file") "data";
   Eio.Path.save ~create:(`Exclusive 0o444) (tree / "kept") "data";
   Eio.Path.symlink ~link_to:"sub/file" (tree / "link");
-  Eio_fs.Path.revoke_writes tree;
+  Eio_fs.Tree.revoke_writes tree;
   let perm p = (Eio.Path.stat ~follow:false p).perm in
   Alcotest.(check (list int))
     "no entry keeps a write bit"
@@ -1227,7 +1227,7 @@ let test_revoke_writes () =
   Alcotest.(check string)
     "the link is left" "sub/file"
     (Eio.Path.read_link (tree / "link"));
-  Eio_fs.Path.grant_owner tree
+  Eio_fs.Tree.grant_owner tree
 
 let suite =
   ( "eio_fs_unix",

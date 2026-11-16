@@ -135,7 +135,7 @@ val remove_tree : ?grant:bool -> ?last:string -> _ Eio.Path.t -> removed
 
     With [~grant:true] (defaults to [false]) each directory is granted its
     owner's read, write and search before it is read, as
-    {!Eio_fs.Path.grant_owner} grants it. The entry [last] of [path], if any, is
+    {!Eio_fs.Tree.grant_owner} grants it. The entry [last] of [path], if any, is
     removed only once every other entry is gone, so a removal that fails leaves
     it. An entry another process removes meanwhile counts nothing, and a [path]
     that does not exist removes nothing. A refusal stops no other directory's

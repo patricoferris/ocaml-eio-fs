@@ -40,7 +40,7 @@ module Nofollow = struct
       ~read:(Eio.Flow.single_read file)
 end
 
-module Path = struct
+module Tree = struct
   type usage = {
     allocated_bytes : int64;
     apparent_bytes : int64;
@@ -118,7 +118,7 @@ module Path = struct
     loop [ path ]
 
   let iter ?(max_fibers = 32) f path =
-    walk ~fn:"Eio_fs.Path.iter" ~max_fibers f path
+    walk ~fn:"Eio_fs.Tree.iter" ~max_fibers f path
 
   let rec grant_owner p =
     match Eio.Path.stat ~follow:false p with
@@ -140,7 +140,7 @@ module Path = struct
 
   let usage ?(max_fibers = 32) path =
     let total = ref empty in
-    walk ~fn:"Eio_fs.Path.usage" ~max_fibers
+    walk ~fn:"Eio_fs.Tree.usage" ~max_fibers
       (fun _ stat -> total := add !total (own stat))
       path;
     !total

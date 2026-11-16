@@ -78,7 +78,7 @@ let test_counts () =
   Alcotest.(check int64)
     "usage"
     (Int64.mul 512L (List.fold_left Int64.add 0L in_d))
-    (Eio_fs.Path.usage (root / "d")).allocated_bytes
+    (Eio_fs.Tree.usage (root / "d")).allocated_bytes
 
 let test_trace () =
   Provenance.check ~trace
