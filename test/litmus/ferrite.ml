@@ -1,5 +1,5 @@
 (* Ported from Ferrite's Rosette models (https://github.com/uwplse/ferrite,
-   commit on master, MIT licence; see LICENSE.md):
+   commit 9237361, MIT licence; see LICENSE.md and README.md):
 
    - [lang.rkt]: the inode operations and the dependency predicates;
    - [seqfs.rkt], [advfs.rkt], [ext4.rkt]: [crack], [execute], [ondisk] and
