@@ -3624,6 +3624,30 @@ module Crash = struct
         in
         resolve_at ?follow_last ?spell ~root d.dplace.proot path
 
+  (* The file an open for writing of [rel] meets: the one the model tracks
+     under [key], with the open's mode, or a new one holding [prev], placed
+     where a file found there sat. *)
+  let opened_file d ~key ~known ~rel ~perm ~prev found =
+    match Hashtbl.find_opt d.dctl.files key with
+    | Some fs ->
+        if not (Int.equal fs.perm perm) then
+          d.dctl.effects <- d.dctl.effects + 1;
+        fs.perm <- perm;
+        fs
+    | None ->
+        d.dctl.effects <- d.dctl.effects + 1;
+        let fs =
+          fresh_file
+            ?held:(if known then None else d.dctl.held rel)
+            ~owner:d.dplace.proot ~rel ~perm ~durable:prev ()
+        in
+        track d.dctl fs;
+        Option.iter
+          (fun (st : Eio.File.Stat.t) ->
+            locate_preexisting d.dctl (fs, d.dplace.proot, rel) ~ino:st.ino)
+          found;
+        fs
+
   module Cdir_impl = struct
     type t = cdir
 
@@ -3668,27 +3692,7 @@ module Crash = struct
       in
       let base = B.open_out bv ~sw ~follow ~append ~create path in
       let perm = create_perm create in
-      let fs =
-        match Hashtbl.find_opt d.dctl.files key with
-        | Some fs ->
-            if not (Int.equal fs.perm perm) then
-              d.dctl.effects <- d.dctl.effects + 1;
-            fs.perm <- perm;
-            fs
-        | None ->
-            d.dctl.effects <- d.dctl.effects + 1;
-            let fs =
-              fresh_file
-                ?held:(if known then None else d.dctl.held rel)
-                ~owner:d.dplace.proot ~rel ~perm ~durable:prev ()
-            in
-            track d.dctl fs;
-            Option.iter
-              (fun (st : Eio.File.Stat.t) ->
-                locate_preexisting d.dctl (fs, d.dplace.proot, rel) ~ino:st.ino)
-              found;
-            fs
-      in
+      let fs = opened_file d ~key ~known ~rel ~perm ~prev found in
       let mode =
         match found with Some st -> st.perm | None -> create_perm create
       in
