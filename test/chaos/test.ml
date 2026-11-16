@@ -10,4 +10,5 @@ let () =
       Test_env.suite;
       Test_macos.suite;
       Test_moved.suite;
+      Test_sampling.suite;
     ]
