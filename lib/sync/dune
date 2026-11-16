@@ -1,6 +1,3 @@
-; eio-fs.sync: portable durability and bounded atomic publication. It remains
-; unikernel-safe; the POSIX fallback lives in eio-fs.unix.
-
 (library
  (name eio_fs_sync)
  (public_name eio-fs.sync)

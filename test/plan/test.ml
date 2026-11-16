@@ -1,3 +1,5 @@
+(* The sampler of the sampled tier, on a copy of its private module. *)
+
 (* The sampled tier draws one candidate in each of [n] runs of neighbours. *)
 let draw seed n len =
   Chaos_plan.sample (Random.State.make [| seed |]) n (List.init len Fun.id)

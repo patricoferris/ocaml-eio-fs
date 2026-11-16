@@ -7,7 +7,7 @@
 
     Both take [?os], as {!Eio_fs.Fs.v} does: [`Linux], the default, or [`Macos].
     It picks the filesystem's answers and, for {!Crash}, what a cut keeps of
-    each kind of sync. It comes from the argument, never the host.
+    each kind of sync.
 
     {2 Exploration}
 
@@ -196,38 +196,42 @@ val check :
 
 (** Power cuts.
 
-    A write stays unsynced until {!Eio.File.sync} runs on its file. Directory
-    changes enter a journal in program order, and a sync of a directory commits
-    its entries. At a power cut, unsynced writes may be lost, as ext4 loses them
-    with [data=writeback]. A file's length is one it had since its last sync, or
-    the end of a 4096-byte page a write put bytes in, below a length it had
-    since. A length a write or a truncation set survives only with every
-    directory change made before it, and a truncation with every directory
-    change made after it that survives: ext4 journals a write's length as it
-    writes the pages back, after the earlier changes, and a truncation in the
-    syscall's own handle, before the later ones. A 4096-byte page the disk held
-    nothing of holds bytes only with every directory change made before the
-    first write into it, as ext4 allocates the page with the length. A 512-byte
-    sector is written whole: it holds what the disk held, zeros where it held
-    nothing, or what it held after one of the writes to it, so the writes to it
-    land together. A truncation zeroes the rest of the 4096-byte page it cuts,
-    sector by sector; at a length from before it, a page it frees holds no later
-    write, as ext4 reuses no block before the truncation commits. A 4096-byte
-    page the disk held nothing of, past the durable length or in a hole, that a
-    write put bytes in is written whole, as ext4 allocates it: each of its
-    sectors within the length may instead hold stale data. That is what a freed
-    block held: a page a synced truncation freed, or one of a file the workload
-    removed, its unsynced bytes included, as writeback may have written them
-    before the removal. ext4 may give a freed block to any offset of any file:
-    the check draws the page at the same place first, then the others, up to
-    eight distinct ones; and else the byte ['7']. Only a freed block holds stale
-    data: a file the cut lost and the workload never removed frees none, and a
-    removed file still open at the cut none either, as ext4 frees its blocks at
-    its last close. Of the uncommitted directory changes, a prefix survives. A
-    failed sync loses the file's unsynced writes, as Linux does, though some of
-    their sectors may already be on disk; the page cache may keep them or evict
-    them. Before the cut, a read after a failed sync sees them as kept, or, in a
-    scenario of its own, as the disk holds them.
+    - A write stays unsynced until {!Eio.File.sync} runs on its file. Directory
+      changes enter a journal in program order, and a sync of a directory
+      commits its entries. At a power cut, unsynced writes may be lost, as ext4
+      loses them with [data=writeback].
+    - A file's length is one it had since its last sync, or the end of a
+      4096-byte page a write put bytes in, below a length it had since. A length
+      a write or a truncation set survives only with every directory change made
+      before it, and a truncation with every directory change made after it that
+      survives: ext4 journals a write's length as it writes the pages back,
+      after the earlier changes, and a truncation in the syscall's own handle,
+      before the later ones.
+    - A 4096-byte page the disk held nothing of holds bytes only with every
+      directory change made before the first write into it, as ext4 allocates
+      the page with the length.
+    - A 512-byte sector is written whole: it holds what the disk held, zeros
+      where it held nothing, or what it held after one of the writes to it, so
+      the writes to it land together.
+    - A truncation zeroes the rest of the 4096-byte page it cuts, sector by
+      sector; at a length from before it, a page it frees holds no later write,
+      as ext4 reuses no block before the truncation commits.
+    - A 4096-byte page the disk held nothing of, past the durable length or in a
+      hole, that a write put bytes in is written whole, as ext4 allocates it:
+      each of its sectors within the length may instead hold stale data. That is
+      what a freed block held: a page a synced truncation freed, or one of a
+      file the workload removed, its unsynced bytes included, as writeback may
+      have written them before the removal. ext4 may give a freed block to any
+      offset of any file: the check draws the page at the same place first, then
+      the others, up to eight distinct ones; and else the byte ['7']. Only a
+      freed block holds stale data: a file the cut lost and the workload never
+      removed frees none, and a removed file still open at the cut none either,
+      as ext4 frees its blocks at its last close.
+    - Of the uncommitted directory changes, a prefix survives.
+    - A failed sync loses the file's unsynced writes, as Linux does, though some
+      of their sectors may already be on disk; the page cache may keep them or
+      evict them. Before the cut, a read after a failed sync sees them as kept,
+      or, in a scenario of its own, as the disk holds them.
 
     {b macOS.} Under [~os:`Macos] the disk is APFS's, on a drive with a cache.
     {!Eio.File.sync} and the portable barriers of {!Eio_fs_sync} are fsync(2),
@@ -314,13 +318,13 @@ module Crash : sig
     | Data  (** A write; its offset and length locate it. *)
     | Truncate  (** A truncation; its offset is the new length. *)
     | Create  (** The open that created the file. *)
-    | Mkdir
-    | Unlink
-    | Rmdir
-    | Symlink of { target : string }
-    | Rename of { dest : string }
-    | Chmod of { perm : int }
-    | Chown of { uid : int64; gid : int64 }
+    | Mkdir  (** A new directory. *)
+    | Unlink  (** A removed file or symbolic link. *)
+    | Rmdir  (** A removed directory. *)
+    | Symlink of { target : string }  (** A new symbolic link to [target]. *)
+    | Rename of { dest : string }  (** An entry moved to [dest]. *)
+    | Chmod of { perm : int }  (** A new mode. *)
+    | Chown of { uid : int64; gid : int64 }  (** A new owner. *)
 
   type unsynced = {
     path : string;
@@ -328,9 +332,13 @@ module Crash : sig
             truncation, the file's path then, with its links resolved; for a
             directory change, the path as given. A later rename does not change
             it. *)
-    kind : op_kind;
+    kind : op_kind;  (** What the change is. *)
     offset : int;
+        (** The byte offset of a {!Data} write, the new length of a {!Truncate},
+            and [0] for a directory operation. *)
     length : int;
+        (** The byte length of a {!Data} write, and [0] for a {!Truncate} or a
+            directory operation. *)
     seq : int;  (** The change's place in program order. *)
   }
   (** The type for changes no sync has made durable. *)

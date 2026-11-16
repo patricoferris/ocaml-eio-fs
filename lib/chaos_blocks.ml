@@ -10,8 +10,7 @@ let copy_cs c =
    survivors onto the durable baseline. *)
 type change = Write of { offset : int; data : Cstruct.t } | Resize of int
 
-(* A file's bytes while changes replay over them: the first [len] bytes of
-   [buf], which grows by doubling, so a run of appends costs linear time. *)
+(* A run of appends costs linear time: [buf] grows by doubling. *)
 type image = { mutable buf : Cstruct.t; mutable len : int }
 
 (* The bytes replays have copied into images, which a test bounds. *)
@@ -63,9 +62,8 @@ let draw_of_fun f = { int = f; bool = (fun () -> f 2 = 1) }
    it writes whole. *)
 let page = 4096
 let sector = 512
+let range a b = List.init (max 0 (b - a + 1)) (fun i -> a + i)
 
-(* [held] with [change] made durable: a write adds what it covers, a
-   shrink frees the pages past it. *)
 let hold held = function
   | Write { offset; data } ->
       Extents.add offset (offset + Cstruct.length data) held
@@ -88,6 +86,11 @@ let dirtied ?(zero_page = false) ~bs prev = function
       else (m, block)
   | Resize m -> (prev, m)
 
+(* A file's length after [change], from [prev]. *)
+let size_after prev = function
+  | Write { offset; data } -> max prev (offset + Cstruct.length data)
+  | Resize m -> m
+
 (* [durable] with [changes] replayed over it, where a block they dirty in
    the page cache, [cache] with the same changes, is written whole from
    it: the page cache still holds the bytes a failed sync lost. And the page
@@ -106,10 +109,6 @@ let replay_cached ~bs durable ~cache changes =
              changes)
       in
       let len = Cstruct.length plain and live_len = Cstruct.length live in
-      let size prev = function
-        | Write { offset; data } -> max prev (offset + Cstruct.length data)
-        | Resize m -> m
-      in
       let _ =
         List.fold_left
           (fun (pprev, cprev) (change, cached) ->
@@ -121,7 +120,8 @@ let replay_cached ~bs durable ~cache changes =
                 let n = max 0 (min bs (min len live_len - off)) in
                 if n > 0 then Cstruct.blit live off plain off n
               done;
-            (size pprev change, if cached then cprev else size cprev change))
+            ( size_after pprev change,
+              if cached then cprev else size_after cprev change ))
           (Cstruct.length durable, Cstruct.length cache)
           changes
       in
@@ -138,34 +138,18 @@ let dirty_blocks ?(writes = false) ~bs len changes =
           | Resize _ when writes -> acc
           | Write _ | Resize _ ->
               let lo, hi = dirtied ~bs prev change in
-              if hi > lo then
-                List.init
-                  (((hi - 1) / bs) - (lo / bs) + 1)
-                  (fun i -> (lo / bs) + i)
-                @ acc
-              else acc
+              if hi > lo then range (lo / bs) ((hi - 1) / bs) @ acc else acc
         in
-        ( (match change with
-          | Write { offset; data } -> max prev (offset + Cstruct.length data)
-          | Resize m -> m),
-          acc ))
+        (size_after prev change, acc))
       (len, []) changes
   in
   List.sort_uniq Int.compare acc
 
-(* The byte that stands for stale data where the disk held nothing the
-   model knows of: a digit, so that a reader that trusts what it finds
-   parses a number. *)
+(* A digit, so that a reader that trusts what it finds parses a number. *)
 let stale = '7'
 
-(* The most distinct freed pages a stale sector draws from: past it, the
-   draws would rarely try the sector's other versions. *)
+(* Past it, the draws would rarely try the sector's other versions. *)
 let max_stale = 8
-
-(* A file's length after [change], from [prev]. *)
-let size_after prev = function
-  | Write { offset; data } -> max prev (offset + Cstruct.length data)
-  | Resize m -> m
 
 (* What a scan of the pending changes finds: the length after each change,
    each dirty block's versions, newest first, the boundaries writes grew the
@@ -212,9 +196,7 @@ let fresh_pages ~held ~size = function
           let a = pg * page in
           let b = min (a + page) size in
           if b > a && not (held_at held a b) then Some (a, b) else None)
-        (List.init
-           (max 0 (last - (offset / page) + 1))
-           (fun i -> (offset / page) + i))
+        (range (offset / page) last)
   | Resize _ -> []
 
 (* Change [k] is a version of each block the byte ranges [ranges] cover. *)
@@ -292,7 +274,7 @@ let length_choices ~changes ~sizes ~len_from ~len_upto =
     shrinks.(k) <-
       (shrinks.(k + 1) + match changes.(k) with Resize _ -> 1 | _ -> 0)
   done;
-  List.init (max 0 (min n len_upto - len_from + 1)) (fun i -> len_from + i)
+  range len_from (min n len_upto)
   |> List.fold_left
        (fun acc j ->
          if
@@ -442,24 +424,11 @@ let describe_runs ~bs ~size ~old ~over ~chosen stale_blocks describe =
     done;
   describe size !runs
 
-(* Writeback in blocks of [bs] bytes. For each block a pending change
-   dirtied, a crash keeps the block as it was durable or as it stood after
-   any one of those changes, drawn from [rng]; the length is one a change
-   left, or a block boundary a write grew the file across, as writeback
-   lands a long append block by block. A write past the end of the file
-   dirties the hole it leaves as well. A truncation changes the length in
-   one step and dirties only the block it cuts, so a block kept from before
-   it keeps its old bytes. A block is never torn, and a later change never
-   lands in a block without the earlier ones.
-
-   With [bytes], blocks are sectors and the length is one a change left
-   or the end of a page a write put bytes in, as ext4 extends its on-disk
-   size as writeback lands. A page the disk did not hold that a write put
-   bytes in is written whole, and each of its sectors may also hold stale
-   data: ext4 may commit the page's allocation before its bytes land.
-   [old p] is what the freed blocks the page may have been given held, at
-   page [p] of its file, and where each was; one of them is drawn. [describe]
-   is told the length and, run by run, what each block holds. *)
+(* See the interface. A write past the end dirties the hole it leaves as
+   well. A truncation changes the length in one step and dirties only the
+   block it cuts, so a block kept from before it keeps its old bytes. A
+   sector may hold stale data because ext4 may commit a page's allocation
+   before its bytes land. *)
 let writeback ?(over = []) ?(len_upto = max_int) ?(len_from = 0)
     ?(bytes = false) ?(held = Extents.empty) ?(old = fun _ -> [])
     ?(describe = fun _ _ -> ()) ~rng ~bs ~cache durable changes =
@@ -495,10 +464,6 @@ let writeback ?(over = []) ?(len_upto = max_int) ?(len_from = 0)
   describe_runs ~bs ~size ~old ~over ~chosen stale_blocks describe;
   image
 
-(* A disk writes a 512-byte sector whole, so the overwrites of one sector
-   land together: where a surviving write overwrote bytes the file held, its
-   sector holds what the page cache held after it, the earlier overwrites
-   of that sector included. *)
 (* The sectors each write of [entries] overwrites, by its place, in a file of
    [len] bytes. *)
 let overwritten len entries =
@@ -509,10 +474,7 @@ let overwritten len entries =
         | Write { offset; data } ->
             let hi = min size (offset + Cstruct.length data) in
             let ss =
-              if hi > offset then
-                List.init
-                  (((hi - 1) / sector) - (offset / sector) + 1)
-                  (fun i -> (offset / sector) + i)
+              if hi > offset then range (offset / sector) ((hi - 1) / sector)
               else []
             in
             (max size (offset + Cstruct.length data), ss :: acc)
@@ -521,6 +483,10 @@ let overwritten len entries =
   in
   Array.of_list (List.rev over)
 
+(* A disk writes a 512-byte sector whole, so the overwrites of one sector
+   land together: where a surviving write overwrote bytes the file held, its
+   sector holds what the page cache held after it, the earlier overwrites
+   of that sector included. *)
 let sectors_together ~cache durable mine image =
   let base = Option.value ~default:durable cache in
   let entries = Array.of_list mine in

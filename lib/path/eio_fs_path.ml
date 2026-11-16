@@ -7,7 +7,8 @@
   ---------------------------------------------------------------------------*)
 
 (* Adapted from src/path.ml in eio_mem (https://git.sirref.org/eio_mem); see
-   LICENSE.md. *)
+   LICENSE.md. A library of its own, so a caller that needs only what a path
+   resolves to links no filesystem, no terminal and no C stubs. *)
 
 open! Hermetic
 
@@ -121,11 +122,8 @@ let canonical path =
     in
     if parts = [] then Error Root
     else if List.exists traversal parts then Error Not_canonical
-      (* The components must rejoin to exactly the string given. This is the
-         whole of the "already canonical" rule and it is one comparison: a
-         trailing separator, a doubled separator and a leading double separator
-         all lose to it, and each of them is a spelling that names the same
-         object as the canonical one while splitting differently. *)
+      (* The components must rejoin to the string given: a trailing, doubled
+         or leading double separator does not. *)
     else if not (String.equal ("/" ^ String.concat "/" parts) path) then
       Error Not_canonical
     else Ok parts

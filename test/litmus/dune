@@ -1,5 +1,3 @@
-; Ferrite's crash-consistency litmus tests as an oracle for Chaos.Crash.
-
 (test
  (name test)
  (libraries eio eio.mock eio_fs eio-fs.sync alcotest fmt cstruct optint))

@@ -69,12 +69,10 @@ let wrap f base =
 
 (* {1 Runs} *)
 
-(* A program that retries a failed operation at once, with no time passing,
-   spins for ever under a lasting condition. Once one operation on one path
-   has failed 10000 times more than three times the first run made it, or
-   one kind of operation in one directory, as a retry under a fresh name
-   makes, 10000 times more than 1000 times, while the clock stands still, it
-   raises [Failure] instead, and after twice as many it waits for ever. *)
+(* The failures of one operation, while the clock stands still, that make a
+   livelock: 10000 more than three times the first run's count on one path,
+   or than 1000 times it for one kind in one directory, as a retry under fresh
+   names makes. *)
 let streak_limit tag first =
   10_000 + (first * match tag with `Path -> 3 | `Dir -> 1000)
 
@@ -192,40 +190,29 @@ let halt halted o =
   halted := Some o;
   park ()
 
-(* The first run stops once the linear tier needs more runs than the
-   budget: past that, the check cannot pass, and the run's operations need
-   not grow. *)
 let count_op halted ops =
   incr ops;
   if !ops > max_ops then halt halted Too_many
 
+(* The first run stops once the linear tier needs more runs than the
+   budget: past that, the check cannot pass, and the run's operations need
+   not grow. *)
 let add_floor halted ~budget ~floor ~at n =
-  match budget with
-  | Some b ->
-      floor := !floor + n;
-      if !floor > b then halt halted (Over_budget at)
-  | None -> ()
+  floor := !floor + n;
+  if !floor > budget then halt halted (Over_budget at)
 
 let fresh ~os clock = (Memfs.v ~clock ~os () :> Eio.Fs.dir_ty Eio.Path.t)
 let os_of = function Some `Macos -> `Macos | Some `Linux | None -> `Linux
 
-let rec walk (d : _ Eio.Path.t) prefix f =
-  List.iter
+let rec files (d : _ Eio.Path.t) prefix =
+  List.concat_map
     (fun name ->
       let q = Eio.Path.(d / name) and path = prefix ^ "/" ^ name in
-      let kind = Eio.Path.kind ~follow:false q in
-      f path q kind;
-      if kind = `Directory then walk q path f)
+      match Eio.Path.kind ~follow:false q with
+      | `Regular_file -> [ (path, String.length (Eio.Path.load q)) ]
+      | `Directory -> files q path
+      | _ -> [])
     (List.sort compare (Eio.Path.read_dir d))
-
-let files d =
-  let l = ref [] in
-  walk d "" (fun path q -> function
-    | `Regular_file -> l := (path, String.length (Eio.Path.load q)) :: !l
-    | _ -> ());
-  List.rev !l
-
-let take n l = List.filteri (fun i _ -> i < n) l
 
 (* {1 Reports, budget, replay} *)
 
@@ -248,7 +235,7 @@ let parse_replay ?(well_formed = fun _ -> true) name r =
     | _ -> bad ()
 
 let digest (trace : Plan.trace) =
-  let s = Fmt.str "%a" Fmt.(list ~sep:(any ";") Op.pp) trace in
+  let s = Fmt.to_to_string Fmt.(list ~sep:(any ";") Op.pp) trace in
   String.sub (Digest.to_hex (Digest.string s)) 0 8
 
 let rec diverge (a : Plan.trace) (b : Plan.trace) =
@@ -503,8 +490,7 @@ module Recorder = struct
     finish t;
     let n = t.n in
     let shown i =
-      n <= (2 * keep) + (2 * context) + 1
-      || i < keep
+      n <= window || i < keep
       || i >= n - keep
       || match t.fault with Some f -> abs (i - f) <= context | None -> false
     in
@@ -623,8 +609,6 @@ let no_longer name ~hash (h, k) =
       k h hash
 
 (* {1 check} *)
-
-let check_name = "Eio_fs.Chaos.check"
 
 (* An operation: its kind and the path it names, or the directory that
    path is in. *)
@@ -753,9 +737,11 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
   let hook (mop : M.Op.t) =
     let op = num mop in
     count_op halted ops;
-    if Option.is_some budget then
-      add_floor halted ~budget ~floor ~at:op.index
-        (Plan.check_floor ~space:mop.space ~sure:(Plan.Sure.add sure op) op);
+    Option.iter
+      (fun budget ->
+        add_floor halted ~budget ~floor ~at:op.index
+          (Plan.check_floor ~space:mop.space ~sure:(Plan.Sure.add sure op) op))
+      budget;
     Option.iter
       (fun t ->
         Hashtbl.replace t
@@ -844,7 +830,10 @@ let run_tiers name ~budget ~rng ~meets ~disk ~first ~attempt linear =
   let classes =
     List.filter
       (fun (n, _) -> n > 0)
-      [ (others, pick_others rng); (List.length pairs, fun n -> take n pairs) ]
+      [
+        (others, pick_others rng);
+        (List.length pairs, fun n -> List.take n pairs);
+      ]
   in
   let share = share (List.length classes) in
   List.iter
@@ -864,7 +853,7 @@ let meets spaces (s : Plan.check) =
 
 let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let os = os_of os in
-  let name = check_name in
+  let name = "Eio_fs.Chaos.check" in
   let rng = Random.State.make [| seed |] in
   let budget = budget_of name budget in
   let replay = Option.map (parse_replay name) replay in
@@ -1011,12 +1000,12 @@ module Crash = struct
 
   and error = Workload of outcome | Recover of outcome | Again of exn
 
-  (* A phase of a run: [f] on a crash-tracked [base] whose power is cut
-     before the operation at [cut], if it comes. It returns the trace, the
-     outcome, and the unsynced changes the cut lost. The syncs and opens
-     that changed the controller go to [changed]. An operation that meets no
-     fault takes its time before its effect, and a sync in the middle of its
-     own, through [pause], which the controller runs. *)
+  (* A phase of a run: [f] on the crash-tracked [fs], whose power is cut
+     before the operation at [cut], if it comes. It is the outcome and the
+     unsynced changes the cut lost. The syncs and opens that changed the
+     controller go to [changed]. An operation that meets no fault takes its
+     time before its effect, and a sync in the middle of its own, through
+     [pause], which the controller runs. *)
   let phase ?(guard = ignore) ~kept_going ~trace ~ctl ~pause ~mono ~faults ~cut
       ~cut_op ~seqs ~changed ~stop fs f =
     let num = numberer () and pending = ref faults in
@@ -1155,16 +1144,17 @@ module Crash = struct
           phase
             ~guard:(fun op ->
               count_op halted ops;
-              if Option.is_some budget then begin
-                Option.iter
-                  (fun ((p : Op.t), s) ->
-                    add_floor halted ~budget ~floor ~at:op.index
-                      (Plan.crash_floor ~sure:s
-                         ~changed:(Hashtbl.mem changed p.index)
-                         p))
-                  !prev;
-                prev := Some (op, Plan.Sure.add sure op)
-              end)
+              Option.iter
+                (fun budget ->
+                  Option.iter
+                    (fun ((p : Op.t), s) ->
+                      add_floor halted ~budget ~floor ~at:op.index
+                        (Plan.crash_floor ~sure:s
+                           ~changed:(Hashtbl.mem changed p.index)
+                           p))
+                    !prev;
+                  prev := Some (op, Plan.Sure.add sure op))
+                budget)
             ~kept_going:kept_run ~trace ~ctl ~pause ~mono ~faults:s.cfaults
             ~cut:s.cut ~cut_op ~seqs ~changed ~stop fs
             (fun fs cwd ->
@@ -1252,7 +1242,7 @@ module Crash = struct
     | [] -> "none"
     | ats ->
         let n = List.length ats in
-        let shown = List.filteri (fun i _ -> i < 8) ats in
+        let shown = List.take 8 ats in
         Fmt.str "%d value%s, after %s%s" n
           (if n = 1 then "" else "s")
           (String.concat ", "
@@ -1326,7 +1316,7 @@ module Crash = struct
         | Drop | Keep -> ""
         | Enum _ | Seed _ | Shape _ ->
             let n = List.length r.left in
-            (List.filteri (fun i _ -> i < 8) r.left
+            (List.take 8 r.left
             @ if n > 8 then [ Fmt.str "and %d more files" (n - 8) ] else [])
             |> String.concat "\n            " );
     ]
@@ -1346,7 +1336,7 @@ module Crash = struct
     | None -> None
     | Some (k', st) ->
         Option.map
-          (fun (s : Plan.crash) -> ({ s with state = st }, Sampled))
+          (fun (s : Plan.crash) -> { s with state = st })
           (List.find_opt (fun s -> Plan.crash_key s = k') cuts)
 
   (* A state drawn at random is one of a cut that allows more than two
@@ -1368,7 +1358,7 @@ module Crash = struct
       in_loop (fun clock mono ->
           let d = fresh ~os clock in
           with_env clock mono d setup;
-          files d)
+          files d "")
     with
     | Ok l -> l
     | Error o -> fail name "setup failed: %s" (outcome_text o)
@@ -1437,10 +1427,9 @@ module Crash = struct
             ~trace:r.trace ~error:err (lines s r));
       r
     in
-    let trace = first_ops in
     let changed = changed first in
-    let cuts = Plan.crash_cuts ~changed trace in
-    let faults = Plan.crash_faults ~tears trace in
+    let cuts = Plan.crash_cuts ~changed first_ops in
+    let faults = Plan.crash_faults ~tears first_ops in
     match replay with
     | Some ((h, k) as r) -> (
         let matched = if h = hash then None else Some h in
@@ -1452,7 +1441,8 @@ module Crash = struct
           [
             (Linear, fun () -> find (cuts @ faults));
             (Linear, fun () -> find_after cuts rcuts);
-            (Sampled, fun () -> find (Plan.crash_others ~changed ~tears trace));
+            ( Sampled,
+              fun () -> find (Plan.crash_others ~changed ~tears first_ops) );
             ( Sampled,
               fun () ->
                 find_after faults (fun (s : Plan.crash) r ->
@@ -1465,15 +1455,13 @@ module Crash = struct
                         changed @ rest
                     | _ -> []) );
             (Sampled, fun () -> find_after faults rcuts);
+            (Sampled, fun () -> state_of_cut cuts k);
           ]
         in
         let found =
           List.find_map
             (fun (tier, f) -> Option.map (fun s -> (s, tier)) (f ()))
             candidates
-        in
-        let found =
-          match found with Some _ -> found | None -> state_of_cut cuts k
         in
         (* A state drawn at random is drawn by a seed below a fourth of the
            budget. *)
@@ -1548,7 +1536,7 @@ module Crash = struct
         List.iter (fun r -> ignore (attempt Linear r)) rcuts;
         (* Sampled tier. *)
         let thunks = List.map (fun s () -> ignore (attempt Sampled s)) in
-        let others = thunks (Plan.crash_others ~changed ~tears trace) in
+        let others = thunks (Plan.crash_others ~changed ~tears first_ops) in
         let pairs = thunks (Plan.Pairs.to_list best) in
         let recovery = thunks recovery in
         (* Every state each cut allows, enumerated while the draws met so
@@ -1636,7 +1624,7 @@ module Crash = struct
             (fun (c, _) -> c <> [])
             [
               (others, Plan.sample rng);
-              (pairs, take);
+              (pairs, List.take);
               (recovery, Plan.sample rng);
             ]
         in

@@ -1,9 +1,9 @@
 (** Lexical arithmetic on the paths an {!Eio} filesystem is addressed by: Eio
     paths, whose separator is always ["/"] even on Windows, so the host's own
-    path modules answer about a different language. Everything here is lexical;
-    nothing opens a file or asks the filesystem anything. {!normalize} rewrites
-    a [".."], sound only where the component before it is not a link;
-    {!canonical} refuses one instead. *)
+    path modules do not apply. Everything here is lexical; nothing opens a file
+    or asks the filesystem anything. {!normalize} rewrites a [".."], sound only
+    where the component before it is not a link; {!canonical} refuses one
+    instead. *)
 
 val is_abs : string -> bool
 (** [is_abs path] is [true] iff [path] starts at the root, that is iff it opens
@@ -66,10 +66,9 @@ val is_rooted : root:string -> string -> bool
     [root] or something under it, whatever the spelling of either. A relative
     [path] that still climbs out of a relative [root] once normalised is not
     under it, so [is_rooted ~root:"." "../x"] is [false]. An absolute [root] and
-    a relative [path] are never rooted in one another: they are named from
-    different places and nothing here knows where. The answer is lexical, so it
-    holds of the objects named only where no component on the way is a symbolic
-    link. *)
+    a relative [path] are never rooted in one another. The answer is lexical, so
+    it holds of the objects named only where no component on the way is a
+    symbolic link. *)
 
 (** The type for the reasons {!canonical} refuses a path. *)
 type refusal =

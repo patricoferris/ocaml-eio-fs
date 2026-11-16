@@ -237,10 +237,6 @@ external rename_exclusive_at :
   Unix.file_descr -> string -> Unix.file_descr -> string -> unit
   = "caml_eio_fs_rename_exclusive"
 
-(* The backend's own file over the host's descriptor, as it opens files
-   itself: the descriptor is its resource's, tagged [`Unix_fd], so
-   {!sync_file} and {!Eio_unix.Resource.fd_opt} reach it. *)
-
 module Exclusive_rename = struct
   type t = unit
 
@@ -489,8 +485,7 @@ module Link = struct
   type publication = Created | Present
 
   let err_refused path reason =
-    Fmt.kstr
-      (fun message -> Error message)
+    Fmt.error
       "cannot publish symbolic link %s: %s; repair or remove the conflicting \
        entry before retrying"
       path reason
@@ -596,7 +591,7 @@ module Link = struct
   let read_regular ~max_bytes t =
     if max_bytes < 0 || max_bytes = max_int then
       invalid_arg "Eio_fs_unix.Link.read_regular: invalid byte bound";
-    let err_read fmt = Fmt.kstr (fun message -> Error message) fmt in
+    let err_read fmt = Fmt.error fmt in
     let opened =
       match at t.parent (fun dir -> At.open_leaf dir t.name) with
       | fd -> Ok (Some fd)
@@ -835,11 +830,10 @@ module Batch = struct
 
   let with_parent (input : _ Eio.Path.t) fn =
     let root, path = (input :> Eio.Fs.dir_ty Eio.Path.t) in
-    let denied reason = unsafe_parent reason in
     let parents, leaf =
       match split path with
       | parts -> parts
-      | exception Refused reason -> denied reason
+      | exception Refused reason -> unsafe_parent reason
     in
     let rec descend (dir : Eio.Fs.dir_ty Eio.Path.t) = function
       | [] -> fn Eio.Path.(dir / leaf)
@@ -847,7 +841,7 @@ module Batch = struct
           let next = Eio.Path.(dir / name) in
           let before = Eio.Path.stat ~follow:false next in
           if before.kind <> `Directory then
-            Fmt.kstr denied "%S has a non-directory parent" path;
+            Fmt.kstr unsafe_parent "%S has a non-directory parent" path;
           Eio.Path.with_open_dir next (fun held ->
               let after = Eio.Path.stat ~follow:false held in
               if
@@ -855,7 +849,9 @@ module Batch = struct
                   (Int64.equal before.dev after.dev
                   && Int64.equal before.ino after.ino
                   && after.kind = `Directory)
-              then Fmt.kstr denied "%S changed while opening its parent" path;
+              then
+                Fmt.kstr unsafe_parent "%S changed while opening its parent"
+                  path;
               descend (held :> Eio.Fs.dir_ty Eio.Path.t) rest)
     in
     match parents with
@@ -911,7 +907,7 @@ module Batch = struct
     | exception Eio.Io (Eio.Fs.E (Eio.Fs.Permission_denied _), _) ->
         Error (`Unix (Unix.EACCES, "batch", ""))
     | exception Eio.Io (err, _) ->
-        Error (`Refused (Fmt.str "%a" Eio.Exn.pp_err err))
+        Error (`Refused (Fmt.to_to_string Eio.Exn.pp_err err))
 
   let run t ops =
     match (t, ops) with
@@ -953,7 +949,7 @@ let refuse r p why =
   r.refusals <- Fmt.str "remove %a: %s" Eio.Path.pp p why :: r.refusals;
   false
 
-let refuse_io r p err = refuse r p (Fmt.str "%a" Eio.Exn.pp_err err)
+let refuse_io r p err = refuse r p (Fmt.to_to_string Eio.Exn.pp_err err)
 
 let hop r f =
   Eio.Semaphore.acquire r.workers;
@@ -971,7 +967,7 @@ let granted r p perm =
    is refused. *)
 let gone r rel = function
   | `Unix (Unix.ENOENT, _, _) -> true
-  | e -> refuse r Eio.Path.(r.root / rel) (Fmt.str "%a" Batch.pp_error e)
+  | e -> refuse r Eio.Path.(r.root / rel) (Fmt.to_to_string Batch.pp_error e)
 
 (* The directories and the other entries of [paths], stated in one hop, and
    whether no statement was refused. *)

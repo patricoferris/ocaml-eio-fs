@@ -196,25 +196,31 @@ val root : user
     where the directory sits.
 
     {b Permissions.} Each operation runs as a {!type-user} and meets the POSIX
-    rules: search ([x]) on every directory a path walks; write and search on the
-    directory where an entry is made, removed or renamed, with the sticky bit
-    keeping removal and renaming to the entry's or the directory's owner; read
-    on a directory to list it; read, or read and write, on a file to open it. In
-    a sticky directory that others may write, a link is followed as the last
-    component of a path only by its owner, or if the directory's owner owns it,
-    root included: Linux does so with [fs.protected_symlinks] set, as most
-    distributions set it. A new file or directory loses the user's umask bits
-    and belongs to the user's uid and gid, or to the group of a setgid directory
-    it is made in. A new directory keeps only the permission and sticky bits of
-    its mode, and is setgid iff its parent is. A file made in a setgid directory
-    by a user outside that group loses setgid, as Linux strips it at create.
-    Only a file's owner changes its mode, and a user outside the file's group
-    cannot set its setgid bit. Only root gives a file away; its owner may move
-    it to one of their own groups. A chown of a regular file, or a write to one
-    by a user other than root, clears its setuid bit, and its setgid bit when
-    its group may execute it. Root needs no bit to read, write or search, as on
-    Linux, so a test that runs as {!root}, the default, misses the bugs a user
-    meets: a directory it cannot create in, a file it cannot open. *)
+    rules:
+
+    - search ([x]) on every directory a path walks; write and search on the
+      directory where an entry is made, removed or renamed, with the sticky bit
+      keeping removal and renaming to the entry's or the directory's owner; read
+      on a directory to list it; read, or read and write, on a file to open it.
+    - In a sticky directory that others may write, a link is followed as the
+      last component of a path only by its owner, or if the directory's owner
+      owns it, root included: Linux does so with [fs.protected_symlinks] set, as
+      most distributions set it.
+    - A new file or directory loses the user's umask bits and belongs to the
+      user's uid and gid, or to the group of a setgid directory it is made in.
+    - A new directory keeps only the permission and sticky bits of its mode, and
+      is setgid iff its parent is.
+    - A file made in a setgid directory by a user outside that group loses
+      setgid, as Linux strips it at create.
+    - Only a file's owner changes its mode, and a user outside the file's group
+      cannot set its setgid bit.
+    - Only root gives a file away; its owner may move it to one of their own
+      groups.
+    - A chown of a regular file, or a write to one by a user other than root,
+      clears its setuid bit, and its setgid bit when its group may execute it.
+    - Root needs no bit to read, write or search, as on Linux, so a test that
+      runs as {!root}, the default, misses the bugs a user meets: a directory it
+      cannot create in, a file it cannot open. *)
 module Fs : sig
   val v :
     ?clock:_ Eio.Time.clock ->
@@ -296,7 +302,7 @@ module Fs : sig
 end
 
 (** Compile-time file embedding for the in-memory filesystem, in the style of
-    ocaml-crunch. The [eio-fs-crunch] binary serializes a directory tree into an
+    ocaml-crunch. The [eio-fs-crunch] binary serialises a directory tree into an
     OCaml module of {!Crunch.entry} values; at runtime the generated module's
     [load ()] rebuilds the tree in a new in-memory filesystem. *)
 module Crunch : sig
@@ -315,7 +321,7 @@ module Crunch : sig
   *)
 
   val scan : _ Eio.Path.t -> t
-  (** [scan dir] serializes the directory tree rooted at [dir]. The root is
+  (** [scan dir] serialises the directory tree rooted at [dir]. The root is
       recorded as [Dir { path = "/"; _ }], entries follow in depth-first sorted
       order, and symbolic links are recorded without being followed. An entry
       that is neither a regular file, a directory nor a symbolic link is not

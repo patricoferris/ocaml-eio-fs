@@ -17,8 +17,8 @@ type (_, _, _) Eio.Resource.pi +=
 let dir_barrier (Eio.Resource.T (v, ops)) =
   Option.map (fun f -> f v) (Eio.Resource.get_opt ops Dir_sync)
 
-(* A directory handle that cannot sync is a wiring error, loudly: silence
-   here would silently lose durability. *)
+(* A directory handle that cannot sync is a wiring error: skipping the
+   barrier would lose durability. *)
 let fsync_handle (Eio.Resource.T (v, ops)) =
   match Eio.Resource.get_opt ops Eio.File.Pi.Write with
   | Some (module W) -> W.sync v
@@ -46,29 +46,6 @@ let sync_parent p =
   match Eio.Path.split p with
   | Some (parent, _) -> sync_dir parent
   | None -> sync_dir p
-
-(* Establish each traversed entry's durability, including an existing one:
-   it may be visible after an earlier writer's barrier failed. The capability
-   root is the caller's durable anchor; never ascend beyond it. *)
-let rec mkdirs_with ~sync_parent ~exists_ok ~perm p =
-  let entry = Eio.Path.split p in
-  let p =
-    match entry with
-    | None -> p
-    | Some (parent, name) -> Eio.Path.(parent / name)
-  in
-  Option.iter
-    (fun (parent, _) ->
-      match Eio.Path.split parent with
-      | None -> ()
-      | Some _ -> mkdirs_with ~sync_parent ~exists_ok:true ~perm parent)
-    entry;
-  (match Eio.Path.mkdir ~perm p with
-  | () -> ()
-  | exception Eio.Io (Eio.Fs.E (Already_exists _), _)
-    when exists_ok && Eio.Path.kind ~follow:false p = `Directory ->
-      ());
-  sync_parent p
 
 (* The file-data barrier. A file is itself the resource, so its operation takes
    no name. A registered barrier is answered whole: syncing the file behind it
@@ -99,8 +76,6 @@ let can_sync (Eio.Resource.T (_, ops) as file) =
   Option.is_some (file_barrier file)
   || Option.is_some (Eio.Resource.get_opt ops Eio.File.Pi.Write)
 
-let portable_sync_dir = sync_dir
-
 (* A barrier is the pair a publication issues, packed with its state as a
    rename backend is. *)
 module Barrier = struct
@@ -117,6 +92,13 @@ module Barrier = struct
     let v b = T ((module B), b)
   end
 
+  module Portable = struct
+    type t = unit
+
+    let sync_file () file = sync_any_file file
+    let sync_dir () path = sync_dir path
+  end
+
   let sync_file (T ((module B), b)) file = B.sync_file b file
   let sync_dir (T ((module B), b)) path = B.sync_dir b path
 
@@ -125,18 +107,34 @@ module Barrier = struct
     | Some (parent, _) -> sync_dir t parent
     | None -> sync_dir t p
 
-  module Portable = struct
-    type t = unit
-
-    let sync_file () file = sync_any_file file
-    let sync_dir () path = portable_sync_dir path
-  end
-
   let portable = T ((module Portable), ())
 end
 
+(* Establish each traversed entry's durability, including an existing one:
+   it may be visible after an earlier writer's barrier failed. The capability
+   root is the caller's durable anchor; never ascend beyond it. *)
+let rec mkdirs_with ~barrier ~exists_ok ~perm p =
+  let entry = Eio.Path.split p in
+  let p =
+    match entry with
+    | None -> p
+    | Some (parent, name) -> Eio.Path.(parent / name)
+  in
+  Option.iter
+    (fun (parent, _) ->
+      match Eio.Path.split parent with
+      | None -> ()
+      | Some _ -> mkdirs_with ~barrier ~exists_ok:true ~perm parent)
+    entry;
+  (match Eio.Path.mkdir ~perm p with
+  | () -> ()
+  | exception Eio.Io (Eio.Fs.E (Already_exists _), _)
+    when exists_ok && Eio.Path.kind ~follow:false p = `Directory ->
+      ());
+  Barrier.sync_parent barrier p
+
 let mkdirs ?(exists_ok = false) ?(barrier = Barrier.portable) ~perm p =
-  mkdirs_with ~sync_parent:(Barrier.sync_parent barrier) ~exists_ok ~perm p
+  mkdirs_with ~barrier ~exists_ok ~perm p
 
 (* A backend whose files live in this process's heap admits no outside opener,
    so an in-process exclusion is the whole exclusion; it registers
@@ -183,21 +181,17 @@ module Bounded_sink = struct
     mutable written : int64;
   }
 
+  let sat_add a b =
+    if Int64.compare a (Int64.sub Int64.max_int b) > 0 then Int64.max_int
+    else Int64.add a b
+
   let single_write t bufs =
     let requested =
       List.fold_left
-        (fun n buf ->
-          let len = Int64.of_int (Cstruct.length buf) in
-          if Int64.compare n (Int64.sub Int64.max_int len) > 0 then
-            Int64.max_int
-          else Int64.add n len)
+        (fun n buf -> sat_add n (Int64.of_int (Cstruct.length buf)))
         0L bufs
     in
-    let attempted =
-      if Int64.compare t.written (Int64.sub Int64.max_int requested) > 0 then
-        Int64.max_int
-      else Int64.add t.written requested
-    in
+    let attempted = sat_add t.written requested in
     if Int64.compare requested (Int64.sub t.max_bytes t.written) > 0 then
       raise (Limit_exceeded { max_bytes = t.max_bytes; attempted });
     let count = Eio.Flow.single_write t.sink bufs in
@@ -266,6 +260,7 @@ let fresh_name name =
    temporaries in every run; past [replayable] taken names, the rest are
    salted, so stale leftovers cannot exhaust them. *)
 let replayable = 64
+let max_collisions = 128
 
 let fresh_tmp ~collisions (dir, target) =
   if collisions < replayable then
@@ -316,7 +311,8 @@ let produce ~config ~requested_tmp ((dir, target) as path) write =
     with
     | Eio.Io (Eio.Fs.E (Already_exists _), _) as e
       when Option.is_none requested_tmp && not !owned ->
-        if collisions = 127 then raise e else produce (collisions + 1)
+        if collisions = max_collisions - 1 then raise e
+        else produce (collisions + 1)
     | e ->
         cleanup ();
         raise e
@@ -398,11 +394,9 @@ let save ?durable ?barrier ?perm path s =
   in
   publish ~config path (fun sink -> Eio.Flow.copy_string s sink)
 
-(* A crash part way through an append leaves the file's last line without its
-   LF. Whatever follows it would be read as the end of that line, so the line
-   is ended first: the torn bytes become a line of their own, which a reader
-   refuses as it refuses any malformed one, and nothing written after them is
-   lost with them. *)
+(* A crash part way through an append leaves the last line without its LF.
+   The line is ended first, so the torn bytes are a line of their own and
+   what follows is not read as its end. *)
 let ends_torn path =
   Eio.Switch.run @@ fun sw ->
   match Eio.Path.open_in ~sw path with
@@ -450,11 +444,9 @@ let append_lines ?(durable = true) ?(barrier = Barrier.portable) ?(perm = 0o644)
     if opened && durable then Barrier.sync_parent barrier path
   end
 
-(* A file opened read-only still names the inode fsync(2) flushes. A registered
-   barrier answers first; the POSIX backends expose their sync on every handle.
-   A read-only handle with neither, as a fault wrapper opens one, is opened
-   again for writing, without creating or truncating, and that handle synced:
-   any descriptor on the file flushes the same inode. *)
+(* A read-only handle with no barrier and no sync of its own is opened again
+   for writing, without creating or truncating: any descriptor on the file
+   flushes the same inode. *)
 let sync_regular barrier path =
   Eio.Switch.run @@ fun sw ->
   let file = Eio.Path.open_in ~sw ~follow:false path in
@@ -501,7 +493,7 @@ let is_digits s i j =
 (* The name a generation is the generation of, when [s] is one. *)
 let generation_of s =
   let n = String.length s in
-  let dot = try String.rindex s '.' with Not_found -> -1 in
+  let dot = Option.value ~default:(-1) (String.rindex_opt s '.') in
   let infix = String.length generation_infix in
   let rec find i =
     if i < 1 then None
@@ -594,9 +586,9 @@ let publish_generation ?(durable = true) ?(barrier = Barrier.portable)
     | `Not_found -> None
     | `Symbolic_link -> Some (Eio.Path.read_link path)
     | _ ->
-        invalid_arg
-          ("Eio_fs_sync.publish_generation: " ^ snd path
-         ^ " is not a generation pointer")
+        Fmt.invalid_arg
+          "Eio_fs_sync.publish_generation: %s is not a generation pointer"
+          (snd path)
   in
   let generation = fresh_generation name in
   let staged = Eio.Path.(parent / generation) in

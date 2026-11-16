@@ -1,11 +1,3 @@
-; Crowbar fuzz testing for the chaos filesystem wrapper
-;
-; Quick check: dune build @fuzz
-; With AFL: crow start --cpus=4
-
-; Extents, Chaos_blocks and Chaos_journal are private to eio_fs: their
-; sources are compiled in here.
-
 (copy_files#
  (files ../lib/extents.{ml,mli}))
 

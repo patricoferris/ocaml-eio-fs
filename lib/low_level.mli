@@ -13,6 +13,11 @@ module Error : sig
       constructor for. *)
 end
 
+val last_component : string -> string
+(** [last_component path] is the last component of [path], or the whole of
+    [path] when it has none: ["/"] is ["/"], [".."] is [".."] and the empty path
+    is ["."]. *)
+
 val name_key : [ `Linux | `Macos ] -> string -> string
 (** [name_key os name] is what [os] compares [name] by: [name] itself on Linux,
     its canonical caseless form on macOS. Two names with one key name one entry.
@@ -86,8 +91,8 @@ module Fd : sig
   (** The type for file descriptors, each open on one file system. *)
 
   val closed : t -> bool
-  (** [closed fd] is whether the descriptor has been closed, either explicitly
-      or by its owning switch. *)
+  (** [closed fd] is [true] iff [fd] was closed, by {!close} or by its switch.
+  *)
 end
 
 (** Directory descriptors. *)
@@ -112,9 +117,9 @@ val descriptors : Dir.fd -> int
     [dir]. *)
 
 val openat : mode:int -> sw:Eio.Switch.t -> Dir.fd -> string -> int -> Fd.t
-(** [openat ~mode ~sw dir path flags] opens [path] relative to [dir] with the
-    {!Open_flags} [flags], creating it with permissions [mode]. The descriptor
-    is closed when [sw] finishes. *)
+(** [openat ~mode ~sw dir path flags] is a descriptor on [path] relative to
+    [dir], opened with the {!Open_flags} [flags]. [mode] is the permissions of a
+    file it creates. It is closed when [sw] finishes. *)
 
 val mkdirat : Dir.fd -> perm:int -> string -> unit
 (** [mkdirat dir ~perm path] creates the directory [path] relative to [dir]. *)

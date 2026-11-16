@@ -43,9 +43,6 @@ module Fault : sig
 
   val pp : t Fmt.t
   (** [pp] formats a fault. *)
-
-  val key : t -> string
-  (** [key f] names [f] in a replay. *)
 end
 
 type pos = { kind : Op.kind; path : string; nth : int }
@@ -85,9 +82,8 @@ val interleave : Random.State.t -> 'a list -> 'a list
 
 val sampled_share : budget:int -> linear:int -> classes:int -> int
 (** [sampled_share ~budget ~linear ~classes] is the runs of the sampled tier for
-    each of its [classes]: in all at least a fortieth of [budget], 500 runs by
-    default, and up to half of [linear], the runs the linear tier took, within
-    [budget]. *)
+    each of its [classes]: in all at least a fortieth of [budget], and up to
+    half of [linear], the runs the linear tier took, within [budget]. *)
 
 (** {1 check} *)
 
@@ -100,9 +96,6 @@ type check = { faults : (pos * Fault.t) list; lasting : (lasting * pos) option }
 
 val none : check
 (** [none] is the scenario with no fault. *)
-
-val lasting_text : lasting -> string
-(** [lasting_text l] says what the filesystem is under [l]. *)
 
 val lasting_code : lasting -> Op.t -> Fault.code option
 (** [lasting_code l op] is the error [op] meets under [l], if any. *)
@@ -205,11 +198,15 @@ val check_text : ?at:(pos -> Op.t option) -> check -> string
 
 (** {1 Crash.check} *)
 
-(** The type for the state a cut leaves: every unsynced change lost, every one
-    kept, one of the states the cut allows by the draws that build it, one drawn
-    at random from a seed, or one drawn with a shape, given by the draws that
-    build it. *)
-type state = Drop | Keep | Enum of int list | Seed of int | Shape of int list
+(** The type for the state a cut leaves. *)
+type state =
+  | Drop  (** Every unsynced change lost. *)
+  | Keep  (** Every unsynced change kept. *)
+  | Enum of int list
+      (** One of the states the cut allows, by the draws that build it. *)
+  | Seed of int  (** One drawn at random from a seed. *)
+  | Shape of int list
+      (** One drawn with a shape, given by the draws that build it. *)
 
 val shape : widths:int list -> int -> state
 (** [shape ~widths i] is the [i]th state drawn at random for a cut whose draws,
@@ -244,11 +241,13 @@ val crash_cuts : changed:(Op.t -> bool) -> trace -> crash list
     it leaves, as nothing a cut reads changed. *)
 
 val crash_floor : sure:bool -> changed:bool -> Op.t -> int
-(** [crash_floor ~sure ~changed op] is, likewise, the runs the linear tier of
-    {!Crash.check} has for [op], given that an operation follows it: if [op] is
-    sure to be structural, six for a cut after it, which {!crash_cuts} tries in
-    two states and each with the two cuts at the end of recover, and two for a
-    failure of a sync. *)
+(** [crash_floor ~sure ~changed op] is the runs the linear tier of [Crash.check]
+    has for [op] in every trace where an operation follows it, as {!check_floor}
+    is for {!type-check} scenarios. It is none unless [op] is sure to be
+    structural. Otherwise it is six if [op] changes the disk, as {!crash_cuts}
+    reads [changed]: a cut after it, in two states, each with the two cuts at
+    the end of recover. A sync adds four: its failure and its failure with its
+    pages evicted, each in two states. *)
 
 val crash_faults : tears:(Op.t -> int list) -> trace -> crash list
 (** [crash_faults ~tears first] is each structural sync failed and each
@@ -271,8 +270,8 @@ val crash_seconds :
   first:Disk.t ->
   after:trace ->
   crash list * crash list
-(** [crash_seconds ~limit ~rng ~tears f ~first ~after] is, likewise, the pairs
-    of faults whose first is [f] and whose second lands after it in [after]. *)
+(** [crash_seconds ~limit ~rng ~tears f ~first ~after] is the pairs of faults
+    whose first is [f] and whose second lands after it in [after]. *)
 
 val next_choices : (int * int) list -> int list option
 (** [next_choices trail] is the draws of the next state a cut allows, after the

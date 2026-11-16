@@ -43,7 +43,7 @@ let test_registered_backend () =
 
 (* A plain POSIX directory needs no registration and no wrapper: the barrier
    opens the directory read-only and fsyncs its handle. This pins the backend
-   behavior the route rests on (a directory opens, its handle syncs), so an
+   behaviour the route rests on (a directory opens, its handle syncs), so an
    eio upgrade that drops either fails here and not in a store. *)
 let test_posix_needs_no_registration () =
   Eio_main.run @@ fun env ->

@@ -9,22 +9,9 @@
    magic number a refactor of the commit path moves silently. *)
 
 module Crash = Eio_fs.Chaos.Private.Crash
+open Chaos_helpers
 
 let ( / ) = Eio.Path.( / )
-let i63 = Optint.Int63.of_int
-let absent p = Eio.Path.kind ~follow:false p = `Not_found
-
-(* An in-memory tree with durability tracked by [ctl]: after a crash it holds
-   what a barrier committed and nothing else. *)
-let with_crash ctl fn =
-  Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn (Crash.wrap ctl env#fs)
-
-let save_synced path content =
-  Eio.Path.with_open_out ~create:(`Exclusive 0o644) path (fun file ->
-      Eio.File.pwrite_all file ~file_offset:(i63 0)
-        [ Cstruct.of_string content ];
-      Eio.File.sync file)
 
 (* The operation the trigger names: the machine loses power while it runs, so
    it may return or raise. What is pinned is that the clock stopped there. *)
@@ -40,16 +27,16 @@ let test_after_unlink () =
       ~trigger:(Crash.After_dir_op { kind = Crash.Unlink; path = "a" })
       ()
   in
-  with_crash ctl @@ fun fs ->
-  save_synced (fs / "a") "A";
-  save_synced (fs / "b") "B";
+  with_crash ctl @@ fun ~raw:_ ~fs ->
+  write_new ~sync:true (fs / "a") "A";
+  write_new ~sync:true (fs / "b") "B";
   Crash.sync_metadata ctl;
   fires (fun () -> Eio.Path.unlink (fs / "a"));
   Alcotest.(check bool)
     "the crash fired on the unlink itself" true (Crash.is_crashed ctl);
   (* whatever the store does next runs against a dead filesystem *)
   fires (fun () ->
-      save_synced (fs / "c") "C";
+      write_new ~sync:true (fs / "c") "C";
       Crash.sync_metadata ctl);
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -67,12 +54,12 @@ let test_after_unlink () =
    missing barrier is invisible. *)
 let test_manual_cannot_see_the_window () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
-  save_synced (fs / "a") "A";
-  save_synced (fs / "b") "B";
+  with_crash ctl @@ fun ~raw:_ ~fs ->
+  write_new ~sync:true (fs / "a") "A";
+  write_new ~sync:true (fs / "b") "B";
   Crash.sync_metadata ctl;
   Eio.Path.unlink (fs / "a");
-  save_synced (fs / "c") "C";
+  write_new ~sync:true (fs / "c") "C";
   Crash.sync_metadata ctl;
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
@@ -92,8 +79,8 @@ let test_matches_kind_and_path () =
       ~trigger:(Crash.After_dir_op { kind = Crash.Unlink; path = "a" })
       ()
   in
-  with_crash ctl @@ fun fs ->
-  save_synced (fs / "b") "B";
+  with_crash ctl @@ fun ~raw:_ ~fs ->
+  write_new ~sync:true (fs / "b") "B";
   Crash.sync_metadata ctl;
   Eio.Path.unlink (fs / "b");
   Alcotest.(check bool)
@@ -111,7 +98,7 @@ let test_after_rmdir () =
       ~trigger:(Crash.After_dir_op { kind = Crash.Rmdir; path = "sub" })
       ()
   in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "sub");
   Crash.sync_metadata ctl;
   fires (fun () -> Eio.Path.rmdir (fs / "sub"));
@@ -132,8 +119,8 @@ let test_after_rename () =
         (Crash.After_dir_op { kind = Crash.Rename { dest = "y" }; path = "x" })
       ()
   in
-  with_crash ctl @@ fun fs ->
-  save_synced (fs / "x") "data";
+  with_crash ctl @@ fun ~raw:_ ~fs ->
+  write_new ~sync:true (fs / "x") "data";
   Crash.sync_metadata ctl;
   fires (fun () -> Eio.Path.rename (fs / "x") (fs / "y"));
   Alcotest.(check bool)

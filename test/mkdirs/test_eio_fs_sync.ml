@@ -8,6 +8,7 @@
    barrier committed and nothing else. *)
 
 module Crash = Eio_fs.Chaos.Private.Crash
+open Chaos_helpers
 
 let ( / ) = Eio.Path.( / )
 
@@ -21,10 +22,6 @@ let _ :
     unit =
   Eio_fs_sync.mkdirs
 
-let with_crash ctl fn =
-  Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn (Crash.wrap ctl env#fs)
-
 let pending ctl =
   List.map (fun (u : Crash.unsynced) -> u.path) (Crash.unsynced ctl)
 
@@ -34,7 +31,7 @@ let is_directory p = Eio.Path.kind ~follow:false p = `Directory
    the record survives the power cut. *)
 let test_a_fresh_tree_keeps_what_is_published_in_it () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
   Alcotest.(check (list string))
     "every created entry is committed" [] (pending ctl);
@@ -50,7 +47,7 @@ let test_a_fresh_tree_keeps_what_is_published_in_it () =
    the cut takes the tree and the record with it. *)
 let test_without_it_the_tree_is_lost () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
   Eio_fs_sync.save (fs / "a" / "b" / "c" / "record") "data";
   Crash.crash ctl;
@@ -60,7 +57,7 @@ let test_without_it_the_tree_is_lost () =
 (* A durable existing prefix is preserved, and its new child is committed. *)
 let test_an_existing_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio_fs_sync.sync_dir fs;
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b");
@@ -74,7 +71,7 @@ let test_an_existing_prefix () =
    refused by default and accepted with it. *)
 let test_exists_ok () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a");
   (match Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a") with
   | () -> Alcotest.fail "an existing directory was accepted without exists_ok"
@@ -85,7 +82,7 @@ let test_exists_ok () =
 (* A visible prefix can be from a writer whose parent barrier failed. *)
 let test_unsynced_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdirs ~perm:0o755 (fs / "a" / "b");
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
   Eio_fs_sync.save (fs / "a" / "b" / "c" / "record") "prefix retained";
@@ -96,7 +93,7 @@ let test_unsynced_prefix () =
 
 let test_barrier_retry () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   let target = fs / "a" in
   let parent, _ = Option.get (Eio.Path.split target) in
   let _, path = parent in
@@ -122,7 +119,7 @@ let test_barrier_retry () =
 
 let test_racing_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio_fs_sync.sync_parent (fs / "a");
   let _, parent_path = fs / "a" in
@@ -151,7 +148,7 @@ let test_racing_prefix () =
 
 let test_non_directory () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio_fs_sync.save (fs / "file") "original file";
   List.iter
     (fun target ->
@@ -165,7 +162,7 @@ let test_non_directory () =
 
 let test_symbolic_link () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "target");
   Eio.Path.symlink ~link_to:"target" (fs / "link");
   List.iter
@@ -220,7 +217,7 @@ let test_parent_order () =
   List.iter
     (fun depth ->
       let ctl = Crash.v ~policy:Drop_unsynced () in
-      with_crash ctl @@ fun fs ->
+      with_crash ctl @@ fun ~raw:_ ~fs ->
       let target, parents =
         List.fold_left
           (fun (path, parents) index ->
@@ -253,14 +250,14 @@ let test_parent_order () =
 
 let test_capability_root () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 fs;
   Alcotest.(check bool)
     "the existing capability root is accepted" true (is_directory fs)
 
 let test_borrowed_root () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
-  with_crash ctl @@ fun fs ->
+  with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "anchor");
   Eio.Path.with_open_dir (fs / "anchor") (fun anchor ->
       let syncs = ref [] in

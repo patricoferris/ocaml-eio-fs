@@ -1,6 +1,3 @@
-; Exercises the generated code end to end: crunch the fixture tree at build
-; time, link the generated module and check the rebuilt filesystem.
-
 (rule
  (targets assets.ml assets.mli)
  (deps

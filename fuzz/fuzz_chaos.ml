@@ -11,12 +11,20 @@ module Chaos = Eio_fs.Chaos.Private
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
-(* Run a fixed shape of workload -- a run of block writes, a sync, then a
-   read-back -- over a chaos-wrapped in-memory filesystem, and report the
-   outcome together with the bytes that actually reached the store. The file
-   is created read-only (0o444) or writable, directly at the root or through a
-   short-lived staging subtree. Every run starts from a fresh in-memory tree
-   ([Eio_fs.run] makes a new one). *)
+(* [nblocks] blocks of [block] bytes, each of its index's byte, synced after
+   block [sync_after], or after the last. *)
+let write_blocks ?sync_after ~perm ~nblocks ~block path =
+  Eio.Path.with_open_out ~create:(`Exclusive perm) path (fun file ->
+      for i = 0 to nblocks - 1 do
+        let buf = Cstruct.create block in
+        Cstruct.memset buf (i land 0xff);
+        Eio.File.pwrite_all file ~file_offset:(i63 (i * block)) [ buf ];
+        if sync_after = Some i then Eio.File.sync file
+      done;
+      if sync_after = None then Eio.File.sync file)
+
+(* A run of block writes, a sync, then a read-back, over a chaos-wrapped
+   in-memory filesystem: the outcome, and the bytes that reached the store. *)
 let run_workload ~seed ~probability ~nblocks ~block ~read_only ~via_subtree =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
@@ -24,15 +32,7 @@ let run_workload ~seed ~probability ~nblocks ~block ~read_only ~via_subtree =
   let fs = Chaos.wrap schedule env#fs in
   let perm = if read_only then 0o444 else 0o644 in
   let rel = if via_subtree then "stage/f" else "f" in
-  let write_blocks path =
-    Eio.Path.with_open_out ~create:(`Exclusive perm) path (fun file ->
-        for i = 0 to nblocks - 1 do
-          let buf = Cstruct.create block in
-          Cstruct.memset buf (i land 0xff);
-          Eio.File.pwrite_all file ~file_offset:(i63 (i * block)) [ buf ]
-        done;
-        Eio.File.sync file)
-  in
+  let write_blocks = write_blocks ~perm ~nblocks ~block in
   let outcome =
     try
       if via_subtree then begin
@@ -41,7 +41,6 @@ let run_workload ~seed ~probability ~nblocks ~block ~read_only ~via_subtree =
             write_blocks Eio.Path.(stage / "f"))
       end
       else write_blocks (fs / "f");
-      (* read the file back through the perturbing wrapper too *)
       Eio.Path.with_open_in (fs / rel) (fun file ->
           ignore (Eio.Flow.read_all file));
       "ok"
@@ -68,7 +67,7 @@ let placement_gen = map [ bool ] (fun b -> if b then Via_subtree else Direct)
 let reopen_gen = map [ bool ] (fun b -> if b then Trunc_reopen else No_reopen)
 
 (* [prob_pct] in 0..100, [nblocks] in 1..16, [block] in 1..256; [seed] is any
-   int (negatives seed the PRNG just as well). *)
+   int. *)
 let test_crash_safety_and_determinism seed prob_pct nblocks block access
     placement =
   let probability = float_of_int prob_pct /. 100. in
@@ -81,8 +80,6 @@ let test_crash_safety_and_determinism seed prob_pct nblocks block access
     run_workload ~seed ~probability ~nblocks ~block ~read_only ~via_subtree
   in
   check_eq ~pp:outcome ~eq:( = ) a b
-
-(* {2 Crash / durability model} *)
 
 module Crash = Chaos.Crash
 
@@ -98,15 +95,7 @@ let post_crash_image ~policy ~nblocks ~block ~sync_after ~read_only ~via_subtree
   let fs = Crash.wrap ctl env#fs in
   let perm = if read_only then 0o444 else 0o644 in
   let rel = if via_subtree then "stage/f" else "f" in
-  let write_blocks path =
-    Eio.Path.with_open_out ~create:(`Exclusive perm) path (fun file ->
-        for i = 0 to nblocks - 1 do
-          let buf = Cstruct.create block in
-          Cstruct.memset buf (i land 0xff);
-          Eio.File.pwrite_all file ~file_offset:(i63 (i * block)) [ buf ];
-          if i = sync_after then Eio.File.sync file
-        done)
-  in
+  let write_blocks = write_blocks ~sync_after ~perm ~nblocks ~block in
   if via_subtree then begin
     Eio.Path.mkdir ~perm:0o755 (fs / "stage");
     Eio.Path.with_open_dir (fs / "stage") (fun stage ->
@@ -117,7 +106,7 @@ let post_crash_image ~policy ~nblocks ~block ~sync_after ~read_only ~via_subtree
      is the file sync's business, settled block by block above. *)
   Crash.sync_metadata ctl;
   (* A truncating reopen of a writable file discards the durable bytes and
-     overwrites the head -- all unsynced, so all at the crash's mercy. *)
+     overwrites the head, all unsynced. *)
   if trunc_reopen && not read_only then
     Eio.Path.with_open_out ~create:(`Or_truncate perm) (fs / rel) (fun file ->
         let buf = Cstruct.create block in

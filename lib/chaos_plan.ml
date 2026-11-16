@@ -97,13 +97,11 @@ let ordinal n =
 
 let pos_text ?(at = fun _ -> None) p =
   match at p with
-  | Some op -> Fmt.str "%a" Op.pp op
+  | Some op -> Fmt.to_to_string Op.pp op
   | None ->
       Fmt.str "the %s %s of %s" (ordinal p.nth) (Op.kind_name p.kind) p.path
 
 type trace = Op.t list
-
-let index_of trace p = List.find_opt (at p) trace
 
 (* {1 Structure} *)
 
@@ -281,8 +279,7 @@ let of_singles ops =
   List.map (fun one -> { faults = [ one ]; lasting = None }) (singles ops)
   @ List.map (fun l -> { faults = []; lasting = Some l }) (lastings ops)
 
-(* A failed sync that evicts the pages it lost: in the linear tier only,
-   so the sampled tier spends its runs as before. *)
+(* A failed sync that evicts the pages it lost: linear tier only. *)
 let is_evict = function _, Fault.Evict _ -> true | _ -> false
 
 let evicts ops =
@@ -388,7 +385,7 @@ let aimed ~first ~(after : trace) (op1 : Op.t) =
    too: each operation makes one pair or more, so [limit] operations of
    each are enough. *)
 let aim ~rng limit pairs (changed, rest) =
-  let first l = List.filteri (fun i _ -> i < limit) l in
+  let first l = List.take limit l in
   ( first (pairs (first changed)),
     interleave rng (sample rng limit (pairs (sample rng limit rest))) )
 
@@ -428,7 +425,7 @@ module Pairs = struct
 end
 
 let check_seconds ?(limit = max_int) ~rng one ~first ~(after : trace) =
-  match index_of after (fst one) with
+  match List.find_opt (at (fst one)) after with
   | None -> ([], [])
   | Some (op1 : Op.t) ->
       let changed, rest = aimed ~first ~after op1 in
@@ -608,7 +605,7 @@ let rcuts ~changed s ~(recover : trace) =
     (cut_points ~changed recover (structural recover))
 
 let crash_seconds ?(limit = max_int) ~rng ~tears one ~first ~(after : trace) =
-  match index_of after (fst one) with
+  match List.find_opt (at (fst one)) after with
   | None -> ([], [])
   | Some (op1 : Op.t) ->
       let changed, rest = aimed ~first ~after:(structural after) op1 in
@@ -747,7 +744,6 @@ let well_formed k =
           | Some (rest, st) -> state st && String.contains rest '|'
           | None -> false))
 
-(* The key of [s] with its state left out, and the state. *)
 let split_state_key k =
   match String.split_on_char '|' k with
   | f :: c :: st :: rest ->

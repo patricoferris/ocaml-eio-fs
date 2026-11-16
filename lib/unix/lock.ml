@@ -295,8 +295,7 @@ let budget ~sw seconds =
 (* [on_taken] runs the moment the mutex is held, so a caller records how to
    give it back before anything else can raise. A wait behind a holder, bounded
    or not, calls [on_wait ()] first. *)
-let take_available ?(on_wait = ignore) ~patience ~refused ~on_taken ~try_take
-    ~wait () =
+let take_available ~on_wait ~patience ~refused ~on_taken ~try_take ~wait () =
   match patience with
   | Wait ->
       if not (try_take ()) then begin
@@ -328,8 +327,8 @@ let take_available ?(on_wait = ignore) ~patience ~refused ~on_taken ~try_take
       in
       if granted || !taken then on_taken () else raise (refused ())
 
-let take_mutex ?on_wait ~patience ~refused ~on_taken mutex =
-  take_available ?on_wait ~patience ~refused ~on_taken
+let take_mutex ~on_wait ~patience ~refused ~on_taken mutex =
+  take_available ~on_wait ~patience ~refused ~on_taken
     ~try_take:(fun () -> Eio.Mutex.try_lock mutex)
     ~wait:(fun () -> Eio.Mutex.lock mutex)
     ()
@@ -481,12 +480,6 @@ let () =
 let not_a_lock_file name =
   raise (Eio.Fs.err (Eio.Fs.Permission_denied (Not_a_lock_file name)))
 
-(* A backend with no native path is named as it prints itself. *)
-let lock_name path =
-  match Eio.Path.native path with
-  | Some native -> native
-  | None -> Fmt.str "%a" Eio.Path.pp path
-
 let is_regular : Eio.File.Stat.kind -> bool = function
   | `Regular_file -> true
   | _ -> false
@@ -547,9 +540,8 @@ let open_lock_file ~sw ~name ~(create : create) path =
           | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) ->
               not_a_lock_file name))
 
-(* What is held once the exclusion is taken, whichever locks carry it: the
-   descriptor is weighed against the name it was opened by, the holder's
-   diagnostics are written through it, and the caller runs. *)
+(* The descriptor is weighed against the name it was opened by, then the
+   holder's record is written through it. *)
 let settle ~name ~opened ~contents ~file path =
   check_locked_file ~name ~opened path;
   Option.iter (update_lock_contents file) contents
@@ -601,10 +593,10 @@ let open_keyed ~taken ~key open_rendezvous =
   (file, opened)
 
 module Flock = struct
-  let rec acquire ~shared fd =
-    match flock_native fd (if shared then Shared else Exclusive) with
-    | () -> ()
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> acquire ~shared fd
+  let acquire ~shared fd =
+    retry_eintr
+      (fun fd -> flock_native fd (if shared then Shared else Exclusive))
+      fd
 
   let flock ~shared fd =
     Eio_unix.run_in_systhread ~label:"eio-fs-lease-lock" (fun () ->
@@ -684,18 +676,6 @@ let take_record_lock ~taken ~patience ~on_wait ~name file path =
            descriptor and its backend registers no Eio_fs_sync.Process_local"
           name
 
-(* The mutex is keyed by the file the name holds, read before anything is
-   opened, so an ask that waits for or is refused by a fiber of this process
-   opens no descriptor to leave with the holder: POSIX drops the record lock
-   on any close, so such a descriptor could only be parked until the hold
-   ends. The rendezvous is opened once the mutex is held, on [sw], which
-   closes it, and a name given to another file in between is keyed again. A
-   name that holds nothing yet is opened (or created) first and keyed by its
-   descriptor. A rendezvous with no descriptor has no record lock to take: a
-   process-local backend makes the mutex the whole exclusion, and any other is
-   refused. [block] is answered per half: the mutex is held by a fiber, the
-   record lock by another process; its bound is kept on a switch of its own,
-   which ends with the acquisition. *)
 let take_inode_gate ~taken ~shared ~patience ~on_wait ~name ~opened_first local
     =
   let release_reader = ref ignore in
@@ -738,9 +718,15 @@ let take_lease_lock ~shared ~patience ~on_wait ~name file =
         "Eio_fs_unix.Lease: %s: the rendezvous carries no Unix file descriptor"
         name
 
+(* The mutex is keyed by the file the name holds, read before anything is
+   opened: an ask a fiber of this process refuses opens no descriptor, whose
+   close would drop the holder's record lock. A name that holds nothing is
+   opened first and keyed by its descriptor, and a name given to another file
+   before the mutex is held is keyed again. [block] is answered per half: the
+   mutex is held by a fiber, the record lock by a process. *)
 let rec acquire ~sw ?lease ?(block : block = `Yes) ?patience
     ?(create : create = `If_missing 0o600) ?contents ?(on_wait = ignore) path =
-  let name = lock_name path in
+  let name = Eio_fs.Path.name path in
   let steps = ref [] in
   let taken give_back = steps := give_back :: !steps in
   let shared = lease = Some `Shared in
@@ -827,7 +813,7 @@ module Held = struct
     let file, let_go, _ = acquire ~sw ?block ?create ?contents ?on_wait path in
     let t =
       {
-        name = lock_name path;
+        name = Eio_fs.Path.name path;
         file = Some (file :> Eio.File.rw_ty Eio.Resource.t);
         let_go;
         writing = Eio.Mutex.create ();
@@ -924,7 +910,7 @@ let probe_opened ~name path =
 let probe_attempts = 8
 
 let rec probe_at ~attempts path =
-  let name = lock_name path in
+  let name = Eio_fs.Path.name path in
   let from_the_holder =
     match named_key ~name path with
     | None -> None
@@ -1146,7 +1132,7 @@ let enter_lock ?block ?create ?contents path f =
     when not !began ->
       fail_unavailable "%s is not the lock's own regular file" name
   | exception (Eio.Io _ as e) when not !began ->
-      fail_unavailable "%s cannot be locked: %s" (lock_name path)
+      fail_unavailable "%s cannot be locked: %s" (Eio_fs.Path.name path)
         (Printexc.to_string e)
   | exception Invalid_argument m when not !began -> fail_unavailable "%s" m
 

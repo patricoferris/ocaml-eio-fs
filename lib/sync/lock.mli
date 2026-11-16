@@ -1,8 +1,8 @@
 (** The critical section a component runs its file operations inside, supplied
-    by whoever deploys it. What exclusion a directory admits is the host's to
-    say: on a POSIX host another process can open the same files, so the section
-    is a record lock ([Eio_fs_unix.with_lock]); where the backend declares
-    [Eio_fs_sync.Process_local], the fiber exclusion is the whole of it. *)
+    by whoever deploys it. The host decides what exclusion a directory needs: on
+    a POSIX host another process can open the same files, so the section is a
+    record lock ([Eio_fs_unix.with_lock]); where the backend declares
+    [Eio_fs_sync.Process_local], excluding fibers is enough. *)
 
 type t
 (** The type for critical-section runners. *)

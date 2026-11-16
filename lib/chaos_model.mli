@@ -124,7 +124,7 @@ module Op : sig
         (** The path the operation names, as given to the wrapped directory it
             went through; for a file operation, the path the file was opened by.
             A scripted rule matches it exactly as spelt: through the root
-            {!Fs.v} returns, whose path is ["/"], a file is ["/f"]. *)
+            {!Eio_fs.Fs.v} returns, whose path is ["/"], a file is ["/f"]. *)
     file_offset : int;
         (** The byte offset of a read or a write, and [0] otherwise. *)
     length : int;
@@ -192,10 +192,8 @@ module Schedule : sig
       It injects nothing of its own, so [observing f empty] is a pass-through
       wrapper that reports what the code under test asked the filesystem for.
 
-      A test asserts a caller's cost with it in the unit the work is measured in
-      rather than in seconds: how many reads a scan issues over a file is a
-      property of the code, where the time it takes to issue them is a property
-      of the machine it ran on. *)
+      A test counts with it what a caller asks of the filesystem, such as the
+      reads a scan issues, which does not depend on the machine. *)
 
   val hook : (Op.t -> Fault.t option) -> t
   (** [hook f] injects the fault [f] answers for each operation. *)
@@ -230,17 +228,17 @@ val wrap : Schedule.t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
     over: a wrapper over a host directory is no native working directory for a
     child process, and its files hand out no host descriptor, except to
     [eio-fs.unix], which takes a lock on the descriptor beneath. A rename from
-    an in-memory directory of {!Fs} into a wrapper over the same tree is the
-    in-memory rename, outside [schedule]; one from a host directory of another
-    backend into a wrapper is refused by that backend, which finds no directory
-    of its own there. *)
+    an in-memory directory of {!Eio_fs.Fs} into a wrapper over the same tree is
+    the in-memory rename, outside [schedule]; one from a host directory of
+    another backend into a wrapper is refused by that backend, which finds no
+    directory of its own there. *)
 
 (** A power-loss durability model over a base directory capability.
 
-    Every write is tracked as un-synced until a successful {!Eio.File.sync}
-    makes that file's prior writes durable. A file is known by its inode, not
-    its path: a sync through any name of it, through a symbolic link, [.] or
-    [..], or through a read-only handle, is a sync of that file, and its pending
+    Every write is tracked as unsynced until a successful {!Eio.File.sync} makes
+    that file's prior writes durable. A file is known by its inode, not its
+    path: a sync through any name of it, through a symbolic link, [.] or [..],
+    or through a read-only handle, is a sync of that file, and its pending
     writes follow it through a rename of itself or of a directory above it.
 
     {b A failed sync loses the file's pending writes.} Linux marks the pages
@@ -257,11 +255,10 @@ val wrap : Schedule.t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
     whether a later sync ran or not; the other policies keep the page cache's.
     Before the failure the lost writes are pending like any write; after it, no
     crash shows them but through such a block. This holds for a sync failure
-    {!Chaos.wrap} injects above the model and for one the base raises beneath
-    it. The only safe recovery is to write the data again from the application's
-    own copy. A crash rewrites the base to a post-crash image in which un-synced
-    writes may be dropped or reordered, which demonstrates the classic
-    missing-{!Eio.File.sync} hazard.
+    {!wrap} injects above the model and for one the base raises beneath it. The
+    only safe recovery is to write the data again from the application's own
+    copy. A crash rewrites the base to a post-crash image in which unsynced
+    writes may be dropped or reordered.
 
     {b Directory operations are journaled.} Creation, [mkdir], [unlink],
     [rmdir], [symlink], [rename], [chmod] and [chown] enter a metadata journal
@@ -313,7 +310,7 @@ val wrap : Schedule.t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
     rolled back whole; an entry a deferred barrier covers survives, with the
     entries it needs, whenever it would hold. *)
 module Crash : sig
-  (** The type for the kinds of un-synced change a journal entry records. *)
+  (** The type for the kinds of unsynced change a journal entry records. *)
   type op_kind =
     | Data  (** A write; its offset and length locate it. *)
     | Truncate  (** A truncation; its offset is the new length. *)
@@ -341,13 +338,13 @@ module Crash : sig
             directory operation. *)
     seq : int;  (** The change's position in program order. *)
   }
-  (** The type for un-synced changes. *)
+  (** The type for unsynced changes. *)
 
-  (** The type for how the post-crash image is rebuilt from the un-synced
+  (** The type for how the post-crash image is rebuilt from the unsynced
       changes. *)
   type policy =
     | Drop_unsynced
-        (** The state at the last barriers: every un-synced write is lost and
+        (** The state at the last barriers: every unsynced write is lost and
             every uncommitted directory operation is rolled back, but for the
             truncations made before a committed one. It is one crash state among
             many. It hides the bugs that need a later change to land, such as a
@@ -379,7 +376,7 @@ module Crash : sig
             handle. The [int] is the seed; the same seed and workload reproduce
             the same image. *)
     | Survive of (unsynced -> bool)
-        (** Scripted: an un-synced write survives iff the predicate holds;
+        (** Scripted: an unsynced write survives iff the predicate holds;
             survivors keep program order. A disk writes a 512-byte sector whole,
             so where a surviving write overwrote bytes the file held, its sector
             holds what the page cache held after it, the earlier overwrites of
@@ -471,9 +468,9 @@ module Crash : sig
       subdirectories opened through it stay wrapped and share [t]. The tree
       under [base] when [wrap] is called is [t]'s durable starting image.
 
-      As for {!Chaos.wrap}, the wrapper and what it opens hold [base] out of
-      reach, so every write that reaches [base] through them enters the journal.
-      A file's writes stay un-synced until {!Eio.File.sync} or
+      As for {!Chaos_model.wrap}, the wrapper and what it opens hold [base] out
+      of reach, so every write that reaches [base] through them enters the
+      journal. A file's writes stay unsynced until {!Eio.File.sync} or
       {!Eio_fs_sync.sync_file} reaches it through the wrapper. Under {!Dropped}
       a crash rebuilds the tree from the model, so a change made outside the
       wrapper, by name or on the host descriptor [eio-fs.unix] locks, is gone
@@ -549,7 +546,7 @@ module Crash : sig
       {!Survive} predicate says of it. *)
 
   val pp_unsynced : unsynced Fmt.t
-  (** [pp_unsynced] formats an un-synced change for logs and test failures. *)
+  (** [pp_unsynced] formats an unsynced change for logs and test failures. *)
 end
 
 (**/**)

@@ -1,5 +1,3 @@
-; The sampler of the sampled tier, on a copy of its private module.
-
 (copy_files#
  (files ../../lib/chaos_plan.{ml,mli}))
 

@@ -1,8 +1,3 @@
-; eio-fs.unix: the POSIX durability barrier at full platform strength,
-; advisory file locking, and filesystem capacity. A separate library so the
-; portable machinery (eio-fs.sync) and the in-memory backend stay free of
-; unix.
-
 (library
  (name eio_fs_unix)
  (public_name eio-fs.unix)
@@ -48,9 +43,6 @@
   (with-stdout-to
    %{target}
    (echo "()"))))
-
-; Warnings are errors in development only: a compiler that warns about
-; something new must not fail an installation.
 
 (rule
  (target c_werror.sexp)

@@ -1,6 +1,8 @@
 (* 80k creates and stats in one directory, within a processor-time bound a
    hundred times above what the map of entries takes: a list of entries made
-   each one a scan, 10^10 steps. Run with [dune build @scaling]. *)
+   each one a scan, 10^10 steps. It reads a clock, which a loaded machine
+   makes flaky, so it is not part of [@runtest]: run it with
+   [dune build @scaling]. *)
 
 let ( / ) = Eio.Path.( / )
 

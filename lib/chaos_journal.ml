@@ -207,9 +207,8 @@ let sync_attrs ~upto t ino =
 (* A commit carries the setuid clears before it, which ext4 journals in the
    running transaction. *)
 let rec settle t ~reached ~commit =
-  let ready e = (not e.committed) && reached e in
   match
-    Ids.fold (fun _ e acc -> if ready e then e :: acc else acc) t.pool []
+    Ids.fold (fun _ e acc -> if reached e then e :: acc else acc) t.pool []
   with
   | [] -> ()
   | ready ->

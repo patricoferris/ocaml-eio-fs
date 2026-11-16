@@ -1,13 +1,9 @@
-(* What the chaos, crash and writeback cases share. *)
-
 module Chaos = Eio_fs.Chaos.Private
 module Crash = Chaos.Crash
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
-(* [raw] is the un-perturbed base (for setup and for reading back what actually
-   committed); [chaos] wraps the same in-memory tree with [schedule]. *)
 let with_chaos schedule fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
@@ -22,9 +18,6 @@ let contents file =
   Eio.File.pread_exact file ~file_offset:(i63 0) [ buf ];
   Cstruct.to_string buf
 
-(* [raw] is the un-perturbed base; [fs] is the same in-memory tree with
-   durability tracked by [ctl]. After a crash, reads go through [raw] (or the
-   handle [Crash.post_crash] returns), never through the dead [fs]. *)
 let with_crash ctl fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
@@ -34,17 +27,15 @@ let with_crash ctl fn =
 
 let absent p = Eio.Path.kind ~follow:false p = `Not_found
 
-(* Run [fn] over a crash-wrapped private temp directory on the real
-   filesystem, then hand the recovered directory to [check]. *)
 let with_real_crash ctl fn ~check =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   let dir = Filename.temp_file "eio-fs-crash" "" in
   Sys.remove dir;
-  Eio.Path.mkdir ~perm:0o755 Eio.Path.(fs / dir);
-  let real = (Eio.Path.(fs / dir) :> Eio.Fs.dir_ty Eio.Path.t) in
-  Fun.protect ~finally:(fun () ->
-      Eio.Path.rmtree ~missing_ok:true Eio.Path.(fs / dir))
+  let dir = Eio.Path.(fs / dir) in
+  Eio.Path.mkdir ~perm:0o755 dir;
+  let real = (dir :> Eio.Fs.dir_ty Eio.Path.t) in
+  Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true dir)
   @@ fun () ->
   let wrapped = Crash.wrap ctl real in
   fn wrapped;

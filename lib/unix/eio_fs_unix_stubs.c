@@ -3,6 +3,9 @@
   SPDX-License-Identifier: ISC
   ---------------------------------------------------------------------------*/
 
+/* Warnings are errors in the dev profile only: a compiler that warns about
+   something new must not fail an installation. */
+
 /* SEEK_DATA, SEEK_HOLE and FS_IOC_FIEMAP are behind _GNU_SOURCE on glibc, so
    the define comes before every include. */
 #ifndef _GNU_SOURCE

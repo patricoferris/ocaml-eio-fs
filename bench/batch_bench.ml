@@ -1,7 +1,8 @@
 (* Writes every file of a git repository's HEAD into a fresh directory three
    ways, with 8 fibres each: one Eio.Path call per operation, Eio_fs_unix.Batch
    with 512 operations per hop, and unconfined Unix calls with 512 operations
-   per run_in_systhread. Prints files/s for each. *)
+   per run_in_systhread. Prints files/s for each. No test runs it:
+   [dune exec bench/batch_bench.exe -- <git repo> <scratch dir>]. *)
 
 type entry = { path : string; perm : int; link : bool; contents : string }
 

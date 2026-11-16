@@ -1,7 +1,6 @@
 open Alcobar
 
-(* The disjoint, ordered list of ranges the in-memory filesystem and the crash
-   model each kept before [Extents]. *)
+(* A reference: a disjoint, ordered list of ranges. *)
 module Ref = struct
   let add a b held =
     if b <= a then held

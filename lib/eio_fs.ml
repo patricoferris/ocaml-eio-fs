@@ -85,13 +85,6 @@ module Nofollow = struct
       ~read:(Eio.Flow.single_read file)
 end
 
-(* A path with no last component is called by the whole of itself: "/" is
-   "/", ".." is "..", and the empty path is ".". *)
-let last_component path =
-  match Eio_fs_path.basename path with
-  | "" -> if String.equal path "" then "." else path
-  | base -> base
-
 module Path = struct
   type usage = {
     allocated_bytes : int64;
@@ -196,7 +189,7 @@ module Path = struct
   let name path =
     match Eio.Path.native path with
     | Some native -> native
-    | None -> Fmt.str "%a" Eio.Path.pp path
+    | None -> Fmt.to_to_string Eio.Path.pp path
 
   type node = Node of string * node list
 
@@ -214,7 +207,7 @@ module Path = struct
     pp_children ppf (guides ^ rule) children
 
   let pp_tree ~depth =
-    let name (_, p) = last_component p in
+    let name (_, p) = Low_level.last_component p in
     let rec node depth path =
       match Eio.Path.kind ~follow:false path with
       | `Regular_file -> Some (Node (name path, []))

@@ -39,18 +39,17 @@ let () =
   in
   Eio.Exn.Backend.register_pp pp_eio_fs
 
-module Error = struct
-  let not_found path =
-    let exn = Eio.Exn.create Eio.Fs.(E (Not_found (Eio_fs path))) in
-    raise exn
+let last_component path =
+  match Eio_fs_path.basename path with
+  | "" -> if String.equal path "" then "." else path
+  | base -> base
 
-  let already_exists path =
-    let exn = Eio.Exn.create Eio.Fs.(E (Already_exists (Eio_fs path))) in
-    raise exn
+module Error = struct
+  let not_found path = raise (Eio.Fs.err (Not_found (Eio_fs path)))
+  let already_exists path = raise (Eio.Fs.err (Already_exists (Eio_fs path)))
 
   let permission_denied path =
-    let exn = Eio.Exn.create Eio.Fs.(E (Permission_denied (Eio_fs path))) in
-    raise exn
+    raise (Eio.Fs.err (Permission_denied (Eio_fs path)))
 
   let outside_sandbox path =
     raise (Eio.Fs.err (Permission_denied (Outside_sandbox path)))
@@ -106,11 +105,9 @@ module User = struct
     if u.uid = 0 then
       want land x = 0 || stat.kind = `Directory || stat.perm land 0o111 <> 0
     else
-      let in_group g = stat.gid = id g in
       let bits =
         if stat.uid = id u.uid then stat.perm lsr 6
-        else if in_group u.gid || List.exists in_group u.groups then
-          stat.perm lsr 3
+        else if in_group u stat.gid then stat.perm lsr 3
         else stat.perm
       in
       bits land want = want
@@ -148,11 +145,6 @@ type os = [ `Linux | `Macos ]
    was made with. A name that is not UTF-8, which APFS never stores, is its
    own key. *)
 module Name = struct
-  let fold_uchars u acc =
-    match Uucp.Case.Fold.fold u with
-    | `Self -> u :: acc
-    | `Uchars us -> List.rev_append us acc
-
   let nfd us =
     let n = Uunf.create `NFD in
     let out = ref [] in
@@ -182,11 +174,12 @@ module Name = struct
     | `Macos when not (String.is_valid_utf_8 name) -> name
     | `Macos ->
         let folded =
-          List.rev
-            (List.fold_left
-               (fun acc u -> fold_uchars u acc)
-               []
-               (nfd (uchars name)))
+          List.concat_map
+            (fun u ->
+              match Uucp.Case.Fold.fold u with
+              | `Self -> [ u ]
+              | `Uchars us -> us)
+            (nfd (uchars name))
         in
         let b = Buffer.create (String.length name) in
         List.iter (Buffer.add_utf_8_uchar b) (nfd folded);
@@ -335,9 +328,7 @@ end
 
 module Fd_table = Map.Make (Num)
 
-(* Only what the tree itself holds. This backend has no console, so it has no
-   standard streams to open: descriptors 0 to 2 are reserved by {!first_fd} and
-   never resolve to anything. *)
+(* What the tree holds. *)
 module Resource = struct
   type t = File of File.t | Dir of Dir_node.t | Symlink of Symlink.t
 
@@ -390,7 +381,7 @@ let truncate_file ~now r =
   | Resource.File f ->
       let stat = changed ~now { f.stat with size = Optint.Int63.zero } in
       r := File (File.v ~stat)
-  | _ -> ()
+  | Dir _ | Symlink _ -> ()
 
 (* Descriptors 0 to 2 stay reserved for the standard streams, so a number this
    backend hands out is never one a caller reads as stdin, stdout or stderr. *)
@@ -435,7 +426,7 @@ module Fd = struct
     mutable closed : bool;
   }
 
-  let v ?(append = false) ~writable ~user fs num =
+  let v ~append ~writable ~user fs num =
     { fs; num; append; writable; user; pos = Optint.Int63.zero; closed = false }
 
   let closed t = t.closed
@@ -486,11 +477,10 @@ let default_stat =
    [parent], from which a new directory also takes the setgid bit. A new
    file in a group its maker is not in loses setgid, as Linux strips it at
    create (mode_strip_sgid). *)
-let new_stat fs ~(user : User.t) ?parent ?kind ?perm () =
+let new_stat fs ~(user : User.t) ?parent ?kind ~perm () =
   fs.last_ino <- Int64.succ fs.last_ino;
   let now = fs.now () in
   let kind = Option.value ~default:default_stat.kind kind in
-  let perm = Option.value ~default:default_stat.perm perm in
   let gid, perm =
     match (fs.os, parent) with
     (* macOS, as BSD, gives every new entry its directory's group. *)
@@ -524,8 +514,6 @@ let new_stat fs ~(user : User.t) ?parent ?kind ?perm () =
 module Filesystem = struct
   type t = resource ref Entries.t
 
-  (* A function, not a value: the root is a [ref] mutated in place as entries
-     are added, so each empty filesystem needs its own fresh root ref. *)
   let empty ~(owner : User.t) ~now : t =
     let root =
       Resource.Dir
@@ -1032,12 +1020,11 @@ let chown ~follow ?uid ?gid dir_fd path =
   let uid = Option.value ~default:s.uid uid in
   let gid = Option.value ~default:s.gid gid in
   let (user : User.t) = dir_fd.user in
-  let mine g =
-    g = User.id user.gid || List.exists (fun g' -> g = User.id g') user.groups
-  in
   if
     user.uid <> 0
-    && not (User.owns user s && uid = s.uid && (gid = s.gid || mine gid))
+    && not
+         (User.owns user s && uid = s.uid
+         && (gid = s.gid || User.in_group user gid))
   then Error.permission_denied path;
   r :=
     Resource.set_stat !r
@@ -1152,9 +1139,9 @@ let symlinkat ~link_to dir_fd path =
       }
     in
     let d = as_dir ~path !r in
-    let dir = Symlink.v ~link_to new_stat in
+    let link = Symlink.v ~link_to new_stat in
     let ino = new_stat.ino in
-    Filesystem.add_file fs ino (ref (Resource.Symlink dir));
+    Filesystem.add_file fs ino (ref (Resource.Symlink link));
     r := Dir (Dir_node.add fs.os name ino d);
     entries_changed ~now:new_stat.ctime r
   in
@@ -1169,40 +1156,32 @@ let read_link dir_fd path =
       s.link_to
   | _ -> Error.err ("readlink: invalid argument: " ^ path)
 
-(* Listing a directory needs its read bit: EACCES. *)
-let check_read ~user path r =
-  match !r with
-  | Resource.Dir d when not (User.can user d.stat User.r) ->
-      Error.permission_denied path
-  | _ -> ()
-
-let read_dir dir_fd path =
-  locked (Dir.fs dir_fd) @@ fun () ->
+(* The names and inodes of the directory [path]. Listing a directory needs
+   its read bit: EACCES. *)
+let entries dir_fd path =
   let r = Filesystem.lookup ~follow:true dir_fd path in
-  check_read ~user:dir_fd.user path r;
   match !r with
+  | Resource.Dir d when not (User.can dir_fd.user d.stat User.r) ->
+      Error.permission_denied path
   | Resource.Dir dir ->
       Resource.update r (accessed ~now:((Dir.fs dir_fd).now ()));
-      List.map fst (Dir_node.names dir)
+      Dir_node.names dir
   | _ -> Error.err "Not a directory"
+
+let read_dir dir_fd path =
+  locked (Dir.fs dir_fd) @@ fun () -> List.map fst (entries dir_fd path)
 
 let read_dir_entries dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () ->
-  let r = Filesystem.lookup ~follow:true dir_fd path in
-  check_read ~user:dir_fd.user path r;
-  match !r with
-  | Resource.Dir dir ->
-      Resource.update r (accessed ~now:((Dir.fs dir_fd).now ()));
-      List.map
-        (fun (name, ino) ->
-          let kind =
-            match Entries.find_opt ino (Dir.fs dir_fd).tree with
-            | Some res -> (Resource.stat !res).kind
-            | None -> `Unknown
-          in
-          (kind, name))
-        (Dir_node.names dir)
-  | _ -> Error.err "Not a directory"
+  List.map
+    (fun (name, ino) ->
+      let kind =
+        match Entries.find_opt ino (Dir.fs dir_fd).tree with
+        | Some res -> (Resource.stat !res).kind
+        | None -> `Unknown
+      in
+      (kind, name))
+    (entries dir_fd path)
 
 let rmdir dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () ->
@@ -1353,7 +1332,7 @@ let renamed ~fs ~old_res ~old_parent ~new_parent ~dst existing =
     entries_changed ~now ~subdirs:(moved - replaced) new_parent
   end;
   Option.iter
-    (fun (dst_ino, _) ->
+    (fun dst_ino ->
       Option.iter (unlinked ~now) dst;
       fs.tree <- Entries.remove dst_ino fs.tree)
     existing
@@ -1368,7 +1347,7 @@ let move_or_replace ~fs ~replace ~user ~old_res ~ino ~old_parent ~old_name
   in
   if (not replace) && Option.is_some existing then Error.already_exists new_path;
   let dst =
-    Option.bind existing (fun (dst_ino, _) -> Entries.find_opt dst_ino tree)
+    Option.bind existing (fun dst_ino -> Entries.find_opt dst_ino tree)
   in
   check_rename_access ~user ~tree ~old_res ~old_parent ~old_path ~new_parent
     ~dst new_path;
@@ -1405,15 +1384,11 @@ let rename ?(replace = true) dir_fd old_path new_dir new_path =
   let new_parent = Filesystem.here new_w in
   check_live (Dir.fs new_dir) new_parent new_path;
   let new_dir_node = as_dir ~path:new_path !new_parent in
-  let existing =
-    Option.map
-      (fun ino -> (ino, new_name))
-      (Dir_node.find os new_name new_dir_node)
-  in
+  let existing = Dir_node.find os new_name new_dir_node in
   match existing with
   (* Two names of one entry: rename(2) does nothing; on macOS, one that
      differs only in case or normalisation respells it. *)
-  | Some (dst_ino, _) when Inode.equal dst_ino ino ->
+  | Some dst_ino when Inode.equal dst_ino ino ->
       if os = `Macos && old_parent == new_parent then begin
         check_dir_write ~user:dir_fd.user old_parent old_path;
         move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
@@ -1481,55 +1456,40 @@ let writev t bufs =
       Cstruct.length src
   | r -> not_a_file "writev" r
 
+(* The bytes of [e] from [off] on into [bufs]: how many. At or past the end
+   nothing is read. *)
+let read_at (e : File.t) off bufs =
+  let size = File.size e in
+  List.fold_left
+    (fun read buf ->
+      let off = off + read in
+      let n = max 0 (min (Cstruct.length buf) (size - off)) in
+      if n > 0 then File.blit e.contents ~src_off:off buf ~dst_off:0 ~len:n;
+      read + n)
+    0 bufs
+
 let readv t bufs =
   locked t.Fd.fs @@ fun () ->
   let r = resource_of t in
   match !r with
   | File e ->
       read_from t r bufs;
-      let read = ref 0 in
-      let pos = ref t.pos in
-      let size = Optint.Int63.to_int e.stat.size in
-      List.iter
-        (fun buf ->
-          let len = Cstruct.length buf in
-          let posi = Optint.Int63.to_int !pos in
-          let actual_len = max 0 (min len (size - posi)) in
-          (* At or past the end nothing is read: end of file. *)
-          if actual_len > 0 then
-            File.blit e.contents ~src_off:posi buf ~dst_off:0 ~len:actual_len;
-          pos := Optint.Int63.add !pos (Optint.Int63.of_int actual_len);
-          read := !read + actual_len)
-        bufs;
-      t.pos <- !pos;
-      !read
+      let read = read_at e (Optint.Int63.to_int t.pos) bufs in
+      t.pos <- Optint.Int63.add t.pos (Optint.Int63.of_int read);
+      read
   | r -> not_a_file "readv" r
 
-(* Positioned reads and writes address an explicit [file_offset] and never move
-   the cursor, unlike [readv]/[writev]. This mirrors [Eio.File.pread]/[pwrite]. *)
+(* Positioned reads and writes never move the cursor. *)
 let preadv t ~file_offset bufs =
   locked t.Fd.fs @@ fun () ->
   check_offset "pread" file_offset;
   let r = resource_of t in
   match !r with
-  | Resource.File e ->
+  | Resource.File e -> (
       read_from t r bufs;
-      let size = File.size e in
       let start = Optint.Int63.to_int file_offset in
-      if start >= size then raise End_of_file
-      else begin
-        let off = ref start in
-        let read = ref 0 in
-        List.iter
-          (fun buf ->
-            let len = Cstruct.length buf in
-            let actual = max 0 (min len (size - !off)) in
-            File.blit e.contents ~src_off:!off buf ~dst_off:0 ~len:actual;
-            off := !off + actual;
-            read := !read + actual)
-          bufs;
-        if !read = 0 then raise End_of_file else !read
-      end
+      if start >= File.size e then raise End_of_file
+      else match read_at e start bufs with 0 -> raise End_of_file | n -> n)
   | r -> not_a_file "pread" r
 
 let pwritev t ~file_offset bufs =
@@ -1588,7 +1548,7 @@ module Flow = struct
     type t = Fd.t
 
     let stat = stat
-    let single_write t bufs = writev t bufs
+    let single_write = writev
 
     (* Copy using the [Read_source_buffer] optimisation.
        Avoids a copy if the source already has the data. *)
@@ -1617,14 +1577,14 @@ module Flow = struct
     let getsockopt _ _ = Fmt.failwith "in-memory flow has no socket options"
     let setsockopt _ _ _ = Fmt.failwith "in-memory flow has no socket options"
     let read_methods = []
-    let pread t ~file_offset bufs = preadv t ~file_offset bufs
-    let pwrite t ~file_offset bufs = pwritev t ~file_offset bufs
-    let seek t off cmd = seek_fd t off cmd
+    let pread = preadv
+    let pwrite = pwritev
+    let seek = seek_fd
 
     (* The in-memory store is already durable, so [sync] has nothing to
        flush; a closed descriptor still refuses it. *)
     let sync t = ignore (Fd.num t)
-    let truncate t len = truncate_fd t len
+    let truncate = truncate_fd
     let close = close
   end
 

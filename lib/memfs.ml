@@ -17,17 +17,10 @@
 open! Hermetic
 open Eio.Std
 
-(* A path with no last component is called by the whole of itself: "/" is
-   "/", ".." is "..", and the empty path is ".". *)
-let last_component path =
-  match Eio_fs_path.basename path with
-  | "" -> if String.equal path "" then "." else path
-  | base -> base
-
 type dir_fd = Low_level.Dir.fd
 
-(* A rename hands back a plain [Eio.Fs.dir]; this checks the new location is
-   within its sandbox. *)
+(* The [dir_fd] beneath an in-memory directory: a rename's target and
+   [as_user] ask for it. *)
 type (_, _, _) Eio.Resource.pi +=
   | Memfs_dir : ('t, 't -> dir_fd, [> `Memfs_dir ]) Eio.Resource.pi
 
@@ -105,8 +98,8 @@ end = struct
       if append then Low_level.Open_flags.(flags + o_append) else flags
     in
     let flags = nofollow ~follow Low_level.Open_flags.(flags + o_rdwr) in
-    match Low_level.openat ~sw ~mode (fd t) path flags with
-    | fd -> (Low_level.Flow.of_fd fd :> Eio.File.rw_ty r)
+    let fd = Low_level.openat ~sw ~mode (fd t) path flags in
+    (Low_level.Flow.of_fd fd :> Eio.File.rw_ty r)
 
   let mkdir t ~perm path = Low_level.mkdirat ~perm (fd t) path
   let unlink t path = Low_level.unlink (fd t) path
@@ -131,23 +124,25 @@ end = struct
     in
     Low_level.close fd
 
-  let rename t old_path (new_dir : [> Eio.Fs.dir_ty ] Eio.Std.r) new_path =
-    match as_memfs_dir new_dir with
+  let target dir =
+    match as_memfs_dir dir with
     | None -> invalid_arg "Eio_fs: the target is not an in-memory directory"
-    | Some new_dir -> Low_level.rename (fd t) old_path new_dir new_path
+    | Some dir -> dir
+
+  let rename t old_path (new_dir : [> Eio.Fs.dir_ty ] Eio.Std.r) new_path =
+    let new_dir = target new_dir in
+    Low_level.rename (fd t) old_path new_dir new_path
 
   let rename_exclusive t _backend ~source ~target:(new_dir, new_path) =
-    match as_memfs_dir new_dir with
-    | None -> invalid_arg "Eio_fs: the target is not an in-memory directory"
-    | Some new_dir ->
-        Low_level.rename ~replace:false (fd t) source new_dir new_path
+    let new_dir = target new_dir in
+    Low_level.rename ~replace:false (fd t) source new_dir new_path
 
   let symlink ~link_to t path = Low_level.symlinkat ~link_to (fd t) path
 
   let open_dir t ~sw path =
     let flags = Low_level.Open_flags.(o_rdonly + o_directory) in
     let fd = Low_level.openat ~sw ~mode:0 (fd t) path flags in
-    let label = last_component path in
+    let label = Low_level.last_component path in
     let full_path = Eio_fs_path.append t.dir_path path in
     let d =
       v ~label ~path:full_path
@@ -225,7 +220,7 @@ let as_user user ((d, path) : _ Eio.Path.t) =
   match as_memfs_dir d with
   | None -> invalid_arg "Eio_fs.Fs.as_user: not an in-memory directory"
   | Some fd ->
-      let label = Fmt.str "%a" Eio.Path.pp (d, "") in
+      let label = Fmt.to_to_string Eio.Path.pp (d, "") in
       (dir ~label ~path:"." { fd with user }, path)
 
 let held ((d, path) : _ Eio.Path.t) =
@@ -272,30 +267,20 @@ let load ?clock ?(filter = fun _ -> true) ?os path =
   let fs = fs t in
   let switch_filesystem (_, path) = (fs, path) in
   let keep_mode = keep_mode fs in
-  let rec make_fs v =
+  let rec copy_dir (stat : Eio.File.Stat.t) v =
+    Eio.Path.mkdirs ~exists_ok:true ~perm:stat.perm (switch_filesystem v);
+    List.iter (fun name -> make_fs Eio.Path.(v / name)) (Eio.Path.read_dir v);
+    keep_mode stat v
+  and make_fs v =
     let stat = Eio.Path.stat ~follow:false v in
     match stat.kind with
     | `Regular_file -> if filter v then copy_regular fs stat v
-    | `Directory ->
-        if filter v then begin
-          Eio.Path.mkdirs ~exists_ok:true ~perm:stat.perm (switch_filesystem v);
-          List.iter
-            (fun fname -> make_fs Eio.Path.(v / fname))
-            (Eio.Path.read_dir v);
-          keep_mode stat v
-        end
+    | `Directory -> if filter v then copy_dir stat v
     | `Symbolic_link ->
-        if not (filter v) then ()
-        else
+        if filter v then
           let link_to = Eio.Path.read_link v in
           Eio.Path.symlink ~link_to (switch_filesystem v)
     | _ -> Eio.traceln "Skipping %a" Eio.Path.pp v
   in
-  if filter path then begin
-    Eio.Path.mkdirs ~exists_ok:true ~perm:stat.perm (fs, snd path);
-    List.iter
-      (fun name -> make_fs Eio.Path.(path / name))
-      (Eio.Path.read_dir path);
-    keep_mode stat path
-  end;
+  if filter path then copy_dir stat path;
   (fs, "/")
