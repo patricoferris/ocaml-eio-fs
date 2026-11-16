@@ -646,7 +646,7 @@ let write_at fs m path k data =
    an existing name) are skipped, so every tape is valid. Candidate lists come
    from the model's sorted map, so the same tape always drives the same
    operations. *)
-let apply_op ~dir_barriers fs ctl (m : Model.t) b0 b1 b2 b3 =
+let apply_op fs ctl (m : Model.t) b0 b1 b2 b3 =
   match b0 mod 12 with
   | 0 -> (
       (* create a file with unsynced content *)
@@ -729,14 +729,14 @@ let apply_op ~dir_barriers fs ctl (m : Model.t) b0 b1 b2 b3 =
   | _ -> (
       (* the barrier on one directory: its own entries only *)
       match pick (dirs m) b1 with
-      | Some dir when dir_barriers ->
+      | Some dir ->
           Eio_fs_sync.sync_dir (if String.equal dir "" then fs else fs / dir);
           Model.commit_dir m dir
-      | Some _ | None -> ())
+      | None -> ())
 
 (* Run [tape] against a fresh crash-wrapped tree; return the model and the
    recovered tree. *)
-let run_tape ?(dir_barriers = true) ?outside ~policy tape =
+let run_tape ?outside ~policy tape =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let ctl = Crash.v ?outside ~policy () in
@@ -746,7 +746,7 @@ let run_tape ?(dir_barriers = true) ?outside ~policy tape =
   let steps = min 32 (Int.div len 4) in
   for i = 0 to steps - 1 do
     let b j = Char.code tape.[(i * 4) + j] in
-    apply_op ~dir_barriers fs ctl m (b 0) (b 1) (b 2) (b 3)
+    apply_op fs ctl m (b 0) (b 1) (b 2) (b 3)
   done;
   let post = Crash.post_crash ctl in
   (m, snapshot post)
