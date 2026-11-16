@@ -1665,6 +1665,25 @@ let test_probe_names_the_holding_process () =
   Alcotest.check status "the holder let go when told" (`Exited 0) (release ());
   check_free_probe "after the child" lock ~record:"the last holder\n"
 
+(* Through a wrapper with no fault, a probe answers as it does on the host
+   directory beneath: a file the wrapper opened for reading hands eio-fs.unix
+   the host descriptor the kernel is asked on. *)
+let test_probe_through_a_wrapper_names_the_holding_process () =
+  with_real_dir_env @@ fun env dir ->
+  let lock = dir / "lock" in
+  Eio_fs_unix.with_lock ~contents:"the last holder\n" lock (fun () -> ());
+  Eio.Switch.run @@ fun sw ->
+  let child, release = holding_process ~sw ~env ~kind:"record" ~lock in
+  let wrapped = Chaos.wrap Chaos.Schedule.empty dir in
+  (match Eio_fs_unix.probe (wrapped / "lock") with
+  | `Free _ -> Alcotest.fail "a lock another process holds probed as free"
+  | `Held refused ->
+      Alcotest.(check (option int))
+        "the holder the probe names"
+        (Some (Eio.Process.pid child))
+        refused.holder);
+  Alcotest.check status "the holder let go when told" (`Exited 0) (release ())
+
 (* A probe from the holding process names it, and like any ask from there it
    keeps the hold: only another process can tell. *)
 let test_probe_from_the_holder_keeps_its_hold () =
@@ -3588,6 +3607,8 @@ let suite =
         test_lock_asks_while_the_holder_lets_go;
       Alcotest.test_case "a probe names the holding process" `Quick
         test_probe_names_the_holding_process;
+      Alcotest.test_case "probe through a wrapper names the holding process"
+        `Quick test_probe_through_a_wrapper_names_the_holding_process;
       Alcotest.test_case "a probe from the holder keeps its hold" `Quick
         test_probe_from_the_holder_keeps_its_hold;
       Alcotest.test_case "a probe answers a read-only lock file" `Quick
