@@ -13,9 +13,12 @@ With Docker running:
 
 `scripts/generate.sh` records in the Docker image it pins by digest, through
 the eio_posix of the opam switch dune builds in, as an ordinary user: once on
-a tmpfs and once on an ext4 image the container loop-mounts, which takes
-`docker run --privileged`. Each row is a workload, then its answer on each
-filesystem. dune promotes the result into `traces/linux.csv`.
+a tmpfs and once on an ext4 image with 4096-byte blocks, as on a disk, that
+the container loop-mounts, which takes `docker run --privileged`. Each row is
+a workload, then its answer on each filesystem. dune promotes the result into
+`traces/linux.csv`.
+
+`relatime` moving atime again once a day is not recorded: it takes a day.
 
 ## Provenance
 

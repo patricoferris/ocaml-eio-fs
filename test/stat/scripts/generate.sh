@@ -1,8 +1,9 @@
 #!/bin/bash
 # Records the stat answers of test/stat/workload through eio_posix on Linux, in
 # Docker, in the image pinned below: on a tmpfs, and on an ext4 image the
-# container loop-mounts, which takes --privileged. The trace starts with the
-# "# key: value" lines test/stat/README.md lists.
+# container loop-mounts, which takes --privileged. The image has 4096-byte
+# blocks, mke2fs's choice for a disk rather than for a small image. The trace
+# starts with the "# key: value" lines test/stat/README.md lists.
 #   generate.sh OUT
 set -euo pipefail
 command -v docker >/dev/null || { echo "docker not on PATH" >&2; exit 1; }
@@ -30,7 +31,7 @@ docker run --rm --name fs-stat-rec --privileged --user opam \
     sudo apt-get update -qq >/dev/null
     sudo apt-get install -y -qq e2fsprogs >/dev/null
     truncate -s 64M /tmp/ext4.img
-    /sbin/mkfs.ext4 -q /tmp/ext4.img
+    /sbin/mkfs.ext4 -q -b 4096 /tmp/ext4.img
     sudo mkdir /work/ext4
     sudo mount -o loop /tmp/ext4.img /work/ext4
     sudo chown opam /work/ext4
@@ -43,18 +44,18 @@ docker run --rm --name fs-stat-rec --privileged --user opam \
     ./_build/default/scripts/record.exe tmpfs=/work/tmpfs ext4=/work/ext4 \\
       >/out/linux.csv
     # test/test_memfs.ml checks this digest.
-    digest=\$(cat scripts/record.ml workload/stat_workload.ml | md5sum)
+    digest=\$(cat scripts/record.ml workload/stat_workload.ml | md5sum | cut -d' ' -f1)
     mnt() { awk -v m=\"\$1\" '\$2 == m { print \$3 \", \" \$4 }' /proc/mounts; }
     mkfs=\$(/sbin/mkfs.ext4 -V 2>&1 | head -1)
     bs=\$(/sbin/tune2fs -l /tmp/ext4.img | awk -F': *' '/^Block size/ { print \$2 }')
     printf '# %s: %s\\n' >/out/linux.meta \\
-      'script digest' \"\${digest%% *}\" \\
+      'script digest' \"\$digest\" \\
       'linux os' \"\$(uname -srm)\" \\
       'linux image' $image \\
       'linux user' \"uid \$(id -u), groups \$(id -G)\" \\
       'linux eio_posix' \"\$(opam show -f installed-version eio_posix)\" \\
       tmpfs \"\$(mnt /work/tmpfs)\" \\
-      ext4 \"\$(mnt /work/ext4), \$mkfs defaults, \$bs-byte blocks\"
+      ext4 \"\$(mnt /work/ext4), \$mkfs, \$bs-byte blocks\"
     sudo umount /work/ext4"
 
 {
