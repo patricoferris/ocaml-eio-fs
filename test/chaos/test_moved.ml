@@ -148,6 +148,34 @@ let renamed_before_drain () =
          P.rename P.(fs / "d") P.(fs / "e");
          P.with_open_out ~create:`Never P.(fs / "g") Eio_fs_unix.sync_file))
 
+(* A write and a truncation, then renames of the file and of its
+   directory: each change names the file as it was named when it was made. *)
+let named_when_made () =
+  Eio_mock.Backend.run @@ fun () ->
+  Eio_fs.run @@ fun env ->
+  let t = Crash.v Drop_unsynced in
+  let fs = Crash.wrap t env#fs in
+  P.mkdir ~perm:0o755 P.(fs / "d");
+  P.with_open_out ~create:(`Exclusive 0o644)
+    P.(fs / "d/f")
+    (fun f ->
+      Eio.Flow.copy_string "vv" f;
+      P.rename P.(fs / "d/f") P.(fs / "d/g");
+      Eio.File.truncate f (Optint.Int63.of_int 1));
+  P.rename P.(fs / "d") P.(fs / "e");
+  let changes =
+    List.filter_map
+      (fun (u : Crash.unsynced) ->
+        match u.kind with
+        | Data | Truncate -> Some (Fmt.str "%a" Crash.pp_unsynced u)
+        | _ -> None)
+      (Crash.unsynced t)
+  in
+  Alcotest.(check (list string))
+    "changes"
+    [ "d/f @0+2 #3"; "truncate d/g to 1 #5" ]
+    changes
+
 let suite =
   ( "moved",
     [
@@ -167,4 +195,6 @@ let suite =
         mode_of_moved_file;
       Alcotest.test_case "macOS drains a directory's fsync under a new name"
         `Quick renamed_before_drain;
+      Alcotest.test_case "a change names its file as it was when made" `Quick
+        named_when_made;
     ] )

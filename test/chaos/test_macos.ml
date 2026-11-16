@@ -155,6 +155,51 @@ let retried ?os () =
     ~recover:(fun ~acked env ->
       if acked <> [] && P.load P.(env#fs / "v") <> "one" then failwith "lost")
 
+(* The README's config save, with F_FULLFSYNC on the directory but fsync(2)
+   on the file: the new config may be lost after its rename. *)
+let config () =
+  let save dir v =
+    let tmp = P.(dir / "config.tmp") in
+    P.with_open_out ~create:(`Or_truncate 0o644) tmp (fun f ->
+        Eio.Flow.copy_string v f;
+        Eio.File.sync f);
+    P.rename tmp P.(dir / "config");
+    Eio_fs_unix.sync_dir dir
+  in
+  Eio_fs.Chaos.Crash.check ~os:`Macos
+    ~setup:(fun env -> save env#fs "old")
+    (fun ~ack env ->
+      match save env#fs "new" with () -> ack () | exception Eio.Io _ -> ())
+    ~recover:(fun ~acked env ->
+      match (P.load P.(env#fs / "config"), acked) with
+      | "new", _ | "old", [] -> ()
+      | v, _ -> Fmt.failwith "config is %S" v)
+
+(* Each write or truncation the report says a cut lost or may have lost
+   names its file as the trace's operation of the same number does. *)
+let named_as_traced () =
+  let m = Expect.report config in
+  let trace =
+    String.split_on_char '\n' m
+    |> List.map String.trim
+    |> List.filter (String.starts_with ~prefix:"#")
+  in
+  let changes =
+    Expect.field "lost" m ^ "; " ^ Expect.field "unsynced" m
+    |> String.split_on_char ';' |> List.map String.trim
+    |> List.filter (fun c ->
+        match String.split_on_char ' ' c with
+        | _ :: ("write" | "truncate") :: _ -> true
+        | _ -> false)
+  in
+  if changes = [] then Alcotest.failf "no write in the report: %s" m;
+  List.iter
+    (fun c ->
+      if not (List.mem c trace) then
+        Alcotest.failf "%S is not in the trace:\n%s" c
+          (String.concat "\n" trace))
+    changes
+
 let suite =
   ( "macos",
     [
@@ -186,4 +231,6 @@ let suite =
         (Expect.caught ~tier:"linear" retried);
       Alcotest.test_case "a retry after a failed fsync is lost on macOS" `Quick
         (Expect.caught ~tier:"linear" (retried ~os:`Macos));
+      Alcotest.test_case "a report names a write as its trace does" `Quick
+        named_as_traced;
     ] )
