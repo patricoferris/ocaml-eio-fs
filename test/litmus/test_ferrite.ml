@@ -51,36 +51,28 @@ let two_appends ~fsync =
     observe = [ "0"; "1" ];
   }
 
-(* The [(check equal? (length all-states) n)] of each rosette/litmus test. *)
-let rosette_counts =
+(* Each rosette/litmus test: its [(check equal? (length all-states) n)],
+   and whether its [verify-correctness] finds a surprising state ([sat?]). *)
+let rosette =
   [
-    (chrome, Ferrite.Seqfs, 3);
-    (chrome, ext4, 7);
-    (chrome, Ferrite.ext4 ~nodelalloc:true (), 4);
-    (create_rename ~fsync:false, Seqfs, 4);
-    (create_rename ~fsync:true, Seqfs, 4);
-    (create_rename ~fsync:false, Advfs, 3);
-    (create_rename ~fsync:true, Advfs, 4);
-    (create_rename ~fsync:false, ext4, 5);
-    (create_rename ~fsync:true, ext4, 4);
-    (replace ~fsync:false, Seqfs, 4);
-    (replace ~fsync:true, Seqfs, 4);
-    (replace ~fsync:false, Advfs, 3);
-    (replace ~fsync:true, Advfs, 4);
-    (two_appends ~fsync:false, Seqfs, 5);
-    (two_appends ~fsync:true, Seqfs, 5);
-    (two_appends ~fsync:false, Advfs, 4);
-    (two_appends ~fsync:true, Advfs, 5);
+    (chrome, Ferrite.Seqfs, 3, false);
+    (chrome, ext4, 7, true);
+    (chrome, Ferrite.ext4 ~nodelalloc:true (), 4, false);
+    (create_rename ~fsync:false, Seqfs, 4, false);
+    (create_rename ~fsync:true, Seqfs, 4, false);
+    (create_rename ~fsync:false, Advfs, 3, true);
+    (create_rename ~fsync:true, Advfs, 4, false);
+    (create_rename ~fsync:false, ext4, 5, true);
+    (create_rename ~fsync:true, ext4, 4, false);
+    (replace ~fsync:false, Seqfs, 4, false);
+    (replace ~fsync:true, Seqfs, 4, false);
+    (replace ~fsync:false, Advfs, 3, true);
+    (replace ~fsync:true, Advfs, 4, false);
+    (two_appends ~fsync:false, Seqfs, 5, false);
+    (two_appends ~fsync:true, Seqfs, 5, false);
+    (two_appends ~fsync:false, Advfs, 4, true);
+    (two_appends ~fsync:true, Advfs, 5, false);
   ]
-
-let test_rosette_counts () =
-  List.iter
-    (fun (t, model, n) ->
-      Alcotest.(check int)
-        (Fmt.str "%s on %a" t.name Ferrite.pp_model model)
-        n
-        (Set.cardinal (Ferrite.outcomes model t)))
-    rosette_counts
 
 (* {1 The paper's litmus tests} *)
 
@@ -293,6 +285,18 @@ let cases =
            ]);
   ]
 
+let test_rosette () =
+  List.iter
+    (fun (t, model, n, sat) ->
+      let name = Fmt.str "%s on %a" t.name Ferrite.pp_model model in
+      let c = List.find (fun c -> c.test.name = t.name) cases in
+      let outcomes = Ferrite.outcomes model t in
+      Alcotest.(check int) name n (Set.cardinal outcomes);
+      Alcotest.(check bool)
+        (name ^ ": surprising") sat
+        (Set.exists c.surprising outcomes))
+    rosette
+
 let mark b = if b then "yes" else "no"
 
 let run_case c () =
@@ -332,7 +336,7 @@ let run_case c () =
 
 let suite =
   ( "ferrite",
-    Alcotest.test_case "rosette outcome counts" `Quick test_rosette_counts
+    Alcotest.test_case "rosette outcome counts and verdicts" `Quick test_rosette
     :: List.map
          (fun c -> Alcotest.test_case c.test.name `Quick (run_case c))
          cases )
