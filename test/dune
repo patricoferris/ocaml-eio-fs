@@ -11,6 +11,7 @@
   eio_fs_internal
   stat_workload
   provenance
+  chaos_helpers
   unix
   alcotest
   fmt

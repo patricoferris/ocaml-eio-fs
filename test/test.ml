@@ -6,4 +6,6 @@ let () =
       Test_low_level.suite;
       Test_memfs.suite;
       Test_chaos.suite;
+      Test_crash.suite;
+      Test_writeback.suite;
     ]

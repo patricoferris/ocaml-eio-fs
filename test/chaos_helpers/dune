@@ -1,0 +1,3 @@
+(library
+ (name chaos_helpers)
+ (libraries eio eio.mock eio_main eio_fs eio-fs.sync optint cstruct))
