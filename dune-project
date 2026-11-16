@@ -17,7 +17,7 @@
 
 (package
  (name eio-fs)
- (synopsis "Filesystem helpers and an in-memory backend for Eio")
+ (synopsis "In-memory filesystem for Eio, with fault and power-cut injection for tests")
  (tags (eio filesystem in-memory))
  (description
   "eio-fs is an in-memory filesystem for Eio, with wrappers that inject
