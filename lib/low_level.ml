@@ -904,73 +904,70 @@ let new_file ~mode fs (w : Filesystem.walk) name =
   Filesystem.add_file fs f.stat.ino file;
   file
 
+(* An existing resource [r] opened by [path] with [flags]: write access to a
+   directory is EISDIR, O_DIRECTORY on anything else ENOTDIR. *)
+let opened ~fs ~user path flags r =
+  (match !r with
+  | Resource.Dir _ when Open_flags.(mem o_rdwr flags) ->
+      Error.err ("open: is a directory: " ^ path)
+  | Resource.Dir _ -> ()
+  | _ when Open_flags.(mem o_directory flags) ->
+      Error.err ("open: not a directory: " ^ path)
+  | _ -> ());
+  check_access ~os:fs.os ~user path flags r;
+  if Open_flags.(mem o_trunc flags) then truncate_file ~now:(fs.now ()) r;
+  r
+
+(* O_CREAT looks at the last component without following it. A name in
+   directory syntax there, given or a link's target, is EISDIR, as Linux
+   answers whether it exists or not; a last [.] is the directory itself. A
+   symbolic link there, dangling or not, makes O_EXCL fail with EEXIST and
+   O_NOFOLLOW with ELOOP; otherwise the open follows it and opens its target,
+   or creates it, resolved from the directory holding the link. macOS looks a
+   name in directory syntax up instead: ENOENT if it is missing, ENOTDIR if it
+   is not a directory, EISDIR if it is. *)
+let rec open_creating ~mode ~fs ~opened path flags (w : Filesystem.walk) name
+    ~slash =
+  let child = Filesystem.child w name in
+  if slash && (not (is_dot name)) && w.os = `Macos then begin
+    if Option.is_none child then Error.not_found path;
+    ignore (Filesystem.final ~follow:true w name ~slash)
+  end;
+  if slash && not (is_dot name) then Error.err ("open: is a directory: " ^ path);
+  match child with
+  | None -> new_file ~mode fs w name
+  | Some _ when Open_flags.(mem o_excl flags) -> Error.already_exists path
+  | Some r -> (
+      match !r with
+      | Resource.Symlink _ when Open_flags.(mem o_nofollow flags) ->
+          Error.symlink_loop ()
+      | Resource.Symlink s ->
+          Filesystem.may_follow w name s;
+          Filesystem.follow_link w.follows;
+          let w, name, slash =
+            Filesystem.locate w (Filesystem.link_target name s)
+          in
+          open_creating ~mode ~fs ~opened path flags w name ~slash
+      | _ -> opened r)
+
 (* The descriptor is registered with [sw] once the lock is released: a
    finished switch runs [close] at once, which takes the lock. *)
 let open_locked ~mode dir_fd path flags =
-  let is_create = Open_flags.(mem o_creat flags) in
-  let is_excl = Open_flags.(mem o_excl flags) in
   let append = Open_flags.(mem o_append flags) in
   let writable = Open_flags.(mem o_rdwr flags) in
-  let truncate = Open_flags.(mem o_trunc flags) in
-  let nofollow = Open_flags.(mem o_nofollow flags) in
-  let directory = Open_flags.(mem o_directory flags) in
   let fs = Dir.fs dir_fd in
-  let opened r =
-    (match !r with
-    (* Write access to a directory: EISDIR. *)
-    | Resource.Dir _ when Open_flags.(mem o_rdwr flags) ->
-        Error.err ("open: is a directory: " ^ path)
-    | Resource.Dir _ -> ()
-    (* O_DIRECTORY on anything else: ENOTDIR. *)
-    | _ when directory -> Error.err ("open: not a directory: " ^ path)
-    | _ -> ());
-    check_access ~os:fs.os ~user:dir_fd.user path flags r;
-    if truncate then truncate_file ~now:(fs.now ()) r;
-    r
-  in
+  let opened = opened ~fs ~user:dir_fd.user path flags in
   let r =
-    match is_create || is_excl with
-    | false -> (
-        let r = Filesystem.lookup ~follow:(not nofollow) dir_fd path in
-        match !r with
-        (* O_NOFOLLOW on a symbolic link: ELOOP. *)
-        | Resource.Symlink _ -> Error.symlink_loop ()
-        | _ -> opened r)
-    | true ->
-        (* O_CREAT looks at the last component without following it. A
-           name in directory syntax there, given or a link's target, is
-           EISDIR, as Linux answers whether it exists or not; a last [.] is
-           the directory itself. A symbolic link there, dangling or not,
-           makes O_EXCL fail with EEXIST and O_NOFOLLOW with ELOOP; otherwise
-           the open follows it and opens its target, or creates it, resolved
-           from the directory holding the link. macOS looks a name in
-           directory syntax up instead: ENOENT if it is missing, ENOTDIR if
-           it is not a directory, EISDIR if it is. *)
-        let rec create (w : Filesystem.walk) name ~slash =
-          let child = Filesystem.child w name in
-          if slash && (not (is_dot name)) && w.os = `Macos then begin
-            if Option.is_none child then Error.not_found path;
-            ignore (Filesystem.final ~follow:true w name ~slash)
-          end;
-          if slash && not (is_dot name) then
-            Error.err ("open: is a directory: " ^ path);
-          match child with
-          | None -> new_file ~mode fs w name
-          | Some _ when is_excl -> Error.already_exists path
-          | Some r -> (
-              match !r with
-              | Resource.Symlink _ when nofollow -> Error.symlink_loop ()
-              | Resource.Symlink s ->
-                  Filesystem.may_follow w name s;
-                  Filesystem.follow_link w.follows;
-                  let w, name, slash =
-                    Filesystem.locate w (Filesystem.link_target name s)
-                  in
-                  create w name ~slash
-              | _ -> opened r)
-        in
-        let w, name, slash = Filesystem.locate_from dir_fd path in
-        create w name ~slash
+    if Open_flags.(mem o_creat flags) || Open_flags.(mem o_excl flags) then
+      let w, name, slash = Filesystem.locate_from dir_fd path in
+      open_creating ~mode ~fs ~opened path flags w name ~slash
+    else
+      let follow = not Open_flags.(mem o_nofollow flags) in
+      let r = Filesystem.lookup ~follow dir_fd path in
+      match !r with
+      (* O_NOFOLLOW on a symbolic link: ELOOP. *)
+      | Resource.Symlink _ -> Error.symlink_loop ()
+      | _ -> opened r
   in
   let num = next_fd_of_fds fs.fds in
   fs.fds <- Fd_table.add num r fs.fds;
@@ -1286,19 +1283,9 @@ let reparent res ~new_parent =
       res := Resource.Dir { d with parent = (Resource.stat !new_parent).ino }
   | File _ | Symlink _ -> ()
 
-let rename ?(replace = true) dir_fd old_path new_dir new_path =
-  locked (Dir.fs dir_fd) @@ fun () ->
-  (* rename(2) does not move an entry between two file systems: EXDEV, which
-     Eio.Fs has no constructor for. *)
-  if Dir.fs dir_fd != Dir.fs new_dir then
-    Error.err ("rename: invalid cross-device link: " ^ new_path);
-  let fs = Dir.fs dir_fd in
-  let os = fs.os in
-  let tree = fs.tree in
-  let old_w, old_name, old_slash = Filesystem.locate_from dir_fd old_path in
-  let new_w, new_name, new_slash = Filesystem.locate_from new_dir new_path in
-  (* rename(2) answers EBUSY for a last [.] or [..], or EEXIST for the
-     target's when it must not replace it; macOS answers EINVAL. *)
+(* rename(2) answers EBUSY for a last [.] or [..], or EEXIST for the target's
+   when it must not replace it; macOS answers EINVAL. *)
+let check_rename_dots ~os ~replace ~old_path ~old_name new_path new_name =
   let busy path =
     if os = `Macos then Error.err ("rename: invalid argument: " ^ path)
     else Error.err ("rename: device or resource busy: " ^ path)
@@ -1306,20 +1293,15 @@ let rename ?(replace = true) dir_fd old_path new_dir new_path =
   if is_dot old_name then busy old_path;
   if is_dot new_name then
     if replace || os = `Macos then busy new_path
-    else Error.already_exists new_path;
-  let old_w, old_name = through_link ~slash:old_slash old_w old_name in
-  (* Rename the directory entry itself. In particular, a symlink's target need
-     not exist and must not be followed while moving the link. *)
-  let old_res =
-    match Filesystem.child old_w old_name with
-    | Some r -> r
-    | None -> Error.not_found old_path
-  in
-  (* A trailing slash on either name requires a directory, never followed:
-     ENOTDIR, once a target above the source is ENOTEMPTY. macOS follows a
-     source link in directory syntax, and answers ENOENT for a missing target
-     in directory syntax. *)
-  (match !old_res with
+    else Error.already_exists new_path
+
+(* A trailing slash on either name requires a directory, never followed:
+   ENOTDIR, once a target above the source is ENOTEMPTY. macOS follows a
+   source link in directory syntax, and answers ENOENT for a missing target
+   in directory syntax. *)
+let check_rename_slashes ~os ~tree ~old_res ~old_w ~old_slash ~old_path new_w
+    new_name ~new_slash new_path =
+  match !old_res with
   | Resource.Dir _ -> ()
   | _ when old_slash || new_slash ->
       let dst =
@@ -1333,7 +1315,91 @@ let rename ?(replace = true) dir_fd old_path new_dir new_path =
       check_rename_tree tree ~src:old_res ~old_parent:(Filesystem.here old_w)
         ~new_parent:(Filesystem.here new_w) ~dst new_path;
       Error.not_a_directory old_path
+  | _ -> ()
+
+(* What a rename that replaces or adds a name checks: the trees, the write
+   and sticky bits of both parents, the kinds, and the write bit of a
+   directory moved to another parent, whose [..] is rewritten. *)
+let check_rename_access ~user ~tree ~old_res ~old_parent ~old_path ~new_parent
+    ~dst new_path =
+  check_rename_tree tree ~src:old_res ~old_parent ~new_parent ~dst new_path;
+  check_dir_write ~user old_parent old_path;
+  check_sticky ~user old_parent old_res old_path;
+  check_dir_write ~user new_parent new_path;
+  Option.iter (fun dst -> check_sticky ~user new_parent dst new_path) dst;
+  check_rename_kinds ~src:old_res ~dst new_path;
+  (match !old_res with
+  | Resource.Dir _ when old_parent != new_parent ->
+      if not (User.can user (Resource.stat !old_res) User.w) then
+        Error.permission_denied old_path
   | _ -> ());
+  check_rename_empty ~src:old_res ~dst new_path
+
+(* The times and link counts a rename changes. A directory moved takes its
+   [..] link along, and one replaced gives its own up; the replaced entry
+   lost its only name. *)
+let renamed ~fs ~old_res ~old_parent ~new_parent ~dst existing =
+  let now = fs.now () in
+  let is_dir r = (Resource.stat !r).kind = `Directory in
+  let moved = if is_dir old_res then 1 else 0 in
+  let replaced =
+    match dst with Some d when is_dir d -> 1 | Some _ | None -> 0
+  in
+  Resource.update old_res (inode_changed ~now);
+  if old_parent == new_parent then
+    entries_changed ~now ~subdirs:(-replaced) new_parent
+  else begin
+    entries_changed ~now ~subdirs:(-moved) old_parent;
+    entries_changed ~now ~subdirs:(moved - replaced) new_parent
+  end;
+  Option.iter
+    (fun (dst_ino, _) ->
+      Option.iter (unlinked ~now) dst;
+      fs.tree <- Entries.remove dst_ino fs.tree)
+    existing
+
+(* A rename that adds [new_name] to [new_parent], or replaces the entry
+   [existing] there. macOS keeps the spelling of the entry it replaces. *)
+let move_or_replace ~fs ~replace ~user ~old_res ~ino ~old_parent ~old_name
+    ~old_path ~new_parent ~new_name ~new_dir_node ~existing new_path =
+  let os = fs.os and tree = fs.tree in
+  let new_name =
+    Option.value ~default:new_name (Dir_node.spelling os new_name new_dir_node)
+  in
+  if (not replace) && Option.is_some existing then Error.already_exists new_path;
+  let dst =
+    Option.bind existing (fun (dst_ino, _) -> Entries.find_opt dst_ino tree)
+  in
+  check_rename_access ~user ~tree ~old_res ~old_parent ~old_path ~new_parent
+    ~dst new_path;
+  check_name fs new_name;
+  move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
+    new_path;
+  reparent old_res ~new_parent;
+  renamed ~fs ~old_res ~old_parent ~new_parent ~dst existing
+
+let rename ?(replace = true) dir_fd old_path new_dir new_path =
+  locked (Dir.fs dir_fd) @@ fun () ->
+  (* rename(2) does not move an entry between two file systems: EXDEV, which
+     Eio.Fs has no constructor for. *)
+  if Dir.fs dir_fd != Dir.fs new_dir then
+    Error.err ("rename: invalid cross-device link: " ^ new_path);
+  let fs = Dir.fs dir_fd in
+  let os = fs.os in
+  let tree = fs.tree in
+  let old_w, old_name, old_slash = Filesystem.locate_from dir_fd old_path in
+  let new_w, new_name, new_slash = Filesystem.locate_from new_dir new_path in
+  check_rename_dots ~os ~replace ~old_path ~old_name new_path new_name;
+  let old_w, old_name = through_link ~slash:old_slash old_w old_name in
+  (* Rename the directory entry itself. In particular, a symlink's target need
+     not exist and must not be followed while moving the link. *)
+  let old_res =
+    match Filesystem.child old_w old_name with
+    | Some r -> r
+    | None -> Error.not_found old_path
+  in
+  check_rename_slashes ~os ~tree ~old_res ~old_w ~old_slash ~old_path new_w
+    new_name ~new_slash new_path;
   let ino = Resource.(stat !old_res).ino in
   let old_parent = Filesystem.here old_w in
   let new_parent = Filesystem.here new_w in
@@ -1354,56 +1420,9 @@ let rename ?(replace = true) dir_fd old_path new_dir new_path =
           new_path
       end
   | _ ->
-      (* macOS keeps the spelling of the entry it replaces. *)
-      let new_name =
-        Option.value ~default:new_name
-          (Dir_node.spelling os new_name new_dir_node)
-      in
-      if (not replace) && Option.is_some existing then
-        Error.already_exists new_path;
-      let dst =
-        Option.bind existing (fun (dst_ino, _) -> Entries.find_opt dst_ino tree)
-      in
-      check_rename_tree tree ~src:old_res ~old_parent ~new_parent ~dst new_path;
-      let user = dir_fd.user in
-      check_dir_write ~user old_parent old_path;
-      check_sticky ~user old_parent old_res old_path;
-      check_dir_write ~user new_parent new_path;
-      Option.iter (fun dst -> check_sticky ~user new_parent dst new_path) dst;
-      check_rename_kinds ~src:old_res ~dst new_path;
-      (* A directory moved to another parent has its [..] rewritten. *)
-      (match !old_res with
-      | Resource.Dir _ when old_parent != new_parent ->
-          if not (User.can user (Resource.stat !old_res) User.w) then
-            Error.permission_denied old_path
-      | _ -> ());
-      check_rename_empty ~src:old_res ~dst new_path;
-      check_name fs new_name;
-      move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
-        new_path;
-      reparent old_res ~new_parent;
-      let fs = Dir.fs dir_fd in
-      let now = fs.now () in
-      let is_dir r = (Resource.stat !r).kind = `Directory in
-      (* A directory moved takes its [..] link along, and one replaced
-         gives its own up. *)
-      let moved = if is_dir old_res then 1 else 0 in
-      let replaced =
-        match dst with Some d when is_dir d -> 1 | Some _ | None -> 0
-      in
-      Resource.update old_res (inode_changed ~now);
-      if old_parent == new_parent then
-        entries_changed ~now ~subdirs:(-replaced) new_parent
-      else begin
-        entries_changed ~now ~subdirs:(-moved) old_parent;
-        entries_changed ~now ~subdirs:(moved - replaced) new_parent
-      end;
-      (* The replaced entry lost its only name. *)
-      Option.iter
-        (fun (dst_ino, _) ->
-          Option.iter (unlinked ~now) dst;
-          fs.tree <- Entries.remove dst_ino fs.tree)
-        existing
+      move_or_replace ~fs ~replace ~user:dir_fd.user ~old_res ~ino ~old_parent
+        ~old_name ~old_path ~new_parent ~new_name ~new_dir_node ~existing
+        new_path
 
 let stat t = locked t.Fd.fs @@ fun () -> Resource.stat !(resource_of t)
 

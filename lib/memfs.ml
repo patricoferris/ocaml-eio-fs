@@ -244,6 +244,23 @@ let set_times ((d, path) : _ Eio.Path.t) ~atime ~mtime ~ctime =
         { fd with user = Low_level.User.root }
         path ~atime ~mtime ~ctime
 
+(* The copy keeps each mode, which the umask narrowed. *)
+let keep_mode fs (stat : Eio.File.Stat.t) (_, path) =
+  Eio.Path.chmod ~follow:false ~perm:stat.perm (fs, path)
+
+(* Opened without following and checked again once open, so what is copied
+   is the regular file the stat saw, not whatever took its name in
+   between. *)
+let copy_regular fs (stat : Eio.File.Stat.t) v =
+  Eio.Path.with_open_in ~follow:false v @@ fun i ->
+  let opened = Eio.File.stat i in
+  if opened.kind <> `Regular_file || opened.ino <> stat.ino then
+    Fmt.kstr Low_level.Error.err "%a changed while it was copied" Eio.Path.pp v;
+  Eio.Path.with_open_out ~create:(`If_missing stat.perm)
+    (fs, snd v)
+    (fun o -> Eio.Flow.copy i o);
+  keep_mode fs stat v
+
 (* The root is followed and must be a directory; the filter is asked about
    it before anything is made, and every entry below it is copied as it is,
    a link kept a link. *)
@@ -254,28 +271,11 @@ let load ?clock ?(filter = fun _ -> true) ?os path =
   let t = Low_level.v ?clock ?os () in
   let fs = fs t in
   let switch_filesystem (_, path) = (fs, path) in
-  (* The copy keeps each mode, which the umask narrowed. *)
-  let keep_mode stat v =
-    Eio.Path.chmod ~follow:false ~perm:stat.Eio.File.Stat.perm
-      (switch_filesystem v)
-  in
+  let keep_mode = keep_mode fs in
   let rec make_fs v =
     let stat = Eio.Path.stat ~follow:false v in
     match stat.kind with
-    | `Regular_file ->
-        if not (filter v) then ()
-        else
-          (* Opened without following and checked again once open, so what
-             is copied is the regular file the stat saw, not whatever took
-             its name in between. *)
-          Eio.Path.with_open_in ~follow:false v @@ fun i ->
-          let opened = Eio.File.stat i in
-          if opened.kind <> `Regular_file || opened.ino <> stat.ino then
-            Fmt.kstr Low_level.Error.err "%a changed while it was copied"
-              Eio.Path.pp v;
-          Eio.Path.with_open_out ~create:(`If_missing stat.perm)
-            (switch_filesystem v) (fun o -> Eio.Flow.copy i o);
-          keep_mode stat v
+    | `Regular_file -> if filter v then copy_regular fs stat v
     | `Directory ->
         if filter v then begin
           Eio.Path.mkdirs ~exists_ok:true ~perm:stat.perm (switch_filesystem v);
