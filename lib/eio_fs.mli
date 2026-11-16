@@ -14,119 +14,6 @@
     never from the host, so a test sees the same filesystem on every machine.
     {!Fs.section-macos} lists what [`Macos] changes. *)
 
-(** Bounded reads that refuse a symbolic link at the final path component. *)
-module Nofollow : sig
-  type error =
-    [ `Invalid of string
-      (** The [validate] function refused the file's stat, for the reason given.
-      *)
-    | `Too_large  (** The file holds more than [max_bytes] bytes. *) ]
-  (** The type for read refusals. *)
-
-  val read_file :
-    max_bytes:int ->
-    validate:(Eio.File.Stat.t -> (unit, string) result) ->
-    _ Eio.Path.t ->
-    (Cstruct.t, error) result
-  (** [read_file ~max_bytes ~validate path] opens [path] as
-      [Eio.Path.open_in ~follow:false] does, validates the opened file's
-      {!Eio.File.stat} with [validate], and reads through end-of-file with one
-      byte of lookahead past [max_bytes]. Validation happens before any byte is
-      read. The result is [Ok data] with the file's bytes, [Error (`Invalid r)]
-      if [validate] answered [Error r], and [Error `Too_large] if the file holds
-      more than [max_bytes] bytes. The returned [Cstruct.t] belongs to the
-      caller and can be overwritten after use.
-
-      Prefix components keep ordinary {!Eio.Path} resolution and confinement;
-      only the final component is refused when it is a symbolic link. Every
-      backend that honours [~follow:false] gets the same refusal, and a wrapper
-      such as {!Chaos} observes the one open.
-
-      @raise Stdlib.Invalid_argument if [max_bytes] is negative or [max_int].
-      @raise Eio.Io
-        when the open or read fails, including when the final component is a
-        symbolic link. *)
-end
-
-(** Helpers over standard {!Eio.Path} values. The lexical arithmetic on the
-    strings those values carry (what a path's components are, and which
-    spellings name one object) is {!Eio_fs_path}, in [eio-fs.path]. *)
-module Path : sig
-  type usage = {
-    allocated_bytes : int64;
-        (** The bytes every entry's allocated 512-byte blocks hold, whatever its
-            apparent length. *)
-    apparent_bytes : int64;  (** The lengths of the regular files. *)
-    files : int;  (** The number of regular files. *)
-    latest_mtime : float;
-        (** The latest modification time of any entry, in seconds since the
-            epoch. *)
-  }
-  (** The type for what a tree costs. Both byte counts saturate at
-      [Int64.max_int]. *)
-
-  val usage : ?max_fibers:int -> _ Eio.Path.t -> usage
-  (** [usage ~max_fibers path] measures [path] and all descendants in one walk,
-      without following symbolic links. The walk is breadth-first, at most
-      [max_fibers] workers per level (defaults to [32]).
-
-      Filesystem errors are propagated, so a caller deciding whether to remove a
-      tree fails closed.
-
-      @raise Stdlib.Invalid_argument if [max_fibers] is not positive. *)
-
-  val iter :
-    ?max_fibers:int ->
-    ('a Eio.Path.t -> Eio.File.Stat.t -> unit) ->
-    'a Eio.Path.t ->
-    unit
-  (** [iter ~max_fibers f path] is [f p stat] for [path] and each of its
-      descendants [p], with [stat] its one [Eio.Path.stat ~follow:false]:
-      symbolic links are not followed. A directory's [f] runs before its entries
-      are read. The walk is {!val-usage}'s: breadth-first, at most [max_fibers]
-      workers per level (defaults to [32]).
-
-      Filesystem errors and those [f] raises are propagated, the walk's other
-      workers cancelled.
-
-      @raise Stdlib.Invalid_argument if [max_fibers] is not positive. *)
-
-  val grant_owner : _ Eio.Path.t -> unit
-  (** [grant_owner p] grants its owner read, write and search on the directory
-      [p] and on each directory under it, so that every entry of the tree can be
-      unlinked: a tree that a program made read-only, then left when it was
-      killed, refuses any removal. Symbolic links are not followed, so the walk
-      stays in [p]'s tree. A directory that cannot be granted or read is left as
-      it is, for the removal to name; a [p] that is missing or not a directory
-      is left alone. It costs a stat per entry and a listing per directory. *)
-
-  val revoke_writes : _ Eio.Path.t -> unit
-  (** [revoke_writes p] removes every write bit from [p] and from each entry
-      under it but symbolic links, which are neither followed nor changed. An
-      entry that has none is left as it is, since a chmod moves its change time
-      even to the same mode. It costs a stat per entry and a listing per
-      directory.
-
-      @raise Eio.Io when an entry cannot be read or changed. *)
-
-  val name : _ Eio.Path.t -> string
-  (** [name path] is what [path] is called outside the program: its native
-      spelling when the capability has one, and the rendering {!Eio.Path.pp}
-      gives it when not. *)
-
-  val pp_tree : depth:int -> _ Eio.Path.t Fmt.t
-  (** [pp_tree ~depth] formats a path and what is under it [depth] levels deep,
-      as tree(1) lists it: each entry by its last component, a symbolic link as
-      [name -> target], not followed. [depth = 1] is the path alone, and
-      [depth <= 0] prints nothing. A missing path prints nothing, and an entry
-      that is neither a regular file, a directory nor a symbolic link (a FIFO, a
-      socket, a device) is left out with what is under it.
-
-      @raise Eio.Io
-        if a directory cannot be listed or a link read; what was formatted
-        before stays formatted. *)
-end
-
 type user = {
   uid : int64;  (** The user id, as {!Eio.File.Stat.t} carries it. *)
   gid : int64;  (** The primary group id. *)
@@ -220,7 +107,7 @@ module Fs : sig
       test as a user. A directory opened from the result shares its descriptor
       with [path]'s.
 
-      @raise Stdlib.Invalid_argument if [path] is not an in-memory directory. *)
+      @raise Invalid_argument if [path] is not an in-memory directory. *)
 
   val load :
     ?clock:_ Eio.Time.clock ->
@@ -278,6 +165,30 @@ module Fs : sig
       - Opening a directory, {!Eio.Path.open_dir} included, needs its read bit.
       - No [fs.protected_symlinks]: any link is followed. *)
 end
+
+type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
+(** The type for the standard environment {!run} passes on: an in-memory
+    filesystem and current directory. *)
+
+val run :
+  ?clock:_ Eio.Time.clock ->
+  ?cwd:string ->
+  ?user:user ->
+  ?os:[< `Linux | `Macos ] ->
+  (stdenv -> 'a) ->
+  'a
+(** [run ~clock ~cwd ~user ~os fn] calls [fn] with a new in-memory filesystem in
+    place of the host's, that answers as [os] (defaults to [`Linux]) does, whose
+    times are read from [clock], as {!Fs.v} reads them. Unlike [Eio_main.run],
+    it starts no event loop and installs no effect handler: call it inside one,
+    such as [Eio_main.run] or [Eio_mock.Backend.run]. [env] holds the root and
+    the current directory of the new filesystem. The current directory is the
+    directory at the absolute path [cwd] (defaults to ["/"]), made with its
+    missing ancestors, mode [0o755], before [fn] runs. Like a process's, it
+    follows that directory through a rename. Both run as [user] (defaults to
+    {!root}). Root owns the tree and gives [user] the current directory.
+
+    @raise Invalid_argument if [cwd] is not an absolute path. *)
 
 (** Compile-time file embedding for the in-memory filesystem, in the style of
     ocaml-crunch. The [eio-fs-crunch] binary serialises a directory tree into an
@@ -347,26 +258,115 @@ end
 module Chaos = Chaos
 (** An adversarial filesystem wrapper for fault-injection testing. *)
 
-type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
-(** The type for the standard environment {!run} passes on: an in-memory
-    filesystem and current directory. *)
+(** Helpers over standard {!Eio.Path} values. The lexical arithmetic on the
+    strings those values carry (what a path's components are, and which
+    spellings name one object) is {!Eio_fs_path}, in [eio-fs.path]. *)
+module Path : sig
+  type usage = {
+    allocated_bytes : int64;
+        (** The bytes every entry's allocated 512-byte blocks hold, whatever its
+            apparent length. *)
+    apparent_bytes : int64;  (** The lengths of the regular files. *)
+    files : int;  (** The number of regular files. *)
+    latest_mtime : float;
+        (** The latest modification time of any entry, in seconds since the
+            epoch. *)
+  }
+  (** The type for what a tree costs. Both byte counts saturate at
+      [Int64.max_int]. *)
 
-val run :
-  ?clock:_ Eio.Time.clock ->
-  ?cwd:string ->
-  ?user:user ->
-  ?os:[< `Linux | `Macos ] ->
-  (stdenv -> 'a) ->
-  'a
-(** [run ~clock ~cwd ~user ~os fn] calls [fn] with a new in-memory filesystem in
-    place of the host's, that answers as [os] (defaults to [`Linux]) does, whose
-    times are read from [clock], as {!Fs.v} reads them. Unlike [Eio_main.run],
-    it starts no event loop and installs no effect handler: call it inside one,
-    such as [Eio_main.run] or [Eio_mock.Backend.run]. [env] holds the root and
-    the current directory of the new filesystem. The current directory is the
-    directory at the absolute path [cwd] (defaults to ["/"]), made with its
-    missing ancestors, mode [0o755], before [fn] runs. Like a process's, it
-    follows that directory through a rename. Both run as [user] (defaults to
-    {!root}). Root owns the tree and gives [user] the current directory.
+  val usage : ?max_fibers:int -> _ Eio.Path.t -> usage
+  (** [usage ~max_fibers path] measures [path] and all descendants in one walk,
+      without following symbolic links. The walk is breadth-first, at most
+      [max_fibers] workers per level (defaults to [32]).
 
-    @raise Stdlib.Invalid_argument if [cwd] is not an absolute path. *)
+      Filesystem errors are propagated, so a caller deciding whether to remove a
+      tree fails closed.
+
+      @raise Invalid_argument if [max_fibers] is not positive. *)
+
+  val iter :
+    ?max_fibers:int ->
+    ('a Eio.Path.t -> Eio.File.Stat.t -> unit) ->
+    'a Eio.Path.t ->
+    unit
+  (** [iter ~max_fibers f path] is [f p stat] for [path] and each of its
+      descendants [p], with [stat] its one [Eio.Path.stat ~follow:false]:
+      symbolic links are not followed. A directory's [f] runs before its entries
+      are read. The walk is {!val-usage}'s: breadth-first, at most [max_fibers]
+      workers per level (defaults to [32]).
+
+      Filesystem errors and those [f] raises are propagated, the walk's other
+      workers cancelled.
+
+      @raise Invalid_argument if [max_fibers] is not positive. *)
+
+  val grant_owner : _ Eio.Path.t -> unit
+  (** [grant_owner p] grants its owner read, write and search on the directory
+      [p] and on each directory under it, so that every entry of the tree can be
+      unlinked: a tree that a program made read-only, then left when it was
+      killed, refuses any removal. Symbolic links are not followed, so the walk
+      stays in [p]'s tree. A directory that cannot be granted or read is left as
+      it is, for the removal to name; a [p] that is missing or not a directory
+      is left alone. It costs a stat per entry and a listing per directory. *)
+
+  val revoke_writes : _ Eio.Path.t -> unit
+  (** [revoke_writes p] removes every write bit from [p] and from each entry
+      under it but symbolic links, which are neither followed nor changed. An
+      entry that has none is left as it is, since a chmod moves its change time
+      even to the same mode. It costs a stat per entry and a listing per
+      directory.
+
+      @raise Eio.Io when an entry cannot be read or changed. *)
+
+  val name : _ Eio.Path.t -> string
+  (** [name path] is what [path] is called outside the program: its native
+      spelling when the capability has one, and the rendering {!Eio.Path.pp}
+      gives it when not. *)
+
+  val pp_tree : depth:int -> _ Eio.Path.t Fmt.t
+  (** [pp_tree ~depth] formats a path and what is under it [depth] levels deep,
+      as tree(1) lists it: each entry by its last component, a symbolic link as
+      [name -> target], not followed. [depth = 1] is the path alone, and
+      [depth <= 0] prints nothing. A missing path prints nothing, and an entry
+      that is neither a regular file, a directory nor a symbolic link (a FIFO, a
+      socket, a device) is left out with what is under it.
+
+      @raise Eio.Io
+        if a directory cannot be listed or a link read; what was formatted
+        before stays formatted. *)
+end
+
+(** Bounded reads that refuse a symbolic link at the final path component. *)
+module Nofollow : sig
+  type error =
+    [ `Invalid of string
+      (** The [validate] function refused the file's stat, for the reason given.
+      *)
+    | `Too_large  (** The file holds more than [max_bytes] bytes. *) ]
+  (** The type for read refusals. *)
+
+  val read_file :
+    max_bytes:int ->
+    validate:(Eio.File.Stat.t -> (unit, string) result) ->
+    _ Eio.Path.t ->
+    (Cstruct.t, error) result
+  (** [read_file ~max_bytes ~validate path] opens [path] as
+      [Eio.Path.open_in ~follow:false] does, validates the opened file's
+      {!Eio.File.stat} with [validate], and reads through end-of-file with one
+      byte of lookahead past [max_bytes]. Validation happens before any byte is
+      read. The result is [Ok data] with the file's bytes, [Error (`Invalid r)]
+      if [validate] answered [Error r], and [Error `Too_large] if the file holds
+      more than [max_bytes] bytes. The returned [Cstruct.t] belongs to the
+      caller and can be overwritten after use.
+
+      Prefix components keep ordinary {!Eio.Path} resolution and confinement;
+      only the final component is refused when it is a symbolic link. Every
+      backend that honours [~follow:false] gets the same refusal, and a wrapper
+      such as {!Chaos} observes the one open.
+
+      @raise Invalid_argument if [max_bytes] is negative or [max_int].
+      @raise Eio.Io
+        when the open or read fails, including when the final component is a
+        symbolic link. *)
+end

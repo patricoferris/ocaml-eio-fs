@@ -44,7 +44,7 @@ val sync_dir : _ Eio.Path.t -> unit
     operation is a wiring error, which [sync_dir] reports rather than skip the
     barrier.
 
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if [dir]'s backend registers no {!Dir_sync} and its directory handle
       cannot sync.
     @raise Eio.Io
@@ -238,7 +238,7 @@ val publish :
     durable. A program that links unix passes [Eio_fs_unix.barrier], whose file
     barrier is [F_FULLFSYNC] there.
 
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if [max_bytes] is negative, if [tmp] is [path] (the same directory and
       name, or the same file once created), or if [path]'s directory has no
       exclusive rename of its own and [exclusive] is {!Rename.capability}.
@@ -271,7 +271,7 @@ val publish_sparse :
     are checked before any filesystem operation.
 
     @raise Limit_exceeded if [size_bytes] exceeds [max_bytes].
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       for a negative size or one past the largest file offset, negative offsets,
       unordered or overlapping extents, or data outside the logical file; and as
       {!publish} raises it for [max_bytes], [tmp] and [exclusive].
@@ -316,8 +316,7 @@ val append_lines :
     are not ordered with each other: a caller with several takes a {!Lock}
     around each.
 
-    @raise Stdlib.Invalid_argument
-      if a line holds LF, before anything is written.
+    @raise Invalid_argument if a line holds LF, before anything is written.
     @raise Eio.Io as the open, the write and the barriers raise. *)
 
 val publish_generation :
@@ -363,7 +362,7 @@ val publish_generation :
     previous one retained. A failure to reclaim an older generation is raised
     after the switch is committed.
 
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if [path] is the root of its capability, which has no parent.
     @raise Eio.Io
       with {!Eio.Fs.Already_exists} if [path] is neither absent nor a symbolic

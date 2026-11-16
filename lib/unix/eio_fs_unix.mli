@@ -86,7 +86,7 @@ val statvfs : _ Eio.Path.t -> statvfs
       as POSIX [fstatvfs] fails, with {!Eio.Fs.Permission_denied} if [path]
       leads outside its directory, and with {!Eio.Fs.Not_native} if the
       directory has no host descriptor.
-    @raise Stdlib.Invalid_argument if [path] holds a NUL byte. *)
+    @raise Invalid_argument if [path] holds a NUL byte. *)
 
 (** {1:clones Copy-on-write clones} *)
 
@@ -110,7 +110,7 @@ val clone_tree : _ Eio.Path.t -> _ Eio.Path.t -> bool
       {!Eio.Fs.Not_found} if [src] does not, {!Eio.Fs.Permission_denied} if
       permission is denied or a path leads outside its directory, and
       {!Eio.Fs.Not_native} if a directory has no host descriptor.
-    @raise Stdlib.Invalid_argument if a path holds a NUL byte. *)
+    @raise Invalid_argument if a path holds a NUL byte. *)
 
 (** {1:trees Tree removal} *)
 
@@ -177,7 +177,7 @@ val pread :
     waits on, so no other thread of the domain runs, and no other domain
     completes a minor collection, until it returns.
 
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if [file_offset], [pos] or [len] is negative or [pos + len] is past the
       end of [buf].
     @raise Eio.Io as the read fails. *)
@@ -191,7 +191,7 @@ val pwrite :
     host descriptor, retried on [EINTR] while other threads run, or by one
     {!Eio.File.pwrite_single}.
 
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if [file_offset], [pos] or [len] is negative or [pos + len] is past the
       end of [s].
     @raise Eio.Io as the write fails. *)
@@ -266,7 +266,7 @@ val extents :
     ending when the answer is empty. [max] is the batch, so one system-thread
     hop covers many extents.
 
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if [max] is not between 1 and 65536, [file_offset] or [length] is
       negative, or [file_offset + length] is past [max_int].
     @raise Unix.Unix_error
@@ -428,7 +428,7 @@ val with_lock :
       with {!Eio.Fs.Permission_denied} carrying {!Not_a_lock_file} when [path]
       is not the lock's own regular file.
     @raise Eio.Io as [lockf] or [flock] fails otherwise.
-    @raise Stdlib.Invalid_argument
+    @raise Invalid_argument
       if the opened lock file carries no Unix descriptor and its backend is not
       {!Eio_fs_sync.Process_local}. *)
 
@@ -481,7 +481,7 @@ module Held : sig
       @raise Lock_unavailable
         when another process took the lock after such a close; nothing is
         written.
-      @raise Stdlib.Invalid_argument if [h] has been released. *)
+      @raise Invalid_argument if [h] has been released. *)
 
   val release : ?contents:string -> t -> unit
   (** [release ~contents h] writes [contents], when present, through the held
@@ -546,8 +546,8 @@ module Lease : sig
       @raise Lock_unavailable
         when an exclusive holder or another take through [gate] refuses it.
       @raise Eio.Io as {!with_exclusive} raises it.
-      @raise Stdlib.Invalid_argument
-        when the filesystem provides no Unix descriptor. *)
+      @raise Invalid_argument when the filesystem provides no Unix descriptor.
+  *)
 
   val release : t -> unit
   (** [release lease] closes this holder's descriptor and gives back its
@@ -619,8 +619,8 @@ module Lease : sig
         with {!Eio.Fs.Permission_denied} carrying {!Not_a_lock_file} when the
         path or the gate is not its own regular file.
       @raise Eio.Io as [flock] fails otherwise.
-      @raise Stdlib.Invalid_argument
-        when the filesystem provides no Unix descriptor. *)
+      @raise Invalid_argument when the filesystem provides no Unix descriptor.
+  *)
 
   val with_shared :
     ?block:block ->
@@ -682,7 +682,7 @@ val xattrs : _ Eio.Path.t -> (string * string) list
       [ENOSYS] on a platform with neither family), with
       {!Eio.Fs.Permission_denied} if [path] leads outside its directory, and
       with {!Eio.Fs.Not_native} if the directory has no host descriptor.
-    @raise Stdlib.Invalid_argument if [path] holds a NUL byte. *)
+    @raise Invalid_argument if [path] holds a NUL byte. *)
 
 val set_xattr : _ Eio.Path.t -> string -> string -> unit
 (** [set_xattr path name value] sets the extended attribute [name] of [path] to
@@ -695,7 +695,7 @@ val set_xattr : _ Eio.Path.t -> string -> string -> unit
       neither family), with {!Eio.Fs.Permission_denied} if [path] leads outside
       its directory, and with {!Eio.Fs.Not_native} if the directory has no host
       descriptor.
-    @raise Stdlib.Invalid_argument if [path] or [name] holds a NUL byte. *)
+    @raise Invalid_argument if [path] or [name] holds a NUL byte. *)
 
 (** {1:links Confined links} *)
 
@@ -741,8 +741,8 @@ module Link : sig
         name is refused, and as [openat] or [mkdirat] fails on a parent
         otherwise ({!Eio.Fs.Not_found} for a missing one, {!Eio.Fs.Symlink} for
         a symbolic link); [fn] is then not called.
-      @raise Stdlib.Invalid_argument
-        if [path]'s directory carries no Unix descriptor. *)
+      @raise Invalid_argument if [path]'s directory carries no Unix descriptor.
+  *)
 
   val publish : t -> target:string -> (publication, string) result
   (** [publish parent ~target] atomically creates an absent symbolic link
@@ -772,7 +772,7 @@ module Link : sig
       read. Only a process that can write both directories makes such a link.
 
       @raise Eio.Io if the opened entry cannot be stated or read.
-      @raise Stdlib.Invalid_argument
+      @raise Invalid_argument
         if [max_bytes] is negative or [max_int], as {!Eio_fs.Nofollow.read_file}
         refuses it. *)
 end
@@ -865,7 +865,7 @@ module Batch : sig
       their results in the same order. An operation that fails does not stop the
       ones after it. An empty [ops] is [[]] and makes no hop.
 
-      @raise Stdlib.Invalid_argument if [t]'s switch has finished. *)
+      @raise Invalid_argument if [t]'s switch has finished. *)
 end
 
 (** {1:inline Calls on the calling thread} *)

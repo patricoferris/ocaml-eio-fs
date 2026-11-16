@@ -9,127 +9,10 @@
     It picks the filesystem's answers and, for {!Crash}, what a cut keeps of
     each kind of sync.
 
-    {2 Exploration}
-
-    A check runs the workload once with no fault and records its operations. Its
-    scenarios are positions in that run, in two tiers:
-
-    - the linear tier always runs whole. On each file it takes the first three
-      reads and writes, the last, and the first of each length class, a length
-      rounded down to a power of two, with the syncs that follow them, and every
-      other operation: it grows with the structure of the workload, not with its
-      bytes. There it tries each fault alone, and each power cut in its two
-      simplest states;
-    - the sampled tier spends a fortieth of the budget, 500 runs by default, or
-      half as much as the linear tier if that is more: the other positions,
-      pairs of faults, and the other states a power cut may leave. A first fault
-      that changes what the run writes gets its second faults first, on the
-      operations that follow it, those that change the disk first: that is where
-      a retry or a recovery path lives. When it has fewer runs than scenarios of
-      a kind, it splits them, in order, into as many groups of neighbours as it
-      has runs, and runs one scenario of each group, drawn from a seed. Each
-      draw may land on any scenario of its group, so a pattern that repeats
-      along the scenarios, as the faults tried at each operation do, hides no
-      kind of fault from it, where taking every k-th scenario may meet only one.
-      A larger budget tries more.
-
-    A check never passes on a partial linear tier. One that needs more runs than
-    its budget fails and says so: shrink the workload or raise [~budget]. The
-    first run stops as soon as the tier needs more, so a workload that polls for
-    ever costs no more than the budget allows, and the report shows its trace up
-    to there.
-
-    {2 Contracts}
-
-    {b At most two faults per run, or one lasting condition.} A program that
-    tries an operation three times gets past two faults, but no retry gets past
-    a lasting condition: [run] must accept that any operation fails, and may
-    demand only that the program handles it.
-
-    {b A lasting condition reaches every operation.} A filesystem that turns
-    read-only, full, or denies access does so for every operation from then on,
-    the retries included. A run fails as a hang when, while its clock stands
-    still but for the time operations take, and with no success there in
-    between, one operation on one path fails 10000 times more than three times
-    the first run made it, or one kind of operation in one directory 10000 times
-    more than 1000 times. A program that retries at once spins so, under one
-    name or a fresh one each time. A batch that tries each item up to three
-    times and drops what fails does not, nor a pool that tries up to 1000 names
-    for each name its first run made. No check can tell a spin from a loop that
-    ends later, so one that tries more often than that is taken for a spin.
-
-    {b [recover] stands for a fresh process.} It runs after the cut on the
-    directory as the disk holds it, knowing only what the workload acknowledged:
-    it must not read state the workload left in memory.
-
-    {b A check blocks its caller.} Each run has its own event loop, inside or
-    outside another one; the caller's loop waits until the check returns.
-
-    {2 Failures and replay}
-
-    A check is deterministic. A failure raises [Failure] with the scenario, the
-    tier that found it, the operations of the failing run, and the
-    [~replay:"..."] argument that runs that scenario alone. A power cut's report
-    also says after which operation each value was acknowledged, and, for a
-    state drawn among those the cut allows, what each file holds: its length,
-    and each run of sectors that holds a write, zeros or stale data, with where
-    the stale data comes from. A report numbers an operation by its place in the
-    trace, wherever it names one: the cut, the faults, the changes a cut lost
-    and the acknowledgements. A block of up to eight operations repeated three
-    times or more, in the same directories each time, as a retry makes them,
-    shows its first and last instances, and a trace longer than that keeps its
-    first and last hundred lines and those around its first fault, so a report's
-    size is bounded by the workload's structure rather than by how long it spun.
-    A run keeps only those lines as it goes, and so does its memory. When the
-    workload's first run has changed, a replay finds its scenario again by its
-    operations, and its report says so. A replay fails if the check no longer
-    has that scenario, and if it names a state drawn at random of a cut that
-    allows two states or fewer, which the check never draws. A state drawn at
-    random under a larger budget needs that budget again, which the refusal
-    names. The report of a check run inside another is text in the outer one.
-
-    The sampled tier draws its scenarios from a seed, the same one on every
-    check unless [~seed] gives another, so a check meets the same faults each
-    time. A replay names its scenario, not the draw that found it, so it needs
-    no seed.
-
-    A check reads no environment variable and prints nothing. A test that wants
-    a larger budget at night, or other faults in the sampled tier, reads its
-    own:
-    {[
-    let check run =
-      let int name = Option.map int_of_string (Sys.getenv_opt name) in
-      Eio_fs.Chaos.check ?budget:(int "CHAOS_BUDGET") ?seed:(int "CHAOS_SEED")
-        run
-    ]}
-
-    {2 Runs}
-
-    Each run's clocks start at [0.] and move to the next timer when every fiber
-    waits, so a sleep takes no time. Each turn, a fiber resumed by a yield,
-    another fiber or a timer, also moves them by 1 us, as CPU time passes
-    between two. Five guards stop a run that does not end:
-
-    - a run in which every fiber waits and no timer is due fails as a hang;
-    - a retry that never yields meets the spin guard above;
-    - a run that makes 100000 filesystem operations fails as a busy loop, or as
-      too large for a check, so a run's operations stay bounded: a poll that
-      never yields stops there;
-    - a run stops at 10 million turns. If no fiber waited 1 ms or more for a
-      timer in the last 10 million, it fails as a busy loop: a poll by yields,
-      or by sleeps shorter than 1 ms, that never ends. Otherwise it fails as too
-      large for a check: a check repeats the run hundreds of times, so it
-      refuses a longer one, as it refuses one past its budget. Fibers on timers
-      take turns too: a thousand on a heartbeat of 100 ms reach 10 million in
-      1000 s of clock;
-    - a run still going after an hour of its clock fails as a hang: a poll that
-      sleeps 1 ms or more between its tries and never ends.
-
-    An operation takes time, and other fibers run meanwhile: a sync of a file or
-    a directory 1 ms, any other operation 1 us, and one that fails none. Its
-    effect lands at the end of that time. A sync covers the changes made before
-    it: a write, a change of mode or owner, or an entry another fiber makes
-    while it runs stays unsynced: Linux's fsync(2) promises nothing of them. *)
+    The {{!checks}checks} and their {{!blocks}building blocks} come first, then
+    how a check works: its {{!exploration}exploration}, the
+    {{!contracts}contracts} a workload meets, its
+    {{!replay}failures and replay}, and its {{!runs}runs}. *)
 
 type env =
   < fs : Eio.Fs.dir_ty Eio.Path.t
@@ -506,6 +389,128 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
 
     Injected errors are ordinary {!Eio.Io} exceptions: the code under test
     cannot tell them from those of a disk. *)
+
+(** {1:exploration Exploration}
+
+    A check runs the workload once with no fault and records its operations. Its
+    scenarios are positions in that run, in two tiers:
+
+    - the linear tier always runs whole. On each file it takes the first three
+      reads and writes, the last, and the first of each length class, a length
+      rounded down to a power of two, with the syncs that follow them, and every
+      other operation: it grows with the structure of the workload, not with its
+      bytes. There it tries each fault alone, and each power cut in its two
+      simplest states;
+    - the sampled tier spends a fortieth of the budget, 500 runs by default, or
+      half as much as the linear tier if that is more: the other positions,
+      pairs of faults, and the other states a power cut may leave. A first fault
+      that changes what the run writes gets its second faults first, on the
+      operations that follow it, those that change the disk first: that is where
+      a retry or a recovery path lives. When it has fewer runs than scenarios of
+      a kind, it splits them, in order, into as many groups of neighbours as it
+      has runs, and runs one scenario of each group, drawn from a seed. Each
+      draw may land on any scenario of its group, so a pattern that repeats
+      along the scenarios, as the faults tried at each operation do, hides no
+      kind of fault from it, where taking every k-th scenario may meet only one.
+      A larger budget tries more.
+
+    A check never passes on a partial linear tier. One that needs more runs than
+    its budget fails and says so: shrink the workload or raise [~budget]. The
+    first run stops as soon as the tier needs more, so a workload that polls for
+    ever costs no more than the budget allows, and the report shows its trace up
+    to there. *)
+
+(** {1:contracts Contracts}
+
+    {b At most two faults per run, or one lasting condition.} A program that
+    tries an operation three times gets past two faults, but no retry gets past
+    a lasting condition: [run] must accept that any operation fails, and may
+    demand only that the program handles it.
+
+    {b A lasting condition reaches every operation.} A filesystem that turns
+    read-only, full, or denies access does so for every operation from then on,
+    the retries included. A run fails as a hang when, while its clock stands
+    still but for the time operations take, and with no success there in
+    between, one operation on one path fails 10000 times more than three times
+    the first run made it, or one kind of operation in one directory 10000 times
+    more than 1000 times. A program that retries at once spins so, under one
+    name or a fresh one each time. A batch that tries each item up to three
+    times and drops what fails does not, nor a pool that tries up to 1000 names
+    for each name its first run made. No check can tell a spin from a loop that
+    ends later, so one that tries more often than that is taken for a spin.
+
+    {b [recover] stands for a fresh process.} It runs after the cut on the
+    directory as the disk holds it, knowing only what the workload acknowledged:
+    it must not read state the workload left in memory.
+
+    {b A check blocks its caller.} Each run has its own event loop, inside or
+    outside another one; the caller's loop waits until the check returns. *)
+
+(** {1:replay Failures and replay}
+
+    A check is deterministic. A failure raises [Failure] with the scenario, the
+    tier that found it, the operations of the failing run, and the
+    [~replay:"..."] argument that runs that scenario alone. A power cut's report
+    also says after which operation each value was acknowledged, and, for a
+    state drawn among those the cut allows, what each file holds: its length,
+    and each run of sectors that holds a write, zeros or stale data, with where
+    the stale data comes from. A report numbers an operation by its place in the
+    trace, wherever it names one: the cut, the faults, the changes a cut lost
+    and the acknowledgements. A block of up to eight operations repeated three
+    times or more, in the same directories each time, as a retry makes them,
+    shows its first and last instances, and a trace longer than that keeps its
+    first and last hundred lines and those around its first fault, so a report's
+    size is bounded by the workload's structure rather than by how long it spun.
+    A run keeps only those lines as it goes, and so does its memory. When the
+    workload's first run has changed, a replay finds its scenario again by its
+    operations, and its report says so. A replay fails if the check no longer
+    has that scenario, and if it names a state drawn at random of a cut that
+    allows two states or fewer, which the check never draws. A state drawn at
+    random under a larger budget needs that budget again, which the refusal
+    names. The report of a check run inside another is text in the outer one.
+
+    The sampled tier draws its scenarios from a seed, the same one on every
+    check unless [~seed] gives another, so a check meets the same faults each
+    time. A replay names its scenario, not the draw that found it, so it needs
+    no seed.
+
+    A check reads no environment variable and prints nothing. A test that wants
+    a larger budget at night, or other faults in the sampled tier, reads its
+    own:
+    {[
+    let check run =
+      let int name = Option.map int_of_string (Sys.getenv_opt name) in
+      Eio_fs.Chaos.check ?budget:(int "CHAOS_BUDGET") ?seed:(int "CHAOS_SEED")
+        run
+    ]} *)
+
+(** {1:runs Runs}
+
+    Each run's clocks start at [0.] and move to the next timer when every fiber
+    waits, so a sleep takes no time. Each turn, a fiber resumed by a yield,
+    another fiber or a timer, also moves them by 1 us, as CPU time passes
+    between two. Five guards stop a run that does not end:
+
+    - a run in which every fiber waits and no timer is due fails as a hang;
+    - a retry that never yields meets the spin guard above;
+    - a run that makes 100000 filesystem operations fails as a busy loop, or as
+      too large for a check, so a run's operations stay bounded: a poll that
+      never yields stops there;
+    - a run stops at 10 million turns. If no fiber waited 1 ms or more for a
+      timer in the last 10 million, it fails as a busy loop: a poll by yields,
+      or by sleeps shorter than 1 ms, that never ends. Otherwise it fails as too
+      large for a check: a check repeats the run hundreds of times, so it
+      refuses a longer one, as it refuses one past its budget. Fibers on timers
+      take turns too: a thousand on a heartbeat of 100 ms reach 10 million in
+      1000 s of clock;
+    - a run still going after an hour of its clock fails as a hang: a poll that
+      sleeps 1 ms or more between its tries and never ends.
+
+    An operation takes time, and other fibers run meanwhile: a sync of a file or
+    a directory 1 ms, any other operation 1 us, and one that fails none. Its
+    effect lands at the end of that time. A sync covers the changes made before
+    it: a write, a change of mode or owner, or an entry another fiber makes
+    while it runs stays unsynced: Linux's fsync(2) promises nothing of them. *)
 
 (**/**)
 

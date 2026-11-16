@@ -461,7 +461,7 @@ module Crash : sig
       made during [pause], by another fiber, stays pending, as Linux's fsync(2)
       makes no promise about a write made while it runs.
 
-      @raise Stdlib.Invalid_argument if [block_size] is not positive. *)
+      @raise Invalid_argument if [block_size] is not positive. *)
 
   val wrap : t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
   (** [wrap t base] is [base] with durability tracked by [t]; files and
@@ -486,7 +486,7 @@ module Crash : sig
       [base]. {!Eio_fs.Fs.as_user} refuses a wrapper, so a test cannot drive one
       controller as several users: it runs each user on a controller of its own.
 
-      @raise Stdlib.Invalid_argument
+      @raise Invalid_argument
         if [t] is already wrapped, or if the tree under [base] holds an entry
         that is neither a regular file, a directory nor a symbolic link. *)
 
@@ -499,7 +499,7 @@ module Crash : sig
       operation) fails with an {!Eio.Io} exception ("power lost") and leaves the
       image as it is; re-read through {!post_crash}.
 
-      @raise Stdlib.Invalid_argument
+      @raise Invalid_argument
         if [t] was never {!wrap}ped; [t] is left uncrashed. *)
 
   val is_crashed : t -> bool
@@ -511,7 +511,7 @@ module Crash : sig
       handle itself, not a new one, and no wrapper is in front of it, so a test
       re-reads the image through it.
 
-      @raise Stdlib.Invalid_argument if [t] was never {!wrap}ped. *)
+      @raise Invalid_argument if [t] was never {!wrap}ped. *)
 
   val sync_metadata : t -> unit
   (** [sync_metadata t] commits the whole metadata journal: every pending
