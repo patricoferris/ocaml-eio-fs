@@ -230,10 +230,14 @@ let as_user user ((d, path) : _ Eio.Path.t) =
       let label = Fmt.to_to_string Eio.Path.pp (d, "") in
       (dir ~label ~path:"." { fd with user }, path)
 
+(* Looked up as root, as [set_times] is: the model asks about a file the
+   wrapped user may reach only through a directory opened before. *)
 let held ((d, path) : _ Eio.Path.t) =
   match as_memfs_dir d with
   | None -> None
-  | Some fd -> ( try Low_level.held fd path with Eio.Io _ -> None)
+  | Some fd -> (
+      try Low_level.held { fd with user = Low_level.User.root } path
+      with Eio.Io (Eio.Fs.E (Not_found _), _) -> None)
 
 let descriptors ((d, _) : _ Eio.Path.t) =
   Option.map Low_level.descriptors (as_memfs_dir d)

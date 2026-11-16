@@ -30,8 +30,8 @@ val as_user :
 
 val held : _ Eio.Path.t -> Extents.t option
 (** [held path] is the byte ranges writes covered in the regular file [path] of
-    an in-memory filesystem: the rest of it is a hole. It is [None] if [path] is
-    not one. *)
+    an in-memory filesystem, looked up as root: the rest of it is a hole. It is
+    [None] if [path] is not in one, or names no regular file. *)
 
 val descriptors : _ Eio.Path.t -> int option
 (** [descriptors path] is how many descriptors are open on the in-memory
