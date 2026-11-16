@@ -188,6 +188,93 @@ let check_cuts t all ~floor =
     (() :: List.map ignore p);
   check_lost t all ~floor ~kept:(fun e -> e.seq mod 2 = 0)
 
+(* Whether a barrier or a sync reached [e], given the nodes [held]. *)
+let reached held e =
+  let is_held i = Hashtbl.mem held i in
+  (match e.attrs_ino with Some i -> is_held i | None -> true)
+  && ((e.barred <> [] && List.exists is_held e.dirs)
+     || (e.synced && Option.is_some e.attrs_ino))
+
+let commit held newly =
+  let s = List.map (fun e -> e.seq) newly in
+  check_eq ~pp:pp_seqs s (List.sort_uniq Int.compare s);
+  (match List.rev newly with
+  | [] -> fail "an empty commit"
+  | last :: _ ->
+      if not ((last.barred <> [] || last.synced) && reached held last) then
+        failf "commit up to %d, which no barrier or sync reached" last.seq);
+  List.iter
+    (fun e -> List.iter (fun n -> Hashtbl.replace held n ()) e.nodes)
+    newly
+
+let check_add t all seq (s : Shape.t) =
+  let e =
+    entry ~seq ~dirs:(i64 s.dirs)
+      ?attrs_ino:(Option.map Int64.of_int s.attrs)
+      ~nodes:(i64 s.nodes) ~parents:(i64 s.parents) ~ancestors:(i64 s.ancestors)
+      ~moved:(i64 s.moved) ~removed:(i64 s.removed) ~clear:s.clear ()
+  in
+  add t e;
+  all := !all @ [ e ];
+  List.iter
+    (fun n ->
+      match made t n with
+      | Some m when m == e -> ()
+      | _ -> failf "%d made %Ld" seq n)
+    e.nodes
+
+let check_bar t all i upto =
+  let i = Int64.of_int i in
+  let bound = Option.value ~default:max_int upto in
+  let due e =
+    (not e.committed) && has i e.dirs && e.seq <= bound && not (has i e.barred)
+  in
+  let expected = List.length (List.filter due !all) in
+  check_eq ~pp:Fmt.int (bar ?upto t i) expected;
+  List.iter (fun e -> if due e then failf "%d not barred on %Ld" e.seq i) !all
+
+let check_sync t all i upto =
+  let i = Int64.of_int i in
+  let due e =
+    (not e.committed) && e.attrs_ino = Some i && e.seq <= upto && not e.synced
+  in
+  let expected = List.length (List.filter due !all) in
+  check_eq ~pp:Fmt.int (sync_attrs ~upto t i) expected;
+  List.iter (fun e -> if due e then failf "%d not synced" e.seq) !all
+
+let check_settle t all held =
+  settle t ~reached:(reached held) ~commit:(commit held);
+  List.iter
+    (fun e ->
+      if candidate e && reached held e then
+        failf "%d is reached and left pending" e.seq)
+    !all
+
+let check_pop t all floor =
+  let rec go () =
+    match pop_committed t with
+    | None -> ()
+    | Some e ->
+        (match !all with
+        | e' :: rest when e' == e && e.committed ->
+            all := rest;
+            floor := max !floor e.seq
+        | _ -> failf "popped %d, not the first committed entry" e.seq);
+        go ()
+  in
+  go ();
+  match !all with
+  | e :: _ when e.committed -> failf "%d committed, not popped" e.seq
+  | _ -> ()
+
+let check_reset t all held floor seq =
+  reset ~upto:seq t;
+  List.iter
+    (fun e -> List.iter (fun n -> Hashtbl.replace held n ()) e.nodes)
+    !all;
+  all := [];
+  floor := max !floor seq
+
 let test_invariants a b =
   let ops = ops (a ^ b) in
   let t = v () in
@@ -197,95 +284,16 @@ let test_invariants a b =
   let held = Hashtbl.create 8 in
   Hashtbl.replace held 0L ();
   Hashtbl.replace held 1L ();
-  let is_held i = Hashtbl.mem held i in
-  let reached e =
-    (match e.attrs_ino with Some i -> is_held i | None -> true)
-    && ((e.barred <> [] && List.exists is_held e.dirs)
-       || (e.synced && Option.is_some e.attrs_ino))
-  in
-  let commit newly =
-    let s = List.map (fun e -> e.seq) newly in
-    check_eq ~pp:pp_seqs s (List.sort_uniq Int.compare s);
-    (match List.rev newly with
-    | [] -> fail "an empty commit"
-    | last :: _ ->
-        if not ((last.barred <> [] || last.synced) && reached last) then
-          failf "commit up to %d, which no barrier or sync reached" last.seq);
-    List.iter
-      (fun e -> List.iter (fun n -> Hashtbl.replace held n ()) e.nodes)
-      newly
-  in
   List.iteri
     (fun seq op ->
       let was = List.filter (fun e -> e.committed) !all in
       (match op with
-      | Add s ->
-          let e =
-            entry ~seq ~dirs:(i64 s.Shape.dirs)
-              ?attrs_ino:(Option.map Int64.of_int s.attrs)
-              ~nodes:(i64 s.nodes) ~parents:(i64 s.parents)
-              ~ancestors:(i64 s.ancestors) ~moved:(i64 s.moved)
-              ~removed:(i64 s.removed) ~clear:s.clear ()
-          in
-          add t e;
-          all := !all @ [ e ];
-          List.iter
-            (fun n ->
-              match made t n with
-              | Some m when m == e -> ()
-              | _ -> failf "%d made %Ld" seq n)
-            e.nodes
-      | Bar (i, upto) ->
-          let i = Int64.of_int i in
-          let bound = Option.value ~default:max_int upto in
-          let due e =
-            (not e.committed) && has i e.dirs && e.seq <= bound
-            && not (has i e.barred)
-          in
-          let expected = List.length (List.filter due !all) in
-          check_eq ~pp:Fmt.int (bar ?upto t i) expected;
-          List.iter
-            (fun e -> if due e then failf "%d not barred on %Ld" e.seq i)
-            !all
-      | Sync (i, upto) ->
-          let i = Int64.of_int i in
-          let due e =
-            (not e.committed) && e.attrs_ino = Some i && e.seq <= upto
-            && not e.synced
-          in
-          let expected = List.length (List.filter due !all) in
-          check_eq ~pp:Fmt.int (sync_attrs ~upto t i) expected;
-          List.iter (fun e -> if due e then failf "%d not synced" e.seq) !all
-      | Settle ->
-          settle t ~reached ~commit;
-          List.iter
-            (fun e ->
-              if candidate e && reached e then
-                failf "%d is reached and left pending" e.seq)
-            !all
-      | Pop -> (
-          let rec go () =
-            match pop_committed t with
-            | None -> ()
-            | Some e ->
-                (match !all with
-                | e' :: rest when e' == e && e.committed ->
-                    all := rest;
-                    floor := max !floor e.seq
-                | _ -> failf "popped %d, not the first committed entry" e.seq);
-                go ()
-          in
-          go ();
-          match !all with
-          | e :: _ when e.committed -> failf "%d committed, not popped" e.seq
-          | _ -> ())
-      | Reset ->
-          reset ~upto:seq t;
-          List.iter
-            (fun e -> List.iter (fun n -> Hashtbl.replace held n ()) e.nodes)
-            !all;
-          all := [];
-          floor := max !floor seq);
+      | Add s -> check_add t all seq s
+      | Bar (i, upto) -> check_bar t all i upto
+      | Sync (i, upto) -> check_sync t all i upto
+      | Settle -> check_settle t all held
+      | Pop -> check_pop t all floor
+      | Reset -> check_reset t all held floor seq);
       List.iter
         (fun e -> if not e.committed then failf "%d uncommitted" e.seq)
         was;
