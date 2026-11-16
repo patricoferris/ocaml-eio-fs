@@ -33,6 +33,10 @@ val held : _ Eio.Path.t -> Extents.t option
     an in-memory filesystem: the rest of it is a hole. It is [None] if [path] is
     not one. *)
 
+val descriptors : _ Eio.Path.t -> int option
+(** [descriptors path] is how many descriptors are open on the in-memory
+    filesystem of [path], or [None] if [path] is not in one. *)
+
 val set_times :
   _ Eio.Path.t -> atime:float -> mtime:float -> ctime:float -> unit
 (** [set_times path ~atime ~mtime ~ctime] sets the times of [path], not

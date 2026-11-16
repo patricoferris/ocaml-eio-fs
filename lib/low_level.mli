@@ -107,6 +107,10 @@ val close : Fd.t -> unit
 (** [close fd] releases [fd]. Closing an already closed descriptor does nothing.
 *)
 
+val descriptors : Dir.fd -> int
+(** [descriptors dir] is how many descriptors are open on the file system of
+    [dir]. *)
+
 val openat : mode:int -> sw:Eio.Switch.t -> Dir.fd -> string -> int -> Fd.t
 (** [openat ~mode ~sw dir path flags] opens [path] relative to [dir] with the
     {!Open_flags} [flags], creating it with permissions [mode]. The descriptor

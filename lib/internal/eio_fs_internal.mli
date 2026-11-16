@@ -19,6 +19,11 @@ type (_, _, _) Eio.Resource.pi +=
       ('t, 't -> Eio.Fs.dir_ty Eio.Resource.t, [> `Admin ]) Eio.Resource.pi
         (** The same directory with root's rights, which {!Eio_fs.Chaos.Crash}
             reads and rebuilds a tree through. *)
+  | Sync_failed :
+      ('t, 't -> evict:bool -> unit, [> `Sync_failed ]) Eio.Resource.pi
+        (** A sync a wrapper failed on purpose, told to the file beneath it, so
+            a power-loss model there loses what that sync would have written;
+            [evict] says the failure dropped the file's cached pages too. *)
 
 val base_dir : _ Eio.Resource.t -> Eio.Fs.dir_ty Eio.Resource.t option
 (** [base_dir r] is the directory [r] wraps, or [None] when [r] binds no

@@ -7,6 +7,8 @@ type (_, _, _) Eio.Resource.pi +=
       ('t, 't -> Eio.File.ro_ty Eio.Resource.t, [> `Base_file ]) Eio.Resource.pi
   | Admin :
       ('t, 't -> Eio.Fs.dir_ty Eio.Resource.t, [> `Admin ]) Eio.Resource.pi
+  | Sync_failed :
+      ('t, 't -> evict:bool -> unit, [> `Sync_failed ]) Eio.Resource.pi
 
 let base_dir (Eio.Resource.T (t, ops)) =
   Option.map (fun get -> get t) (Eio.Resource.get_opt ops Base_dir)

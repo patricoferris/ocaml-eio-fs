@@ -7,7 +7,8 @@
   quiet_mock
   chaos_plan
   chaos_blocks
-  chaos_journal)
+  chaos_journal
+  chaos_law)
  (libraries
   hermetic
   eio

@@ -444,11 +444,7 @@ let rw_boxed (type s) ?(extra = [])
           ]
         @ extra) )
 
-(* A sync the wrapper failed on purpose, told to the file beneath it, so a
-   power-loss model there loses what that sync would have written. *)
-type (_, _, _) Eio.Resource.pi +=
-  | Sync_failed :
-      ('t, 't -> evict:bool -> unit, [> `Sync_failed ]) Eio.Resource.pi
+type (_, _, _) Eio.Resource.pi += Sync_failed = Eio_fs_internal.Sync_failed
 
 let sync_failed ~evict (Eio.Resource.T (v, ops)) =
   match Eio.Resource.get_opt ops Sync_failed with
@@ -4008,8 +4004,11 @@ module Crash = struct
         Fmt.pf ppf "chown %s %Ld:%Ld #%d" u.path uid gid u.seq
 end
 
+module Law = Chaos_law
+
 module Internal = struct
   let next = Schedule.next
   let replay_copied () = Atomic.get Chaos_blocks.copied
   let crash_image (ctl : Crash.t) = List.rev ctl.image
+  let descriptors = Memfs.descriptors
 end

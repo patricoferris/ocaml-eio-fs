@@ -974,6 +974,10 @@ let open_locked ~mode dir_fd path flags =
   fs.fds <- Fd_table.add num r fs.fds;
   Fd.v ~append ~user:dir_fd.user fs num
 
+let descriptors dir_fd =
+  let fs = Dir.fs dir_fd in
+  locked fs @@ fun () -> Fd_table.cardinal fs.fds
+
 let openat ~mode ~sw dir_fd path flags =
   let fd =
     locked (Dir.fs dir_fd) @@ fun () -> open_locked ~mode dir_fd path flags

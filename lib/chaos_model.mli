@@ -551,6 +551,9 @@ end
 
 (* For this package's tests. It hands out nothing a schedule's holder could
    not reach by running an operation through a wrapper. *)
+module Law = Chaos_law
+(** What {!wrap} does with each operation of each interface it binds. *)
+
 module Internal : sig
   val next : Schedule.t -> Op.t -> Fault.t option
   (** [next t op] advances [t] by one operation and is the fault to inject. *)
@@ -560,6 +563,10 @@ module Internal : sig
     (string * int64 * [ `File of string | `Dir | `Link of string ]) list
   (** [crash_image t] is the image [t]'s crash rebuilt: each entry's path below
       the wrapped root, the inode it had before the crash, and what it holds. *)
+
+  val descriptors : _ Eio.Path.t -> int option
+  (** [descriptors path] is how many descriptors are open on the in-memory
+      filesystem of [path], or [None] if [path] is not in one. *)
 
   val replay_copied : unit -> int
   (** [replay_copied ()] is how many bytes {!Crash} has copied into the images

@@ -233,6 +233,9 @@ let held ((d, path) : _ Eio.Path.t) =
   | None -> None
   | Some fd -> ( try Low_level.held fd path with Eio.Io _ -> None)
 
+let descriptors ((d, _) : _ Eio.Path.t) =
+  Option.map Low_level.descriptors (as_memfs_dir d)
+
 let set_times ((d, path) : _ Eio.Path.t) ~atime ~mtime ~ctime =
   match as_memfs_dir d with
   | None -> ()
