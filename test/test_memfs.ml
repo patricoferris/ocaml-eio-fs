@@ -281,6 +281,45 @@ let test_as_eio_posix () =
          if ok s then Some (List.hd (String.split_on_char ':' s)) else None)
        (snd mem))
 
+(* A file is no socket: eio_posix refuses a shutdown with ENOTSOCK, a bare
+   [Eio.Io], and so does the in-memory backend. *)
+let test_shutdown_as_eio_posix () =
+  (* Files are no flows of type [two_way_ty]: their shutdown is reached
+     through the handler. *)
+  let shutdown (type t) f (ops : t Eio.Resource.binding list) =
+    match
+      List.find_map
+        (fun (Eio.Resource.H (pi, impl) : t Eio.Resource.binding) ->
+          match pi with
+          | Eio.Flow.Pi.Shutdown ->
+              Some (impl : (module Eio.Flow.Pi.SHUTDOWN with type t = t))
+          | _ -> None)
+        ops
+    with
+    | None -> "no shutdown"
+    | Some (module S) -> (
+        match S.shutdown f `All with
+        | () -> "ok"
+        | exception Eio.Io (Eio.Exn.X _, _) -> "Eio.Io"
+        | exception e -> Printexc.to_string e)
+  in
+  let outcome dir =
+    Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "f") "x";
+    Eio.Path.with_open_out ~create:`Never (dir / "f")
+    @@ fun (Eio.Resource.T (f, ops)) -> shutdown f (Eio.Resource.bindings ops)
+  in
+  Eio_posix.run @@ fun env ->
+  let fs = Eio.Stdenv.fs env in
+  let top = Filename.temp_file "eio-fs-shutdown" "" in
+  Sys.remove top;
+  Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / top))
+  @@ fun () ->
+  Eio.Path.mkdir ~perm:0o755 (fs / top);
+  Alcotest.(check string) "eio_posix" "Eio.Io" (outcome (fs / top));
+  Alcotest.(check string)
+    "the in-memory backend" "Eio.Io"
+    (outcome (Eio_fs.Fs.v () / "."))
+
 let suite =
   ( "memfs",
     [
@@ -292,6 +331,8 @@ let suite =
       Alcotest.test_case "relatime moves atime once a day" `Quick
         test_relatime_day;
       Alcotest.test_case "link and block counts" `Quick test_counts;
+      Alcotest.test_case "a shutdown of a file fails as on eio_posix" `Quick
+        test_shutdown_as_eio_posix;
       Alcotest.test_case "without a clock, time stands at 0" `Quick
         test_no_clock;
       Alcotest.test_case "a freshness check under Chaos.check" `Quick
