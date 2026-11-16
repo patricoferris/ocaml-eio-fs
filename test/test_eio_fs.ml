@@ -327,7 +327,7 @@ module Crunch = struct
     write fs "plain.txt" "x";
     match Eio_fs.Crunch.scan (fs / "plain.txt") with
     | _ -> Alcotest.fail "scan accepted a non-directory"
-    | exception Invalid_argument _ -> ()
+    | exception Eio.Io (Eio.Exn.X _, _) -> ()
 
   (* [find] answers a file's contents by its image path, and nothing for a
    directory, a symbolic link or a path not in the image: an implementation that
@@ -624,7 +624,7 @@ let test_load_refuses_a_file () =
   write src "file" "bytes";
   match Eio_fs.Fs.load (src / "file") with
   | _ -> Alcotest.fail "loaded a regular file"
-  | exception Invalid_argument _ -> ()
+  | exception Eio.Io (Eio.Exn.X _, _) -> ()
 
 (* [dir] with [on_stat path] run after each stat it answers. *)
 let on_stat on_stat (Eio.Resource.T (dir, ops), path) =

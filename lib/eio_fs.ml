@@ -273,9 +273,7 @@ module Crunch = struct
     in
     (match Eio.Path.kind ~follow:true root with
     | `Directory -> ()
-    | _ ->
-        Fmt.invalid_arg "Eio_fs.Crunch.scan: %a is not a directory" Eio.Path.pp
-          root);
+    | _ -> Low_level.Error.err ("scan: not a directory: " ^ snd root));
     walk ~follow:true root "/";
     List.rev !entries
 

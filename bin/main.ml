@@ -38,9 +38,6 @@ let run dir output =
   | exception (Eio.Io _ as e) ->
       Fmt.epr "eio-fs-crunch: %a@." Eio.Exn.pp e;
       1
-  | exception Invalid_argument message ->
-      Fmt.epr "eio-fs-crunch: %s@." message;
-      1
 
 let cmd =
   let doc = "Embed a directory tree as an OCaml module for eio-fs." in

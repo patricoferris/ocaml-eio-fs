@@ -246,8 +246,8 @@ let shutdown =
 (* Eio hides this one, so [binding] cannot name it. *)
 let socket =
   file_handler "Eio.Net.Pi.Socket" Unsupported
-    "A file is no socket: the in-memory backend's handle raises Failure there \
-     and eio_posix's ENOTSOCK."
+    "A file is no socket: the in-memory backend's handle and eio_posix's \
+     refuse it with ENOTSOCK."
 
 let read_only_write =
   file_handler "write side of a file opened for reading" Unsupported

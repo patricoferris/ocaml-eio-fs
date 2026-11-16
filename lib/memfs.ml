@@ -124,17 +124,20 @@ end = struct
     in
     Low_level.close fd
 
-  let target dir =
+  (* A directory of another backend is on another device: EXDEV, as
+     [Low_level.rename] raises it between two in-memory filesystems. *)
+  let target dir new_path =
     match as_memfs_dir dir with
-    | None -> invalid_arg "Eio_fs: the target is not an in-memory directory"
+    | None ->
+        Low_level.Error.err ("rename: invalid cross-device link: " ^ new_path)
     | Some dir -> dir
 
   let rename t old_path (new_dir : [> Eio.Fs.dir_ty ] Eio.Std.r) new_path =
-    let new_dir = target new_dir in
+    let new_dir = target new_dir new_path in
     Low_level.rename (fd t) old_path new_dir new_path
 
   let rename_exclusive t _backend ~source ~target:(new_dir, new_path) =
-    let new_dir = target new_dir in
+    let new_dir = target new_dir new_path in
     Low_level.rename ~replace:false (fd t) source new_dir new_path
 
   let symlink ~link_to t path = Low_level.symlinkat ~link_to (fd t) path
@@ -266,7 +269,7 @@ let copy_regular fs (stat : Eio.File.Stat.t) v =
 let load ?clock ?(filter = fun _ -> true) ?os path =
   let stat = Eio.Path.stat ~follow:true path in
   if stat.kind <> `Directory then
-    Fmt.invalid_arg "Eio_fs.Fs.load: %a is not a directory" Eio.Path.pp path;
+    Low_level.Error.err ("load: not a directory: " ^ snd path);
   let t = Low_level.v ?clock ?os () in
   let fs = fs t in
   let switch_filesystem (_, path) = (fs, path) in

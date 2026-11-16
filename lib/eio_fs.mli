@@ -264,11 +264,10 @@ module Fs : sig
       An entry that is neither a regular file, a directory nor a symbolic link
       is not copied; it is traced with [Eio.traceln].
 
-      @raise Stdlib.Invalid_argument if [path] is not a directory.
       @raise Eio.Io
-        if [path] or an entry under it cannot be read, or a regular file is
-        replaced between the stat that found it and the open that copies it:
-        that open does not follow a link. *)
+        if [path] is not a directory, if it or an entry under it cannot be read,
+        or if a regular file is replaced between the stat that found it and the
+        open that copies it: that open does not follow a link. *)
 
   (** {1:macos macOS}
 
@@ -327,8 +326,9 @@ module Crunch : sig
       that is neither a regular file, a directory nor a symbolic link is not
       recorded; it is traced with [Eio.traceln].
 
-      @raise Stdlib.Invalid_argument if [dir] is not a directory.
-      @raise Eio.Io if [dir] or an entry under it cannot be read. *)
+      @raise Eio.Io
+        if [dir] is not a directory, or if it or an entry under it cannot be
+        read. *)
 
   val find : string -> t -> string option
   (** [find path entries] is [Some contents] for the first {!File} at [path] in

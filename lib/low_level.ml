@@ -1166,7 +1166,7 @@ let entries dir_fd path =
   | Resource.Dir dir ->
       Resource.update r (accessed ~now:((Dir.fs dir_fd).now ()));
       Dir_node.names dir
-  | _ -> Error.err "Not a directory"
+  | _ -> Error.err ("read_dir: not a directory: " ^ path)
 
 let read_dir dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () -> List.map fst (entries dir_fd path)
@@ -1574,8 +1574,8 @@ module Flow = struct
 
     (* ENOTSOCK, which eio_posix and eio_linux raise as a bare [Eio.Io]. *)
     let shutdown _ _ = Error.err "shutdown: not a socket"
-    let getsockopt _ _ = Fmt.failwith "in-memory flow has no socket options"
-    let setsockopt _ _ _ = Fmt.failwith "in-memory flow has no socket options"
+    let getsockopt _ _ = Error.err "getsockopt: not a socket"
+    let setsockopt _ _ _ = Error.err "setsockopt: not a socket"
     let read_methods = []
     let pread = preadv
     let pwrite = pwritev
