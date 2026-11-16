@@ -1360,6 +1360,28 @@ let test_seek_bounds () =
   | n -> Alcotest.failf "read %d bytes past the end" n
   | exception End_of_file -> ()
 
+(* A write of no bytes past the end changes nothing, as Linux returns before
+   the file system sees it: no length, no position, and a user's write keeps
+   the setuid bit. *)
+let test_empty_write () =
+  Eio_mock.Backend.run @@ fun () ->
+  let fs = Eio_fs.Fs.v () in
+  let a = Eio_fs.Fs.as_user alice fs in
+  Eio.Path.save ~create:(`Exclusive 0o644) (fs / "f") "abc";
+  Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (fs / "f");
+  Eio.Path.chmod ~follow:false ~perm:0o4755 (a / "f");
+  Eio.Path.with_open_out ~create:`Never (a / "f") (fun f ->
+      ignore (Eio.File.seek f (Optint.Int63.of_int 100) `Set : Optint.Int63.t);
+      Alcotest.(check int)
+        "no byte written" 0
+        (Eio.Flow.single_write f [ Cstruct.empty ]);
+      Alcotest.(check int)
+        "the position stayed" 100
+        (Optint.Int63.to_int (Eio.File.seek f Optint.Int63.zero `Cur)));
+  Alcotest.(check string) "the file" "abc" (Eio.Path.load (fs / "f"));
+  Alcotest.(check int)
+    "the mode" 0o4755 (Eio.Path.stat ~follow:false (fs / "f")).perm
+
 (* A confined capability, the current directory or an opened directory,
    refuses an absolute path as eio_posix does, rather than resolving it below
    itself. *)
@@ -1473,6 +1495,8 @@ let suite =
       Alcotest.test_case "confined absolute path" `Quick
         test_confined_absolute_path;
       Alcotest.test_case "seek bounds" `Quick test_seek_bounds;
+      Alcotest.test_case "an empty write changes nothing" `Quick
+        test_empty_write;
       Alcotest.test_case "open_dir on a file" `Quick
         test_open_dir_not_a_directory;
       Alcotest.test_case "absolute symbolic link" `Quick test_absolute_symlink;
