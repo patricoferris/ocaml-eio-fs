@@ -989,7 +989,7 @@ module Crash = struct
         && List.length v <= List.length trail
     | Drop | Keep | Seed _ -> true
 
-  type result = {
+  type run = {
     trace : record;
     cut_op : Op.t option; (* the operation the cut fell before *)
     seqs : (int * int) list;
@@ -1295,7 +1295,7 @@ module Crash = struct
     | Chmod { perm } -> Fmt.str "%schmod %s %o" n u.path perm
     | Chown { uid; gid } -> Fmt.str "%schown %s %Ld:%Ld" n u.path uid gid
 
-  let lines (s : Plan.crash) (r : result) =
+  let lines (s : Plan.crash) (r : run) =
     let at p =
       match r.cut_op with
       | Some op when Plan.at p op -> Some op
