@@ -1,5 +1,3 @@
-; Quiet_mock is private to eio_fs: its source is compiled in here.
-
 (copy_files#
  (files ../../lib/quiet_mock.{ml,mli}))
 
