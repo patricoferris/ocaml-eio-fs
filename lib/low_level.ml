@@ -429,13 +429,14 @@ module Fd = struct
     fs : fs;
     num : Num.t;
     append : bool;
+    writable : bool; (* opened O_RDWR *)
     user : User.t; (* who opened it *)
     mutable pos : Optint.Int63.t;
     mutable closed : bool;
   }
 
-  let v ?(append = false) ~user fs num =
-    { fs; num; append; user; pos = Optint.Int63.zero; closed = false }
+  let v ?(append = false) ~writable ~user fs num =
+    { fs; num; append; writable; user; pos = Optint.Int63.zero; closed = false }
 
   let closed t = t.closed
 
@@ -909,6 +910,7 @@ let open_locked ~mode dir_fd path flags =
   let is_create = Open_flags.(mem o_creat flags) in
   let is_excl = Open_flags.(mem o_excl flags) in
   let append = Open_flags.(mem o_append flags) in
+  let writable = Open_flags.(mem o_rdwr flags) in
   let truncate = Open_flags.(mem o_trunc flags) in
   let nofollow = Open_flags.(mem o_nofollow flags) in
   let directory = Open_flags.(mem o_directory flags) in
@@ -972,7 +974,7 @@ let open_locked ~mode dir_fd path flags =
   in
   let num = next_fd_of_fds fs.fds in
   fs.fds <- Fd_table.add num r fs.fds;
-  Fd.v ~append ~user:dir_fd.user fs num
+  Fd.v ~append ~writable ~user:dir_fd.user fs num
 
 let descriptors dir_fd =
   let fs = Dir.fs dir_fd in
@@ -1417,6 +1419,10 @@ let not_a_file op r =
   | Resource.Dir _ -> Error.err (op ^ ": is a directory")
   | _ -> Error.err (op ^ ": not a regular file")
 
+(* write(2) on a descriptor opened read-only: EBADF; ftruncate(2): EINVAL. *)
+let check_writable op (t : Fd.t) =
+  if not t.writable then Error.err (op ^ ": not open for writing")
+
 (* A descriptor open on a non-regular file still answers the file interface --
    [Eio.Path.open_in] on a directory is legal and the portable directory
    barrier depends on it -- so the operations below refuse one with EISDIR, as
@@ -1437,6 +1443,7 @@ let read_from (t : Fd.t) r bufs =
 let writev t bufs =
   locked t.Fd.fs @@ fun () ->
   let r = resource_of t in
+  check_writable "writev" t;
   match !r with
   | File e ->
       (* The buffers are one contiguous run, written at the offset or, for an
@@ -1507,6 +1514,7 @@ let pwritev t ~file_offset bufs =
   locked t.Fd.fs @@ fun () ->
   check_offset "pwrite" file_offset;
   let r = resource_of t in
+  check_writable "pwrite" t;
   match !r with
   | Resource.File e ->
       let src = Cstruct.concat bufs in
@@ -1544,6 +1552,7 @@ let truncate_fd t len =
   locked t.Fd.fs @@ fun () ->
   check_offset "truncate" len;
   let r = resource_of t in
+  check_writable "truncate" t;
   match !r with
   | Resource.File e ->
       let f = written t (File.truncate e (Optint.Int63.to_int len)) in
