@@ -39,14 +39,6 @@ let sync_dir ((res, path) as p : _ Eio.Path.t) =
           Eio.Exn.reraise_with_context ex bt
             "syncing directory (backend registers no Dir_sync barrier)")
 
-(* [Eio.Path.split] keeps the directory capability attached, where
-   [Filename.dirname] would drop the confinement. A path with no parent is the
-   root of the capability, so its barrier is its own. *)
-let sync_parent p =
-  match Eio.Path.split p with
-  | Some (parent, _) -> sync_dir parent
-  | None -> sync_dir p
-
 (* The file-data barrier. A file is itself the resource, so its operation takes
    no name. A registered barrier is answered whole: syncing the file behind it
    would be a barrier the wrapper never recorded. *)
@@ -77,7 +69,8 @@ let can_sync (Eio.Resource.T (_, ops) as file) =
   || Option.is_some (Eio.Resource.get_opt ops Eio.File.Pi.Write)
 
 (* A barrier is the pair a publication issues, packed with its state as a
-   rename backend is. *)
+   rename backend is. [Skip] issues none, and lets a publication skip the
+   walk a barrier would need. *)
 module Barrier = struct
   module type S = sig
     type t
@@ -86,11 +79,14 @@ module Barrier = struct
     val sync_dir : t -> _ Eio.Path.t -> unit
   end
 
-  type t = T : (module S with type t = 'a) * 'a -> t
+  type t = Skip | T : (module S with type t = 'a) * 'a -> t
 
   module Make (B : S) = struct
     let v b = T ((module B), b)
   end
+
+  let none = Skip
+  let issues = function Skip -> false | T _ -> true
 
   module Portable = struct
     type t = unit
@@ -99,9 +95,15 @@ module Barrier = struct
     let sync_dir () path = sync_dir path
   end
 
-  let sync_file (T ((module B), b)) file = B.sync_file b file
-  let sync_dir (T ((module B), b)) path = B.sync_dir b path
+  let sync_file t file =
+    match t with Skip -> () | T ((module B), b) -> B.sync_file b file
 
+  let sync_dir t path =
+    match t with Skip -> () | T ((module B), b) -> B.sync_dir b path
+
+  (* [Eio.Path.split] keeps the directory capability attached, where
+     [Filename.dirname] would drop the confinement. A path with no parent is
+     the root of the capability, so its barrier is its own. *)
   let sync_parent t p =
     match Eio.Path.split p with
     | Some (parent, _) -> sync_dir t parent
@@ -157,22 +159,22 @@ let is_modeless (Eio.Resource.T (v, ops)) =
   | Some modeless -> modeless v
   | None -> false
 
-(* [barrier] is [None] when the publication keeps only its atomicity. *)
-type config = {
-  barrier : Barrier.t option;
-  perm : Eio.File.Unix_perm.t;
-  max_bytes : int64;
-}
-
-let barrier_of ~durable barrier = if durable then Some barrier else None
-
-let config ?(durable = true) ?(barrier = Barrier.portable) ?(perm = 0o644)
-    ~max_bytes () =
-  if Int64.compare max_bytes 0L < 0 then
-    invalid_arg "Eio_fs_sync.config: max_bytes must be non-negative";
-  { barrier = barrier_of ~durable barrier; perm; max_bytes }
-
 exception Limit_exceeded of { max_bytes : int64; attempted : int64 }
+
+let () =
+  Printexc.register_printer (function
+    | Limit_exceeded { max_bytes; attempted } ->
+        Some
+          (Fmt.str
+             "Eio_fs_sync.Limit_exceeded: the write reaches %Ld bytes, past \
+              max_bytes %Ld"
+             attempted max_bytes)
+    | _ -> None)
+
+let check_max_bytes fn max_bytes =
+  if Int64.compare max_bytes 0L < 0 then
+    Fmt.invalid_arg "Eio_fs_sync.%s: max_bytes is %Ld, must not be negative" fn
+      max_bytes
 
 module Bounded_sink = struct
   type t = {
@@ -270,7 +272,7 @@ let fresh_tmp ~collisions (dir, target) =
 let same_file (a : Eio.File.Stat.t) (b : Eio.File.Stat.t) =
   Int64.equal a.dev b.dev && Int64.equal a.ino b.ino
 
-let produce ~config ~requested_tmp ((dir, target) as path) write =
+let produce ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
   let rec produce collisions =
     let tmp =
       match requested_tmp with
@@ -288,7 +290,7 @@ let produce ~config ~requested_tmp ((dir, target) as path) write =
     in
     try
       let result =
-        Eio.Path.with_open_out ~create:(`Exclusive config.perm) tmp (fun file ->
+        Eio.Path.with_open_out ~create:(`Exclusive perm) tmp (fun file ->
             owned := true;
             let tmp_stat = Eio.File.stat file in
             (match Eio.Path.stat ~follow:false path with
@@ -298,13 +300,13 @@ let produce ~config ~requested_tmp ((dir, target) as path) write =
             | _ -> ()
             | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ());
             (* The create's mode is narrowed by the umask; the published file
-               carries exactly [config.perm], on a backend that keeps one. *)
+               carries exactly [perm], on a backend that keeps one. *)
             if
               (not (is_modeless tmp_resource))
-              && not (Int.equal (tmp_stat.perm land 0o7777) config.perm)
-            then Eio.Path.chmod ~follow:false ~perm:config.perm tmp;
+              && not (Int.equal (tmp_stat.perm land 0o7777) perm)
+            then Eio.Path.chmod ~follow:false ~perm tmp;
             let result = write file in
-            Option.iter (fun b -> Barrier.sync_file b file) config.barrier;
+            Barrier.sync_file barrier file;
             result)
       in
       (tmp, owned, cleanup, result)
@@ -321,30 +323,35 @@ let produce ~config ~requested_tmp ((dir, target) as path) write =
 
 (* Write a temporary, push its bytes to stable storage, rename it over the
    target, and barrier the target's directory. *)
-let publish_file ~config ?(mode = `Replace) ?(rename = Rename.capability)
-    ?tmp:requested_tmp path write =
-  let tmp, owned, cleanup, result = produce ~config ~requested_tmp path write in
+let publish_file ~barrier ~perm ~exclusive ~requested_tmp path write =
+  let tmp, owned, cleanup, result =
+    produce ~barrier ~perm ~requested_tmp path write
+  in
   (try
      Eio.Cancel.protect @@ fun () ->
-     (match mode with
-     | `Replace -> Eio.Path.rename tmp path
-     | `Exclusive -> Rename.exclusive rename tmp path);
+     (match exclusive with
+     | None -> Eio.Path.rename tmp path
+     | Some backend -> Rename.exclusive backend tmp path);
      owned := false;
-     Option.iter (fun b -> Barrier.sync_parent b path) config.barrier
+     Barrier.sync_parent barrier path
    with e ->
      cleanup ();
      raise e);
   result
 
-let publish ~config ?mode ?rename ?tmp path write =
-  publish_file ~config ?mode ?rename ?tmp path (fun file ->
+let publish ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
+    ?tmp:requested_tmp ~max_bytes path write =
+  check_max_bytes "publish" max_bytes;
+  publish_file ~barrier ~perm ~exclusive ~requested_tmp path (fun file ->
       let sink = (file :> Eio.Flow.sink_ty Eio.Resource.t) in
-      write (bounded_sink ~max_bytes:config.max_bytes sink))
+      write (bounded_sink ~max_bytes sink))
 
 (* Validate before creating a temporary. Subtract before comparing lengths,
    so an adversarial offset cannot wrap the end calculation. Disjoint ordered
    extents also bound total bytes written by the logical size. *)
-let publish_sparse ~config ?mode ?rename ?tmp ~size_bytes path spans =
+let publish_sparse ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
+    ?tmp:requested_tmp ~max_bytes ~size_bytes path spans =
+  check_max_bytes "publish_sparse" max_bytes;
   if Int64.compare size_bytes 0L < 0 then
     Fmt.invalid_arg "Eio_fs_sync.publish_sparse: negative logical size %Ld"
       size_bytes;
@@ -353,9 +360,8 @@ let publish_sparse ~config ?mode ?rename ?tmp ~size_bytes path spans =
     Fmt.invalid_arg
       "Eio_fs_sync.publish_sparse: logical size %Ld exceeds file offsets"
       size_bytes;
-  if Int64.compare size_bytes config.max_bytes > 0 then
-    raise
-      (Limit_exceeded { max_bytes = config.max_bytes; attempted = size_bytes });
+  if Int64.compare size_bytes max_bytes > 0 then
+    raise (Limit_exceeded { max_bytes; attempted = size_bytes });
   let rec validate previous = function
     | [] -> ()
     | (offset, data) :: rest ->
@@ -375,7 +381,7 @@ let publish_sparse ~config ?mode ?rename ?tmp ~size_bytes path spans =
         validate (Int64.add offset length) rest
   in
   validate 0L spans;
-  publish_file ~config ?mode ?rename ?tmp path (fun file ->
+  publish_file ~barrier ~perm ~exclusive ~requested_tmp path (fun file ->
       Eio.File.truncate file (Optint.Int63.of_int64 size_bytes);
       List.iter
         (fun (offset, data) ->
@@ -386,13 +392,11 @@ let publish_sparse ~config ?mode ?rename ?tmp ~size_bytes path spans =
         spans)
 
 (* A string is its own ceiling. *)
-let save ?durable ?barrier ?perm path s =
-  let config =
-    config ?durable ?barrier ?perm
-      ~max_bytes:(Int64.of_int (String.length s))
-      ()
-  in
-  publish ~config path (fun sink -> Eio.Flow.copy_string s sink)
+let save ?barrier ?perm path s =
+  publish ?barrier ?perm
+    ~max_bytes:(Int64.of_int (String.length s))
+    path
+    (fun sink -> Eio.Flow.copy_string s sink)
 
 (* A crash part way through an append leaves the last line without its LF.
    The line is ended first, so the torn bytes are a line of their own and
@@ -411,8 +415,7 @@ let ends_torn path =
         [ last ];
       not (Char.equal (Cstruct.get_char last 0) '\n')
 
-let append_lines ?(durable = true) ?(barrier = Barrier.portable) ?(perm = 0o644)
-    path lines =
+let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644) path lines =
   List.iter
     (fun l ->
       if String.contains l '\n' then
@@ -430,7 +433,7 @@ let append_lines ?(durable = true) ?(barrier = Barrier.portable) ?(perm = 0o644)
   (* Every durable append barriers the file and its directory, an empty one
      included: when the barriers of the append that created the file failed,
      nothing else would make its entry durable. *)
-  if durable || data <> "" then begin
+  if Barrier.issues barrier || data <> "" then begin
     let create = if data = "" then `Never else `If_missing perm in
     let opened =
       Eio.Switch.run @@ fun sw ->
@@ -438,10 +441,10 @@ let append_lines ?(durable = true) ?(barrier = Barrier.portable) ?(perm = 0o644)
       | exception Eio.Io (Eio.Fs.E (Not_found _), _) when data = "" -> false
       | file ->
           if data <> "" then Eio.Flow.copy_string data file;
-          if durable then Barrier.sync_file barrier file;
+          Barrier.sync_file barrier file;
           true
     in
-    if opened && durable then Barrier.sync_parent barrier path
+    if opened then Barrier.sync_parent barrier path
   end
 
 (* A read-only handle with no barrier and no sync of its own is opened again
@@ -521,19 +524,18 @@ let owned_generation ~name target =
   | Some owner -> String.equal owner (stem name)
   | None -> false
 
-type Eio.Exn.Backend.t += Changed_generation of string
+type Eio.Exn.Backend.t += Generation of string
 
 let () =
   Eio.Exn.Backend.register_pp (fun ppf -> function
-    | Changed_generation why ->
+    | Generation why ->
         Fmt.string ppf why;
         true
     | _ -> false)
 
 let fail_generation_changed path before actual =
   Fmt.kstr
-    (fun why ->
-      raise (Eio.Fs.err (Eio.Fs.Permission_denied (Changed_generation why))))
+    (fun why -> raise (Eio.Fs.err (Eio.Fs.Permission_denied (Generation why))))
     "generation %a was a %a inode %Ld:%Ld, now a %a inode %Ld:%Ld" Eio.Path.pp
     path Eio.File.Stat.pp_kind before.Eio.File.Stat.kind before.dev before.ino
     Eio.File.Stat.pp_kind actual.Eio.File.Stat.kind actual.dev actual.ino
@@ -573,8 +575,8 @@ let discard p =
    over the published name, commit that, then reclaim the owned generations
    older than the one the old pointer named, which a reader may still be
    reading. *)
-let publish_generation ?(durable = true) ?(barrier = Barrier.portable)
-    ?(perm = 0o755) path populate =
+let publish_generation ?(barrier = Barrier.portable) ?(perm = 0o755) path
+    populate =
   let parent, name =
     match Eio.Path.split path with
     | Some split -> split
@@ -586,9 +588,13 @@ let publish_generation ?(durable = true) ?(barrier = Barrier.portable)
     | `Not_found -> None
     | `Symbolic_link -> Some (Eio.Path.read_link path)
     | _ ->
-        Fmt.invalid_arg
-          "Eio_fs_sync.publish_generation: %s is not a generation pointer"
-          (snd path)
+        let ex =
+          Eio.Fs.err
+            (Eio.Fs.Already_exists
+               (Generation "the entry is not a generation pointer"))
+        in
+        raise
+          (Eio.Exn.add_context ex "publishing generation %a" Eio.Path.pp path)
   in
   let generation = fresh_generation name in
   let staged = Eio.Path.(parent / generation) in
@@ -596,7 +602,7 @@ let publish_generation ?(durable = true) ?(barrier = Barrier.portable)
   let result =
     try
       let result = populate staged in
-      if durable then begin
+      if Barrier.issues barrier then begin
         Barrier.sync_dir barrier parent;
         sync_tree barrier staged
       end;
@@ -618,7 +624,7 @@ let publish_generation ?(durable = true) ?(barrier = Barrier.portable)
            try Eio.Path.unlink link with Eio.Io _ -> ());
      discard staged;
      raise e);
-  if durable then Barrier.sync_dir barrier parent;
+  Barrier.sync_dir barrier parent;
   let kept entry =
     String.equal entry generation
     || Option.equal String.equal (Some entry) previous
@@ -642,7 +648,7 @@ let link_target path =
 
 (* The link is made under a fresh name and removed unless renamed into
    place, so a refusal or a raise leaves only what was there. *)
-let stage_link ~barrier ~expected ~link_to path =
+let stage_link ~barrier ~expected ~target path =
   let parent, name =
     match Eio.Path.split path with
     | Some pair -> pair
@@ -654,9 +660,9 @@ let stage_link ~barrier ~expected ~link_to path =
     ~finally:(fun () ->
       if !staged then Eio.Cancel.protect (fun () -> Eio.Path.unlink stage))
     (fun () ->
-      Eio.Path.symlink ~link_to stage;
+      Eio.Path.symlink ~link_to:target stage;
       staged := true;
-      Option.iter (fun b -> Barrier.sync_parent b stage) barrier;
+      Barrier.sync_parent barrier stage;
       match link_target path with
       | Error e -> Error e
       | Ok actual when not (Option.equal String.equal actual expected) ->
@@ -665,21 +671,19 @@ let stage_link ~barrier ~expected ~link_to path =
           Eio.Cancel.protect (fun () ->
               Eio.Path.rename stage path;
               staged := false;
-              Option.iter (fun b -> Barrier.sync_parent b path) barrier);
+              Barrier.sync_parent barrier path);
           Ok ())
 
-let publish_link ?(durable = true) ?(barrier = Barrier.portable) ~lock ~expected
-    ~link_to path =
-  let barrier = barrier_of ~durable barrier in
+let publish_link ?(barrier = Barrier.portable) ~lock ~expected ~target path =
   Lock.use lock @@ fun () ->
-  if link_to = "" || String.contains link_to '\000' then
+  if target = "" || String.contains target '\000' then
     Error (`Invalid "a symbolic link's target is empty or holds a NUL byte")
   else
     match link_target path with
     | Error e -> Error e
     | Ok actual when not (Option.equal String.equal actual expected) ->
         Error (`Changed actual)
-    | Ok (Some actual) when String.equal actual link_to ->
-        Option.iter (fun b -> Barrier.sync_parent b path) barrier;
+    | Ok (Some actual) when String.equal actual target ->
+        Barrier.sync_parent barrier path;
         Ok ()
-    | Ok _ -> stage_link ~barrier ~expected ~link_to path
+    | Ok _ -> stage_link ~barrier ~expected ~target path

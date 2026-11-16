@@ -121,7 +121,7 @@ let test_racing_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
-  Eio_fs_sync.sync_parent (fs / "a");
+  Eio_fs_sync.sync_dir fs;
   let _, parent_path = fs / "a" in
   let raced = ref false in
   let module Chaos = Eio_fs.Chaos.Private in

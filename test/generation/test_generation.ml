@@ -53,8 +53,8 @@ let pp_tree ppf = function
   | None -> Fmt.string ppf "absent"
   | Some t -> Fmt.(Dump.list (Dump.pair string string)) ppf t
 
-let publish ~durable fs tree =
-  Eio_fs_sync.publish_generation ~durable (fs / "out") (populate tree)
+let publish fs tree =
+  Eio_fs_sync.publish_generation (fs / "out") (populate tree)
 
 (* A base holding [old_tree], published and committed over an earlier
    generation, which the next publication reclaims after its switch. *)
@@ -63,8 +63,8 @@ let with_old fn =
   Eio_fs.run @@ fun env ->
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
-  publish ~durable:true fs [ ("a", "earlier") ];
-  publish ~durable:true fs old_tree;
+  publish fs [ ("a", "earlier") ];
+  publish fs old_tree;
   fn (Crash.post_crash ctl)
 
 let with_empty fn =
@@ -80,7 +80,7 @@ let every_crash_point ~policy ~setup ~before =
     if n > 1000 then Alcotest.fail "the publication never completed";
     setup @@ fun base ->
     let ctl = Crash.v ~policy ~trigger:(Crash.Nth_op n) () in
-    (try publish ~durable:true (Crash.wrap ctl base) new_tree
+    (try publish (Crash.wrap ctl base) new_tree
      with Eio.Io _ when Crash.is_crashed ctl -> ());
     let completed = not (Crash.is_crashed ctl) in
     let seen = read_back (Crash.post_crash ctl / "out") in
@@ -142,7 +142,7 @@ let test_reader_spans_a_replacement () =
   with_old @@ fun base ->
   let generation = base / Eio.Path.read_link (base / "out") in
   let a = Eio.Path.load (generation / "a") in
-  publish ~durable:true base new_tree;
+  publish base new_tree;
   let b = Eio.Path.load (generation / "sub/b") in
   Alcotest.(check (pair string string))
     "both files of the reader's generation" ("old-a", "old-b") (a, b)
@@ -155,9 +155,9 @@ let test_older_reclaimed () =
   let oldest = Eio.Path.read_link (base / "out") in
   let stray = ".out.gen.1.2" in
   populate [ (stray ^ "/x", "left by a crash") ] base;
-  publish ~durable:true base new_tree;
+  publish base new_tree;
   let previous = Eio.Path.read_link (base / "out") in
-  publish ~durable:true base [ ("a", "third") ];
+  publish base [ ("a", "third") ];
   let target = Eio.Path.read_link (base / "out") in
   Alcotest.(check (list string))
     "the pointer, its generation and the one it replaced"
@@ -176,7 +176,7 @@ let test_foreign_target_kept () =
   with_empty @@ fun fs ->
   populate [ ("elsewhere/x", "kept") ] fs;
   Eio.Path.symlink ~link_to:"elsewhere" (fs / "out");
-  publish ~durable:true fs new_tree;
+  publish fs new_tree;
   Alcotest.check tree "the new tree" (Some new_tree) (read_back (fs / "out"));
   Alcotest.(check string)
     "the foreign tree stands" "kept"
@@ -186,7 +186,7 @@ let test_foreign_target_kept () =
   populate [ (other ^ "/x", "theirs") ] fs;
   Eio.Path.unlink (fs / "out");
   Eio.Path.symlink ~link_to:other (fs / "out");
-  publish ~durable:true fs new_tree;
+  publish fs new_tree;
   Alcotest.(check string)
     "another name's generation stands" "theirs"
     (Eio.Path.load (fs / other / "x"))
@@ -196,7 +196,7 @@ let test_foreign_target_kept () =
    caller would choose reads as one. *)
 let test_generation_names () =
   with_empty @@ fun fs ->
-  publish ~durable:true fs new_tree;
+  publish fs new_tree;
   let target = Eio.Path.read_link (fs / "out") in
   Alcotest.(check bool)
     "the link names a generation" true
@@ -228,7 +228,7 @@ let test_failed_populate () =
   with_old @@ fun base ->
   let before = List.sort String.compare (Eio.Path.read_dir base) in
   (match
-     Eio_fs_sync.publish_generation ~durable:true (base / "out") (fun dir ->
+     Eio_fs_sync.publish_generation (base / "out") (fun dir ->
          populate new_tree dir;
          failwith "producer failed")
    with
@@ -253,7 +253,7 @@ let test_taken_link_name_kept () =
   in
   let taken = String.sub probe 0 (dot + 1) ^ string_of_int (n + 2) in
   Eio.Path.save ~create:(`Exclusive 0o644) (base / taken) "someone else's";
-  (match publish ~durable:true base new_tree with
+  (match publish base new_tree with
   | () -> Alcotest.fail "the switch went through a taken name"
   | exception Eio.Io (Eio.Fs.E (Already_exists _), _) -> ());
   Alcotest.(check string)
@@ -268,12 +268,9 @@ let test_refuses_plain_directory () =
   with_empty @@ fun fs ->
   populate [ ("out/x", "legacy") ] fs;
   let ran = ref false in
-  (match
-     Eio_fs_sync.publish_generation ~durable:true (fs / "out") (fun _ ->
-         ran := true)
-   with
+  (match Eio_fs_sync.publish_generation (fs / "out") (fun _ -> ran := true) with
   | () -> Alcotest.fail "a plain directory was replaced"
-  | exception Invalid_argument _ -> ());
+  | exception Eio.Io (Eio.Fs.E (Already_exists _), _) -> ());
   Alcotest.(check bool) "the producer never ran" false !ran;
   Alcotest.(check (list string))
     "nothing was staged beside it" [ "out" ] (Eio.Path.read_dir fs);
@@ -301,13 +298,13 @@ let test_posix_readonly_reclaimed () =
   populate [ ("foreign/kept", "outside the generation") ] root;
   Eio.Path.chmod ~follow:false ~perm:0o500 (root / "foreign");
   let foreign = Eio.Path.stat ~follow:false (root / "foreign") in
-  Eio_fs_sync.publish_generation ~durable:true (root / "out") (fun dir ->
+  Eio_fs_sync.publish_generation (root / "out") (fun dir ->
       readonly [ ("readonly/file", "old rootfs") ] dir;
       Eio.Path.symlink ~link_to:"../foreign" (dir / "link"));
   let old = Eio.Path.read_link (root / "out") in
-  Eio_fs_sync.publish_generation ~durable:true (root / "out")
+  Eio_fs_sync.publish_generation (root / "out")
     (readonly [ ("readonly/file", "first replacement") ]);
-  Eio_fs_sync.publish_generation ~durable:true (root / "out")
+  Eio_fs_sync.publish_generation (root / "out")
     (readonly [ ("readonly/file", "complete replacement") ]);
   Alcotest.(check string)
     "replacement is complete" "complete replacement"
@@ -332,13 +329,13 @@ let test_posix_readonly_reclaimed () =
    those staged entries must leave the previous generation and modes intact. *)
 let test_posix_readonly_failed_populate () =
   with_posix @@ fun root ->
-  Eio_fs_sync.publish_generation ~durable:true (root / "out")
+  Eio_fs_sync.publish_generation (root / "out")
     (readonly [ ("readonly/file", "previous complete rootfs") ]);
   let target = Eio.Path.read_link (root / "out") in
   let before = Eio.Path.stat ~follow:false (root / target) in
   let entries = List.sort String.compare (Eio.Path.read_dir root) in
   (match
-     Eio_fs_sync.publish_generation ~durable:true (root / "out") (fun dir ->
+     Eio_fs_sync.publish_generation (root / "out") (fun dir ->
          readonly [ ("readonly/file", "never published") ] dir;
          failwith "fixture population failed")
    with
@@ -370,7 +367,7 @@ let test_durable_through_a_fault_wrapper () =
   let wrapped =
     Eio_fs.Chaos.Private.wrap Eio_fs.Chaos.Private.Schedule.empty fs
   in
-  publish ~durable:true wrapped new_tree;
+  publish wrapped new_tree;
   Alcotest.check tree "published" (Some new_tree) (read_back (fs / "out"))
 
 let suite =

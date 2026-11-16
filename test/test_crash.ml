@@ -554,7 +554,7 @@ let test_crash_default_is_one_state () =
 let image_of_seed seed =
   let ctl = Crash.v ~policy:(Reorder_unsynced seed) () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.save ~durable:false (fs / "state") "v1";
+  Eio_fs_sync.save ~barrier:Eio_fs_sync.Barrier.none (fs / "state") "v1";
   let post = Crash.post_crash ctl in
   List.sort String.compare (Eio.Path.read_dir post)
 

@@ -10,15 +10,14 @@ let contains ~affix s =
   let rec at i = i + n <= m && (String.sub s i n = affix || at (i + 1)) in
   at 0
 
-let config max_bytes = Eio_fs_sync.config ~max_bytes ()
-
-(* A sparse publication takes the bounded publisher's config and its
-   exclusive mode, and its extents as offsets with their bytes. *)
+(* A sparse publication takes the bounded publisher's options and its ceiling,
+   and its extents as offsets with their bytes. *)
 let _ :
-    config:Eio_fs_sync.config ->
-    ?mode:[ `Replace | `Exclusive ] ->
-    ?rename:Eio_fs_sync.Rename.t ->
+    ?barrier:Eio_fs_sync.Barrier.t ->
+    ?perm:Eio.File.Unix_perm.t ->
+    ?exclusive:Eio_fs_sync.Rename.t ->
     ?tmp:'a Eio.Path.t ->
+    max_bytes:int64 ->
     size_bytes:int64 ->
     'a Eio.Path.t ->
     (int64 * Cstruct.t) list ->
@@ -31,10 +30,10 @@ let test_registered_backend () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   Eio_fs_sync.sync_dir env#fs;
-  Eio_fs_sync.publish ~config:(config 3L) (env#fs / "cfg") (fun f ->
+  Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy_string "one" f);
   Alcotest.(check string) "published" "one" (Eio.Path.load (env#fs / "cfg"));
-  Eio_fs_sync.publish ~config:(config 3L) (env#fs / "cfg") (fun f ->
+  Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy_string "two" f);
   Alcotest.(check string) "replaced" "two" (Eio.Path.load (env#fs / "cfg"));
   Alcotest.(check bool)
@@ -54,12 +53,12 @@ let test_posix_needs_no_registration () =
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
   Eio_fs_sync.sync_dir (fs / dir);
-  Eio_fs_sync.publish ~config:(config 1L)
+  Eio_fs_sync.publish ~max_bytes:1L
     (fs / dir / "cfg")
     (fun f -> Eio.Flow.copy_string "x" f);
   Alcotest.(check string) "published" "x" (Eio.Path.load (fs / dir / "cfg"))
 
-(* The published file carries exactly [config.perm]. A create's mode is
+(* The published file carries exactly [perm]. A create's mode is
    narrowed by the process umask (open(2): "the mode of the created file is
    (mode & ~umask)"), so a mode the caller named survives only if publish
    restates it on the temporary before the rename. The umask here clears the
@@ -76,12 +75,11 @@ let test_publish_honours_perm_under_umask () =
       ignore (Unix.umask previous : int);
       Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
-  Eio_fs_sync.publish
-    ~config:(Eio_fs_sync.config ~perm:0o644 ~max_bytes:1L ())
+  Eio_fs_sync.publish ~perm:0o644 ~max_bytes:1L
     (fs / dir / "cfg")
     (fun f -> Eio.Flow.copy_string "x" f);
   let stat = Eio.Path.stat ~follow:false (fs / dir / "cfg") in
-  Alcotest.(check int) "published mode is config.perm" 0o644 stat.perm
+  Alcotest.(check int) "published mode is perm" 0o644 stat.perm
 
 (* A barrier that cannot be issued surfaces loudly, with context pointing at
    the Dir_sync registration -- never a silent no-op. *)
@@ -142,7 +140,7 @@ let test_failed_save_cleans_temporary () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   (match
-     Eio_fs_sync.publish ~config:(config 1L)
+     Eio_fs_sync.publish ~max_bytes:1L
        (env#fs / "missing-dir" / "f")
        (fun f -> Eio.Flow.copy_string "x" f)
    with
@@ -160,7 +158,7 @@ let test_publish_with_remote_tmp () =
   Eio_fs.run @@ fun env ->
   Eio.Path.mkdir ~perm:0o755 (env#fs / "tmp");
   Eio.Path.mkdir ~perm:0o755 (env#fs / "live");
-  Eio_fs_sync.publish ~config:(config 7L)
+  Eio_fs_sync.publish ~max_bytes:7L
     ~tmp:(env#fs / "tmp" / "stage-1")
     (env#fs / "live" / "cfg")
     (fun f -> Eio.Flow.copy_string "payload" f);
@@ -175,7 +173,7 @@ let test_publish_with_stream () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let result =
-    Eio_fs_sync.publish ~config:(config 7L) ~tmp:(env#fs / "stream.tmp")
+    Eio_fs_sync.publish ~max_bytes:7L ~tmp:(env#fs / "stream.tmp")
       (env#fs / "stream") (fun file ->
         Eio.Flow.copy_string "one" file;
         Eio.Flow.copy_string "-two" file;
@@ -194,7 +192,7 @@ let test_publish_with_failure_preserves_target () =
   Eio_fs.run @@ fun env ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (env#fs / "live") "old";
   (match
-     Eio_fs_sync.publish ~config:(config 7L) ~tmp:(env#fs / "live.tmp")
+     Eio_fs_sync.publish ~max_bytes:7L ~tmp:(env#fs / "live.tmp")
        (env#fs / "live") (fun file ->
          Eio.Flow.copy_string "partial" file;
          raise Exit)
@@ -214,7 +212,7 @@ let test_publish_rejects_target_as_temporary () =
   let live = env#fs / "live" in
   Eio.Path.save ~create:(`Or_truncate 0o644) live "old";
   (match
-     Eio_fs_sync.publish ~config:(config 3L) ~tmp:live live
+     Eio_fs_sync.publish ~max_bytes:3L ~tmp:live live
        (Eio.Flow.copy_string "new")
    with
   | () -> Alcotest.fail "target accepted as its own temporary"
@@ -230,8 +228,7 @@ let test_publish_rejects_aliased_target () =
   Eio.Path.with_subtree env#fs @@ fun left ->
   Eio.Path.with_subtree env#fs @@ fun right ->
   (match
-     Eio_fs_sync.publish ~config:(config 3L) ~tmp:(left / "same")
-       (right / "same")
+     Eio_fs_sync.publish ~max_bytes:3L ~tmp:(left / "same") (right / "same")
        (Eio.Flow.copy_string "new")
    with
   | () -> Alcotest.fail "aliased target accepted as its own temporary"
@@ -246,7 +243,7 @@ let test_publish_does_not_remove_unowned_temporary () =
   let tmp = env#fs / "foreign.tmp" in
   Eio.Path.save ~create:(`Or_truncate 0o644) tmp "foreign";
   (match
-     Eio_fs_sync.publish ~config:(config 3L) ~tmp (env#fs / "live")
+     Eio_fs_sync.publish ~max_bytes:3L ~tmp (env#fs / "live")
        (Eio.Flow.copy_string "new")
    with
   | () -> Alcotest.fail "exclusive publish replaced a foreign temporary"
@@ -260,7 +257,7 @@ let test_publish_enforces_byte_limit () =
   let live = env#fs / "live" in
   Eio.Path.save ~create:(`Or_truncate 0o644) live "old";
   (match
-     Eio_fs_sync.publish ~config:(config 4L) live (fun file ->
+     Eio_fs_sync.publish ~max_bytes:4L live (fun file ->
          Eio.Flow.copy_string "123" file;
          Eio.Flow.copy_string "45" file)
    with
@@ -273,19 +270,18 @@ let test_publish_enforces_byte_limit () =
     "oversized temporary removed" true
     (Eio.Path.kind ~follow:false (env#fs / "live.tmp") = `Not_found)
 
-(* The durability flag has teeth: under the crash model a default publish
-   survives Drop_unsynced on its own barriers, and an explicitly non-durable
-   one loses its rename -- the window the caller opted into. *)
+(* The barrier has teeth: under the crash model a default publish survives
+   Drop_unsynced on its own barriers, and one under Barrier.none loses its
+   rename -- the window the caller opted into. *)
 let test_publish_durability_flag () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let module Crash = Eio_fs.Chaos.Private.Crash in
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
   let fs = Crash.wrap ctl env#fs in
-  Eio_fs_sync.publish ~config:(config 1L) ~tmp:(fs / "safe-tmp") (fs / "safe")
+  Eio_fs_sync.publish ~max_bytes:1L ~tmp:(fs / "safe-tmp") (fs / "safe")
     (fun f -> Eio.Flow.copy_string "s" f);
-  Eio_fs_sync.publish
-    ~config:(Eio_fs_sync.config ~durable:false ~max_bytes:1L ())
+  Eio_fs_sync.publish ~barrier:Eio_fs_sync.Barrier.none ~max_bytes:1L
     ~tmp:(fs / "fast-tmp") (fs / "fast") (fun f -> Eio.Flow.copy_string "f" f);
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -421,7 +417,8 @@ let test_exclusive_publication () =
   Eio_fs.run @@ fun env ->
   let path = env#fs / "state" in
   let publish path text =
-    Eio_fs_sync.publish ~config:(config 3L) ~mode:`Exclusive path
+    Eio_fs_sync.publish ~max_bytes:3L ~exclusive:Eio_fs_sync.Rename.capability
+      path
       (Eio.Flow.copy_string text)
   in
   publish path "old";
@@ -445,7 +442,8 @@ let test_exclusive_publication_survives_crash () =
   let module Crash = Eio_fs.Chaos.Private.Crash in
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
-  Eio_fs_sync.publish ~config:(config 7L) ~mode:`Exclusive (fs / "state")
+  Eio_fs_sync.publish ~max_bytes:7L ~exclusive:Eio_fs_sync.Rename.capability
+    (fs / "state")
     (Eio.Flow.copy_string "payload");
   Crash.crash ctl;
   Alcotest.(check string)
@@ -460,13 +458,13 @@ let test_save () =
   let p = env#fs / "state.json" in
   Eio_fs_sync.save p "{\"a\":1}";
   Alcotest.(check string) "saved" "{\"a\":1}" (Eio.Path.load p);
-  Eio_fs_sync.save ~durable:false p "{}";
+  Eio_fs_sync.save ~barrier:Eio_fs_sync.Barrier.none p "{}";
   Alcotest.(check string) "replaced" "{}" (Eio.Path.load p);
   Eio_fs_sync.save p "";
   Alcotest.(check string) "empty" "" (Eio.Path.load p)
 
 (* Every durable entry point issues the barriers it is given, and none of
-   them when it is not durable. *)
+   them under Barrier.none. *)
 let test_barrier_is_used () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
@@ -491,13 +489,12 @@ let test_barrier_is_used () =
   in
   let fs = env#fs in
   issued "publish" ~files:1 ~dirs:1 (fun () ->
-      Eio_fs_sync.publish
-        ~config:(Eio_fs_sync.config ~barrier ~max_bytes:1L ())
-        (fs / "p") (Eio.Flow.copy_string "x"));
+      Eio_fs_sync.publish ~barrier ~max_bytes:1L (fs / "p")
+        (Eio.Flow.copy_string "x"));
   issued "save" ~files:1 ~dirs:1 (fun () ->
       Eio_fs_sync.save ~barrier (fs / "s") "x");
-  issued "save, not durable" ~files:0 ~dirs:0 (fun () ->
-      Eio_fs_sync.save ~durable:false ~barrier (fs / "s") "y");
+  issued "save with no barrier" ~files:0 ~dirs:0 (fun () ->
+      Eio_fs_sync.save ~barrier:Eio_fs_sync.Barrier.none (fs / "s") "y");
   issued "append_lines" ~files:1 ~dirs:1 (fun () ->
       Eio_fs_sync.append_lines ~barrier (fs / "l") [ "x" ]);
   issued "publish_generation" ~files:1 ~dirs:3 (fun () ->
@@ -506,7 +503,7 @@ let test_barrier_is_used () =
   issued "publish_link" ~files:0 ~dirs:2 (fun () ->
       match
         Eio_fs_sync.publish_link ~barrier ~lock:Eio_fs_sync.Lock.none
-          ~expected:None ~link_to:"target" (fs / "k")
+          ~expected:None ~target:"target" (fs / "k")
       with
       | Ok () -> ()
       | Error _ -> Alcotest.fail "publish_link refused a new link")
@@ -521,7 +518,7 @@ let test_append_creates () =
   with_mem @@ fun p ->
   Eio_fs_sync.append_lines p [ {|{"a":1}|}; {|{"b":2}|} ];
   Alcotest.(check string) "created" "{\"a\":1}\n{\"b\":2}\n" (Eio.Path.load p);
-  Eio_fs_sync.append_lines ~durable:false p [ {|{"c":3}|} ];
+  Eio_fs_sync.append_lines ~barrier:Eio_fs_sync.Barrier.none p [ {|{"c":3}|} ];
   Alcotest.(check string)
     "appended" "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n" (Eio.Path.load p)
 
@@ -662,10 +659,9 @@ let test_sparse_cost size =
   let observed =
     Eio_fs.Chaos.Private.wrap schedule (Eio.Path.open_dir ~sw dir)
   in
-  Eio_fs_sync.publish_sparse
-    ~config:(config (Int64.of_int size))
-    ~rename:Eio_fs_unix.exclusive_rename ~mode:`Exclusive
-    ~size_bytes:(Int64.of_int size) (observed / "image")
+  Eio_fs_sync.publish_sparse ~max_bytes:(Int64.of_int size)
+    ~exclusive:Eio_fs_unix.exclusive_rename ~size_bytes:(Int64.of_int size)
+    (observed / "image")
     [
       (0L, Cstruct.of_string "HDR");
       (Int64.of_int (size - 4), Cstruct.of_string "TAIL");
@@ -703,7 +699,7 @@ let test_sparse_bounds_before_io () =
     (fun (name, ceiling, size, spans, limit) ->
       operations := [];
       (match
-         Eio_fs_sync.publish_sparse ~config:(config ceiling) ~size_bytes:size
+         Eio_fs_sync.publish_sparse ~max_bytes:ceiling ~size_bytes:size
            (fs / "image") spans
        with
       | () -> Alcotest.failf "%s was accepted" name
@@ -736,8 +732,8 @@ let test_sparse_exclusive () =
   List.iter
     (fun name ->
       (match
-         Eio_fs_sync.publish_sparse ~config:(config 16L) ~mode:`Exclusive
-           ~size_bytes:16L (fs / name)
+         Eio_fs_sync.publish_sparse ~max_bytes:16L
+           ~exclusive:Eio_fs_sync.Rename.capability ~size_bytes:16L (fs / name)
            [ (0L, Cstruct.of_string "new") ]
        with
       | () -> Alcotest.failf "sparse publication replaced %s" name
@@ -768,7 +764,7 @@ let test_sparse_write_failure () =
   in
   let fs = Eio_fs.Chaos.Private.wrap schedule env#fs in
   (match
-     Eio_fs_sync.publish_sparse ~config:(config 16L) ~tmp:(fs / "draft")
+     Eio_fs_sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
        ~size_bytes:16L (fs / "image")
        [ (4L, Cstruct.of_string "new") ]
    with
@@ -787,11 +783,11 @@ let test_sparse_durable_and_empty () =
   let module Crash = Eio_fs.Chaos.Private.Crash in
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
-  Eio_fs_sync.publish_sparse ~config:(config 16L) ~mode:`Exclusive
-    ~size_bytes:16L (fs / "image")
+  Eio_fs_sync.publish_sparse ~max_bytes:16L
+    ~exclusive:Eio_fs_sync.Rename.capability ~size_bytes:16L (fs / "image")
     [ (0L, Cstruct.of_string "HDR"); (12L, Cstruct.of_string "TAIL") ];
-  Eio_fs_sync.publish_sparse ~config:(config 0L) ~mode:`Exclusive ~size_bytes:0L
-    (fs / "empty") [];
+  Eio_fs_sync.publish_sparse ~max_bytes:0L
+    ~exclusive:Eio_fs_sync.Rename.capability ~size_bytes:0L (fs / "empty") [];
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -820,7 +816,7 @@ let test_sparse_cancellation () =
   let fs = Eio_fs.Chaos.Private.wrap schedule env#fs in
   Eio.Fiber.first
     (fun () ->
-      Eio_fs_sync.publish_sparse ~config:(config 16L) ~tmp:(fs / "draft")
+      Eio_fs_sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
         ~size_bytes:16L (fs / "image")
         [ (4L, Cstruct.of_string "new") ];
       Alcotest.fail "gated producer completed before cancellation")
@@ -846,10 +842,10 @@ let test_error_backtrace generation () =
   Eio_fs.run @@ fun env ->
   match
     if generation then
-      Eio_fs_sync.publish_generation ~durable:false (env#fs / "generation")
-        (fun _ -> raise_publication_origin ())
+      Eio_fs_sync.publish_generation ~barrier:Eio_fs_sync.Barrier.none
+        (env#fs / "generation") (fun _ -> raise_publication_origin ())
     else
-      Eio_fs_sync.publish ~config:(config 1L) (env#fs / "image") (fun _ ->
+      Eio_fs_sync.publish ~max_bytes:1L (env#fs / "image") (fun _ ->
           raise_publication_origin ())
   with
   | () -> Alcotest.fail "producer exception was swallowed"
@@ -882,7 +878,7 @@ let test_small_copy_buffer () =
   let src =
     Eio.Resource.T ({ Src.left = "v" }, Eio.Flow.Pi.source (module Src))
   in
-  Eio_fs_sync.publish ~config:(config 3L) (env#fs / "cfg") (fun f ->
+  Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy src f);
   Alcotest.(check string) "published" "v" (Eio.Path.load (env#fs / "cfg"));
   Alcotest.(check bool)
@@ -922,7 +918,7 @@ let publish_long_name fs unit =
     (List.length (Eio.Path.read_dir (fs / "tree")));
   (match
      Eio_fs_sync.publish_link ~lock:Eio_fs_sync.Lock.none ~expected:None
-       ~link_to:"target"
+       ~target:"target"
        (fs / "link" / name)
    with
   | Ok () -> ()
@@ -966,7 +962,7 @@ let test_long_directories () =
     (Eio.Path.load (dir / "tree" / "f"));
   (match
      Eio_fs_sync.publish_link ~lock:Eio_fs_sync.Lock.none ~expected:None
-       ~link_to:"target" (dir / "link")
+       ~target:"target" (dir / "link")
    with
   | Ok () -> ()
   | Error _ -> Alcotest.fail "the link was refused");
@@ -1069,9 +1065,9 @@ module Links = struct
     Eio_mock.Backend.run @@ fun () ->
     Eio_fs.run @@ fun env -> test env#fs
 
-  let publish fs ?(durable = false) expected target =
-    Eio_fs_sync.publish_link ~durable ~lock:Eio_fs_sync.Lock.none ~expected
-      ~link_to:target (fs / "portal")
+  let publish fs ?(barrier = Eio_fs_sync.Barrier.none) expected target =
+    Eio_fs_sync.publish_link ~barrier ~lock:Eio_fs_sync.Lock.none ~expected
+      ~target (fs / "portal")
 
   let test_raw () =
     fixture @@ fun fs ->
@@ -1134,7 +1130,7 @@ module Links = struct
     let wrapped = Crash.wrap ctl fs in
     ignore
       (Result.get_ok
-         (publish wrapped ~durable:true (Some "../old")
+         (publish wrapped ~barrier:Eio_fs_sync.Barrier.portable (Some "../old")
             "../new library//./checkout"));
     Crash.crash ctl;
     Alcotest.(check string)
@@ -1158,7 +1154,10 @@ module Links = struct
         Chaos.Schedule.empty
     in
     let faults = Chaos.wrap schedule disk in
-    (match publish faults ~durable:true (Some "../old") "../new" with
+    (match
+       publish faults ~barrier:Eio_fs_sync.Barrier.portable (Some "../old")
+         "../new"
+     with
     | _ -> Alcotest.fail "post-publication barrier failure hidden"
     | exception Failure reason ->
         Alcotest.(check string)
@@ -1166,7 +1165,10 @@ module Links = struct
     Alcotest.(check string)
       "new link already visible" "../new"
       (Eio.Path.read_link (fs / "portal"));
-    ignore (Result.get_ok (publish disk ~durable:true (Some "../new") "../new"));
+    ignore
+      (Result.get_ok
+         (publish disk ~barrier:Eio_fs_sync.Barrier.portable (Some "../new")
+            "../new"));
     Crash.crash ctl;
     Alcotest.(check string)
       "durable no-op redeems publication" "../new"
@@ -1187,7 +1189,10 @@ module Links = struct
         Chaos.Schedule.empty
     in
     let faults = Chaos.wrap schedule fs in
-    (match publish faults ~durable:true (Some "../old") "../new" with
+    (match
+       publish faults ~barrier:Eio_fs_sync.Barrier.portable (Some "../old")
+         "../new"
+     with
     | Error (`Changed (Some "../foreign")) -> ()
     | _ -> Alcotest.fail "final raw observation ignored");
     Alcotest.(check string)
@@ -1208,8 +1213,8 @@ module Links = struct
     Eio.Path.symlink ~link_to:"../old library//./checkout" (root / "portal");
     ignore
       (Result.get_ok
-         (publish root ~durable:true (Some "../old library//./checkout")
-            "/selected/library"));
+         (publish root ~barrier:Eio_fs_sync.Barrier.portable
+            (Some "../old library//./checkout") "/selected/library"));
     Alcotest.(check string)
       "native POSIX raw switch" "/selected/library"
       (Eio.Path.read_link (root / "portal"));
@@ -1225,8 +1230,8 @@ module Links = struct
     end in
     let module Packed = Eio_fs_sync.Lock.Make (Refuses) in
     (match
-       Eio_fs_sync.publish_link ~durable:false ~lock:(Packed.v ())
-         ~expected:None ~link_to:"../new" (fs / "portal")
+       Eio_fs_sync.publish_link ~lock:(Packed.v ()) ~expected:None
+         ~target:"../new" (fs / "portal")
      with
     | _ -> Alcotest.fail "held caller lease ignored"
     | exception Eio_fs_sync.Lock.Unavailable reason ->

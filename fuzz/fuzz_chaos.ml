@@ -835,10 +835,10 @@ let test_crash_determinism seed nblocks block sync_after access placement reopen
    splice and never a truncated prefix. *)
 
 let publish_string path data =
-  let config =
-    Eio_fs_sync.config ~max_bytes:(Int64.of_int (String.length data)) ()
-  in
-  Eio_fs_sync.publish ~config path (Eio.Flow.copy_string data)
+  Eio_fs_sync.publish
+    ~max_bytes:(Int64.of_int (String.length data))
+    path
+    (Eio.Flow.copy_string data)
 
 let test_publish_is_atomic old_body new_body =
   let cap s = if String.length s > 2048 then String.sub s 0 2048 else s in

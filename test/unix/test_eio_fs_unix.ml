@@ -1025,9 +1025,8 @@ let test_exclusive_publication_reaches_crash_model () =
   with_real_dir @@ fun dir ->
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl dir in
-  let config = Eio_fs_sync.config ~perm:0o600 ~max_bytes:7L () in
-  Eio_fs_sync.publish ~config ~mode:`Exclusive
-    ~rename:Eio_fs_unix.exclusive_rename (fs / "state")
+  Eio_fs_sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
+    ~max_bytes:7L (fs / "state")
     (Eio.Flow.copy_string "payload");
   Crash.crash ctl;
   Alcotest.(check string)
@@ -1039,9 +1038,7 @@ let test_exclusive_publication_reaches_crash_model () =
 let test_publication_with_the_platform_barrier () =
   with_real_dir @@ fun dir ->
   let barrier = Eio_fs_unix.barrier in
-  Eio_fs_sync.publish
-    ~config:(Eio_fs_sync.config ~barrier ~max_bytes:7L ())
-    (dir / "state")
+  Eio_fs_sync.publish ~barrier ~max_bytes:7L (dir / "state")
     (Eio.Flow.copy_string "payload");
   Eio_fs_sync.publish_generation ~barrier (dir / "tree") (fun d ->
       Eio.Path.save ~create:(`Exclusive 0o444) (d / "f") "frozen");
@@ -1053,11 +1050,10 @@ let test_publication_with_the_platform_barrier () =
 let test_concurrent_exclusive_publications_have_one_winner () =
   renames @@ fun () ->
   with_real_dir @@ fun dir ->
-  let config = Eio_fs_sync.config ~perm:0o600 ~max_bytes:3L () in
   let save text () =
     match
-      Eio_fs_sync.publish ~config ~mode:`Exclusive
-        ~rename:Eio_fs_unix.exclusive_rename (dir / "winner")
+      Eio_fs_sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
+        ~max_bytes:3L (dir / "winner")
         (Eio.Flow.copy_string text)
     with
     | () -> Some text

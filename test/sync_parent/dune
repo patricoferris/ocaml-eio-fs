@@ -1,3 +1,0 @@
-(test
- (name test)
- (libraries eio eio_fs eio-fs.sync chaos_helpers alcotest cstruct optint))
