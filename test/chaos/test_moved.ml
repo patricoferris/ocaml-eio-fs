@@ -23,11 +23,11 @@ and subtree name q = List.map (fun s -> name ^ "/" ^ s) (tree q)
 
 (* [run] on a tree setup made durable, then the tree as it stands and the
    tree a cut by [policy] leaves. *)
-let cut ?(setup = ignore) policy run =
+let cut ?os ?(setup = ignore) policy run =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   setup env#fs;
-  let t = Crash.v policy in
+  let t = Crash.v ?os policy in
   let fs = Crash.wrap t env#fs in
   run fs;
   let live = tree fs in
@@ -128,6 +128,26 @@ let mode_of_moved_file () =
          Eio_fs_sync.sync_dir P.(fs / "d");
          Eio_fs_sync.sync_dir fs))
 
+(* On macOS, fsync(2) of a directory stops in the drive's cache until an
+   F_FULLFSYNC drains it: what it drains is that directory's entries, under
+   whatever name it has by then. *)
+let renamed_before_drain () =
+  let setup fs =
+    P.mkdir ~perm:0o755 P.(fs / "d");
+    P.save ~create:(`Exclusive 0o644) P.(fs / "g") "G"
+  in
+  check_image
+    [ "d/ 755"; "d/f 644 \"F\""; "g 644 \"G\"" ]
+    (cut ~os:`Macos ~setup Drop_unsynced (fun fs ->
+         P.with_open_out ~create:(`Exclusive 0o644)
+           P.(fs / "d/f")
+           (fun f ->
+             Eio.Flow.copy_string "F" f;
+             Eio_fs_unix.sync_file f);
+         Eio_fs_sync.sync_dir P.(fs / "d");
+         P.rename P.(fs / "d") P.(fs / "e");
+         P.with_open_out ~create:`Never P.(fs / "g") Eio_fs_unix.sync_file))
+
 let suite =
   ( "moved",
     [
@@ -145,4 +165,6 @@ let suite =
         fails_at_old_name;
       Alcotest.test_case "a moved file's mode needs its sync" `Quick
         mode_of_moved_file;
+      Alcotest.test_case "macOS drains a directory's fsync under a new name"
+        `Quick renamed_before_drain;
     ] )
