@@ -1,27 +1,3 @@
 ## 0.1.0 (16/11/2026)
 
 Initial release.
-
-- `eio-fs`: an in-memory filesystem for Eio (`Eio_fs.Fs`). It checks
-  permissions as Linux does, run as root or as a user, and can start from a
-  copy of a tree on disk. With `~os:`Macos` it answers as macOS on APFS:
-  names match whatever their case and Unicode normalisation, and errors,
-  modes and groups are macOS's, checked against traces of both kernels.
-- `Eio_fs.Chaos.check` runs a workload many times on fresh in-memory
-  filesystems, each run with faults chosen from what the workload does: an
-  operation fails, a read or a write moves one byte, a write is torn, the
-  filesystem turns read-only, full or denies access.
-- `Eio_fs.Chaos.Crash.check` cuts the power during a workload and during its
-  recovery, and checks what a fresh process finds on the disk, as ext4 with
-  `data=writeback` may leave it, or, with `~os:`Macos`, APFS, where `fsync`
-  stops in the drive's cache and only `F_FULLFSYNC` reaches the disk.
-- Past the scenarios that follow the run's structure, a check samples one in
-  each group of neighbours, drawn from a fixed seed, so no periodic pattern in
-  the workload hides a fault from it. `?seed` draws others.
-- A failure names its scenario and shows the operations of the failing run;
-  `~replay` runs that scenario alone. `Eio_fs.Chaos.wrap` and
-  `Eio_fs.Chaos.Crash.v` build a scenario by hand.
-- `eio-fs.sync`: writes a file atomically and durably on any backend.
-- `eio-fs.unix`: binds POSIX calls that Eio and `Unix` lack.
-- `eio-fs.path`: lexical operations on path strings.
-- `eio-fs-crunch`: embeds a directory tree in a program.
