@@ -226,6 +226,37 @@ let setup_hole ~grow () =
       if String.contains (P.load P.(env#fs / "f")) '7' then
         failwith "stale data in the hole")
 
+(* [d] made and [f] grown, in [order], with no sync: ext4 journals the
+   length a write sets as it writes the pages back, after every change made
+   before the write, so a cut keeps that length only with them. [hole]
+   writes into a hole [setup] left instead, whose block ext4 allocates at
+   writeback in the same way. *)
+let length_order ~mkdir_first ~hole () =
+  Eio_fs.Chaos.Crash.check
+    ~setup:(fun env ->
+      P.with_open_out ~create:(`Exclusive 0o644) P.(env#fs / "f") @@ fun f ->
+      if hole then Eio.File.truncate f (Optint.Int63.of_int 8192))
+    (fun ~ack:_ env ->
+      try
+        let mkdir () = P.mkdir ~perm:0o755 P.(env#fs / "d") in
+        if mkdir_first then mkdir ();
+        P.with_open_out ~create:`Never
+          P.(env#fs / "f")
+          (fun f ->
+            Eio.File.pwrite_all f
+              ~file_offset:(Optint.Int63.of_int (if hole then 5000 else 0))
+              [ Cstruct.of_string "abc" ]);
+        if not mkdir_first then mkdir ()
+      with Eio.Io _ -> ())
+    ~recover:(fun ~acked:_ env ->
+      let s = P.load P.(env#fs / "f") in
+      let grown =
+        if hole then String.exists (fun c -> c <> '\000') s
+        else String.length s > 0
+      in
+      if grown && not (P.is_directory P.(env#fs / "d")) then
+        failwith "f grown without d")
+
 (* A new page with no sync: its first sector stale under the written ones.
    The cut's first state drops the file, and the states that vary the first
    sector come last one by one, past what the check enumerates. *)
@@ -410,6 +441,22 @@ let suite =
               let m = Expect.report (setup_hole ~grow) in
               Alcotest.(check string)
                 "error" "Failure(\"stale data in the hole\")"
+                (Expect.field "error" m))
+            [ false; true ]);
+      Alcotest.test_case
+        "a length a write set lands after the changes before it" `Quick
+        (fun () ->
+          List.iter
+            (fun hole ->
+              Expect.passes (length_order ~mkdir_first:true ~hole) ())
+            [ false; true ]);
+      Alcotest.test_case "a length a write set may land before later changes"
+        `Quick (fun () ->
+          List.iter
+            (fun hole ->
+              let m = Expect.report (length_order ~mkdir_first:false ~hole) in
+              Alcotest.(check string)
+                "error" "Failure(\"f grown without d\")"
                 (Expect.field "error" m))
             [ false; true ]);
       Alcotest.test_case "a stale first sector of a large new page is reached"
