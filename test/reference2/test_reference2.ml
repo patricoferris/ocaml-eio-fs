@@ -28,7 +28,12 @@ let pp_policy ppf = function
         (IS.elements m)
 
 let eio_user (u : user) : Eio_fs.user =
-  { uid = u.uid; gid = u.gid; groups = u.groups; umask = 0o022 }
+  {
+    uid = Int64.of_int u.uid;
+    gid = Int64.of_int u.gid;
+    groups = List.map Int64.of_int u.groups;
+    umask = 0o022;
+  }
 
 let exec_op ~sw ~ctl ~cw ~handles ~dhandles op =
   let p x = cw / x in

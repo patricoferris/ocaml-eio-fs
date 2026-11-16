@@ -16,7 +16,7 @@ let with_env ?cwd ?user fn =
   Eio_mock.Backend.run @@ fun () -> Eio_fs.run ?cwd ?user fn
 
 (* A user who is not root, whom file modes bind. *)
-let alice = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 }
+let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 
 let test_missing_file () =
   with_env @@ fun env ->
@@ -538,7 +538,7 @@ let test_linux_link_refusals () =
 
 (* {2 Permissions} *)
 
-let bob = { alice with uid = 1001; gid = 1001 }
+let bob = { alice with uid = 1001L; gid = 1001L }
 
 let denied what fn =
   expect_io_error "permission denied" fn |> fun () -> ignore what
@@ -667,7 +667,7 @@ let test_perm_open_classes () =
   Eio_mock.Backend.run @@ fun () ->
   let fs = Eio_fs.Fs.v () in
   Eio.Path.save ~create:(`Exclusive 0o640) (fs / "f") "x";
-  let carol = { bob with uid = 1002; groups = [ 0 ] } in
+  let carol = { bob with uid = 1002L; groups = [ 0L ] } in
   let as_carol = Eio_fs.Fs.as_user carol fs in
   Alcotest.(check string) "group reads" "x" (Eio.Path.load (as_carol / "f"));
   denied "group writes" (fun () ->
@@ -1006,7 +1006,7 @@ let test_linux_permission_first () =
 let test_perm_setgid_and_privileges () =
   Eio_mock.Backend.run @@ fun () ->
   let fs = Eio_fs.Fs.v () in
-  let carol = { alice with groups = [ 50 ] } in
+  let carol = { alice with groups = [ 50L ] } in
   let a = Eio_fs.Fs.as_user carol fs in
   let owner p =
     let s = Eio.Path.stat ~follow:false (fs / p) in
@@ -1065,7 +1065,7 @@ let test_perm_setgid_stripped_outside_group () =
     let st = Eio.Path.stat ~follow:false (fs / "g" / name) in
     (st.perm, st.gid)
   in
-  let member = { alice with groups = [ 2000 ] } in
+  let member = { alice with groups = [ 2000L ] } in
   Alcotest.(check (pair (pair int int64) (pair int int64)))
     "outsider, member"
     ((0o755, 2000L), (0o2755, 2000L))

@@ -14,7 +14,7 @@ let i63 = Optint.Int63.of_int
 (* ---------- users ---------- *)
 type who = Root | Alice
 
-let alice_user = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 }
+let alice_user = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 let uid_of = function Root -> 0 | Alice -> 1000
 let gid_of = function Root -> 0 | Alice -> 1000
 

@@ -104,7 +104,7 @@ let test_crash_create_through_a_dangling_link () =
 (* The model over a user's view reads and rebuilds the tree as root: the
    user cannot read root's files, and may lock themselves out of a
    directory. *)
-let alice = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 }
+let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 
 let test_crash_over_a_user_view () =
   Eio_mock.Backend.run @@ fun () ->
@@ -1306,7 +1306,9 @@ let test_crash_truncation_zeroes_block () =
    whole, so the second never lands without the first. *)
 let test_crash_survive_keeps_a_sector () =
   let image keep =
-    let ctl = Crash.v ~policy:(Survive (fun u -> List.mem u.offset keep)) () in
+    let ctl =
+      Crash.v ~policy:(Survive (fun u -> List.mem u.file_offset keep)) ()
+    in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "hdr") (String.make 16 '.');
     Eio_fs_sync.sync_dir fs;

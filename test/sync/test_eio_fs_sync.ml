@@ -950,7 +950,7 @@ let test_long_directories () =
   Eio.Path.mkdir ~perm:0o755 (root / d1);
   Eio.Path.mkdir ~perm:0o755 (root / d1 / d2);
   Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (root / d1 / d2);
-  let alice = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 } in
+  let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 } in
   let dir = Eio_fs.Fs.as_user alice root / d1 / d2 in
   let target = d1 ^ "/" ^ d2 ^ "/state" in
   Eio_fs_sync.save (dir / "state") "saved";

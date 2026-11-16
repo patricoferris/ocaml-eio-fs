@@ -66,8 +66,11 @@ module Fault = struct
   let pp ppf = function
     | Fail c -> Fmt.pf ppf "fails with %s" (code_name c)
     | Evict c -> Fmt.pf ppf "fails with %s, its pages evicted" (code_name c)
-    | Short n -> Fmt.pf ppf "moves %d byte(s)" (max 1 n)
-    | Torn n -> Fmt.pf ppf "is torn after %d byte(s)" n
+    | Short n ->
+        let n = max 1 n in
+        Fmt.pf ppf "moves %d byte%s" n (if n = 1 then "" else "s")
+    | Torn n ->
+        Fmt.pf ppf "is torn after %d byte%s" n (if n = 1 then "" else "s")
     | Swap_symlink t -> Fmt.pf ppf "is swapped for a link to %s" t
 
   let key = function

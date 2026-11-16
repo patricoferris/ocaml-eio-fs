@@ -174,7 +174,7 @@ works as root and fails as a user.
 
 ```ocaml
 Eio_main.run @@ fun _env ->
-let alice = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 } in
+let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 } in
 let save_config user =
   Eio_fs.run ~user ~cwd:"/home/alice" @@ fun env ->
   let dir = Eio.Path.(env#fs / "/etc/app") in

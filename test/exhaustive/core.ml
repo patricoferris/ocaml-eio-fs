@@ -8,7 +8,7 @@ module P = Eio.Path
 module I63 = Optint.Int63
 module IM = Map.Make (Int64)
 
-let user = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 }
+let user = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 
 type who = Root | User
 

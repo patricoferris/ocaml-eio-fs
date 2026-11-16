@@ -58,7 +58,7 @@ end
 
 (** Who runs an operation. *)
 module User : sig
-  type t = { uid : int; gid : int; groups : int list; umask : int }
+  type t = { uid : int64; gid : int64; groups : int64 list; umask : int }
   (** The type for users: their user and group ids, their supplementary groups
       and the umask their new files and directories lose. *)
 

@@ -635,7 +635,7 @@ module Link = struct
           err_read "%s is too large to read" t.path
         else
           match
-            Eio_fs.Nofollow.run ~max_bytes:(Int64.to_int size)
+            Eio_fs_internal.bounded_read ~max_bytes:(Int64.to_int size)
               ~validate:(fun _ -> Ok ())
               ~stat
               ~read:(fun buffer -> in_systhread (fun () -> read_into fd buffer))

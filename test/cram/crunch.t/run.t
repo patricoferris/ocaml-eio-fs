@@ -23,7 +23,7 @@ links and empty directories -- as an OCaml module.
         File { path = "/static/site.css"; perm = 0o644; contents = "body {}\n" };
       ]
   
-  let load () = Eio_fs.Crunch.load entries
+  let load ?clock ?os () = Eio_fs.Crunch.load ?clock ?os entries
 
 
 
@@ -39,9 +39,13 @@ output.
   val entries : Eio_fs.Crunch.t
   (** The embedded file tree. *)
   
-  val load : unit -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-  (** [load ()] is the root of a new in-memory filesystem holding
-      {!entries}. *)
+  val load :
+    ?clock:_ Eio.Time.clock ->
+    ?os:[< `Linux | `Macos ] ->
+    unit ->
+    [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
+  (** [load ~clock ~os ()] is the root of a new in-memory filesystem holding
+      {!entries}, as {!Eio_fs.Crunch.load} makes it. *)
 
 
 

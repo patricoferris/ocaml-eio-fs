@@ -2,6 +2,7 @@
  (name eio_fs)
  (public_name eio-fs)
  (private_modules
+  extents
   low_level
   memfs
   quiet_mock

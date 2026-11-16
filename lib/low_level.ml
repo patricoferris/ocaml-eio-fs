@@ -73,18 +73,15 @@ end
 
 (* Who runs an operation, and the POSIX permission rules it meets. *)
 module User = struct
-  type t = { uid : int; gid : int; groups : int list; umask : int }
+  type t = { uid : int64; gid : int64; groups : int64 list; umask : int }
 
-  let root = { uid = 0; gid = 0; groups = []; umask = 0o022 }
+  let root = { uid = 0L; gid = 0L; groups = []; umask = 0o022 }
   let r = 0o4
   let w = 0o2
   let x = 0o1
-  let id i = Int64.of_int i
-  let owns u (stat : Eio.File.Stat.t) = u.uid = 0 || stat.uid = id u.uid
-
-  let in_group u g =
-    Int64.equal g (id u.gid)
-    || List.exists (fun g' -> Int64.equal g (id g')) u.groups
+  let is_root u = Int64.equal u.uid 0L
+  let owns u (stat : Eio.File.Stat.t) = is_root u || Int64.equal stat.uid u.uid
+  let in_group u g = Int64.equal g u.gid || List.exists (Int64.equal g) u.groups
 
   (* Linux clears setuid, and setgid with the group's execute bit, from a
      regular file a chown changes or a user other than root writes. *)
@@ -102,11 +99,11 @@ module User = struct
      needs no bit to read, write or search a directory, and one x bit to
      execute a file, as on Linux. *)
   let can u (stat : Eio.File.Stat.t) want =
-    if u.uid = 0 then
+    if is_root u then
       want land x = 0 || stat.kind = `Directory || stat.perm land 0o111 <> 0
     else
       let bits =
-        if stat.uid = id u.uid then stat.perm lsr 6
+        if Int64.equal stat.uid u.uid then stat.perm lsr 6
         else if in_group u stat.gid then stat.perm lsr 3
         else stat.perm
       in
@@ -487,13 +484,13 @@ let new_stat fs ~(user : User.t) ?parent ?kind ~perm () =
     | `Macos, Some (p : Eio.File.Stat.t) -> (p.gid, perm)
     | `Linux, Some (p : Eio.File.Stat.t) when p.perm land 0o2000 <> 0 ->
         (p.gid, if kind = `Directory then perm lor 0o2000 else perm)
-    | _, (Some _ | None) -> (User.id user.gid, perm)
+    | _, (Some _ | None) -> (user.gid, perm)
   in
   let perm =
     if
       kind <> `Directory
       && perm land 0o2000 <> 0
-      && user.uid <> 0
+      && (not (User.is_root user))
       && not (User.in_group user gid)
     then perm land lnot 0o2000
     else perm
@@ -503,7 +500,7 @@ let new_stat fs ~(user : User.t) ?parent ?kind ~perm () =
     ino = fs.last_ino;
     kind;
     perm;
-    uid = User.id user.uid;
+    uid = user.uid;
     gid;
     nlink = (if kind = `Directory then 2L else 1L);
     atime = now;
@@ -525,8 +522,8 @@ module Filesystem = struct
               ino = 0L;
               kind = `Directory;
               perm = 0o755;
-              uid = User.id owner.uid;
-              gid = User.id owner.gid;
+              uid = owner.uid;
+              gid = owner.gid;
               nlink = 2L;
               atime = now;
               mtime = now;
@@ -639,7 +636,7 @@ module Filesystem = struct
     if
       w.os = `Linux
       && dir.perm land 0o1002 = 0o1002
-      && (not (Int64.equal s.stat.uid (User.id w.user.uid)))
+      && (not (Int64.equal s.stat.uid w.user.uid))
       && not (Int64.equal s.stat.uid dir.uid)
     then Error.permission_denied name
 
@@ -1003,8 +1000,8 @@ let chmod ~follow dir_fd ~perm path =
   let perm = perm land 0o7777 in
   (* Outside the file's group, a user cannot set setgid. *)
   let perm =
-    if dir_fd.user.uid <> 0 && not (User.in_group dir_fd.user s.gid) then
-      perm land lnot 0o2000
+    if (not (User.is_root dir_fd.user)) && not (User.in_group dir_fd.user s.gid)
+    then perm land lnot 0o2000
     else perm
   in
   r :=
@@ -1021,7 +1018,7 @@ let chown ~follow ?uid ?gid dir_fd path =
   let gid = Option.value ~default:s.gid gid in
   let (user : User.t) = dir_fd.user in
   if
-    user.uid <> 0
+    (not (User.is_root user))
     && not
          (User.owns user s && uid = s.uid
          && (gid = s.gid || User.in_group user gid))
@@ -1425,7 +1422,8 @@ let check_writable op (t : Fd.t) =
    write of no bytes changes nothing, as Linux returns before the file
    system sees it. *)
 let written (t : Fd.t) (f : File.t) =
-  if t.user.uid = 0 then f else { f with stat = User.without_privileges f.stat }
+  if User.is_root t.user then f
+  else { f with stat = User.without_privileges f.stat }
 
 (* A write of [n] bytes moves mtime and ctime, one of none neither. *)
 let written_at (t : Fd.t) (f : File.t) n =

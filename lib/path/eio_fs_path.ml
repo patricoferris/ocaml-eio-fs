@@ -13,7 +13,6 @@
 open! Hermetic
 
 let is_abs p = String.length p > 0 && p.[0] = '/'
-let is_rel p = not (is_abs p)
 let segs p = String.split_on_char '/' p
 
 let is_directory_syntax p =
@@ -115,7 +114,7 @@ let traversal segment = String.equal segment "." || String.equal segment ".."
 
 let canonical path =
   if String.equal path "" || String.contains path '\000' then Error Not_a_path
-  else if is_rel path then Error Relative
+  else if not (is_abs path) then Error Relative
   else
     let parts =
       List.filter (fun segment -> not (String.equal segment "")) (segs path)

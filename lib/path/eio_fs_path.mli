@@ -9,9 +9,6 @@ val is_abs : string -> bool
 (** [is_abs path] is [true] iff [path] starts at the root, that is iff it opens
     with a separator. *)
 
-val is_rel : string -> bool
-(** [is_rel path] is [not (is_abs path)]. *)
-
 val segs : string -> string list
 (** [segs path] is [path] cut at every separator, empty segments kept: an
     absolute path opens with one, a directory path ends with one, and a doubled

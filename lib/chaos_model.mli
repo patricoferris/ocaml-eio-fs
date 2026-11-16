@@ -330,7 +330,7 @@ module Crash : sig
             operation, the path as the caller gave it. A later rename does not
             change it. *)
     kind : op_kind;  (** What the change is. *)
-    offset : int;
+    file_offset : int;
         (** The byte offset of a {!Data} write, the new length of a {!Truncate},
             and [0] for a directory operation. *)
     length : int;

@@ -1099,7 +1099,7 @@ module Crash = struct
   type unsynced = {
     path : string;
     kind : op_kind;
-    offset : int;
+    file_offset : int;
     length : int;
     seq : int;
   }
@@ -1349,12 +1349,18 @@ module Crash = struct
         {
           path = e.epath;
           kind = Data;
-          offset;
+          file_offset = offset;
           length = Cstruct.length data;
           seq = e.seq;
         }
     | Resize n ->
-        { path = e.epath; kind = Truncate; offset = n; length = 0; seq = e.seq }
+        {
+          path = e.epath;
+          kind = Truncate;
+          file_offset = n;
+          length = 0;
+          seq = e.seq;
+        }
 
   let unsynced ctl =
     let data =
@@ -1894,7 +1900,7 @@ module Crash = struct
       no_locs locs
 
   let metadata_unsynced ~path ~kind ~seq =
-    { path; kind; offset = 0; length = 0; seq }
+    { path; kind; file_offset = 0; length = 0; seq }
 
   let root_segs ctl =
     match ctl.base with
@@ -3926,8 +3932,8 @@ module Crash = struct
 
   let pp_unsynced ppf u =
     match u.kind with
-    | Data -> Fmt.pf ppf "%s @%d+%d #%d" u.path u.offset u.length u.seq
-    | Truncate -> Fmt.pf ppf "truncate %s to %d #%d" u.path u.offset u.seq
+    | Data -> Fmt.pf ppf "%s @%d+%d #%d" u.path u.file_offset u.length u.seq
+    | Truncate -> Fmt.pf ppf "truncate %s to %d #%d" u.path u.file_offset u.seq
     | Create -> Fmt.pf ppf "create %s #%d" u.path u.seq
     | Mkdir -> Fmt.pf ppf "mkdir %s #%d" u.path u.seq
     | Unlink -> Fmt.pf ppf "unlink %s #%d" u.path u.seq

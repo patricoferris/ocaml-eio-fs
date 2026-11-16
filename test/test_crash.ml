@@ -91,7 +91,7 @@ let test_crash_barrier_not_reordered () =
    drops the data write leaves a pointer referencing bytes that never became
    durable. *)
 let test_crash_pointer_without_data () =
-  let ctl = Crash.v ~policy:(Crash.Survive (fun u -> u.offset = 0)) () in
+  let ctl = Crash.v ~policy:(Crash.Survive (fun u -> u.file_offset = 0)) () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (fs / "img") (fun file ->
       (* data block first ... *)
@@ -794,7 +794,9 @@ let test_crash_streaming_write_offsets () =
   Alcotest.(check (list (pair int int)))
     "logged where they landed"
     [ (2, 2); (6, 2) ]
-    (List.map (fun u -> (u.Crash.offset, u.Crash.length)) (Crash.unsynced ctl));
+    (List.map
+       (fun u -> (u.Crash.file_offset, u.Crash.length))
+       (Crash.unsynced ctl));
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "replayed where they landed" "abXYefgh"

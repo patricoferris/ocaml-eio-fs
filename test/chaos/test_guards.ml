@@ -998,7 +998,7 @@ let test_nested_report () =
   Alcotest.(check string)
     "first line"
     "Eio_fs.Chaos.check: the run with no fault failed: Eio_fs.Chaos.check: the \
-     workload failed under a fault."
+     workload failed under a fault"
     first;
   if String.contains report '\\' then
     Alcotest.failf "the inner report is escaped: %s" report

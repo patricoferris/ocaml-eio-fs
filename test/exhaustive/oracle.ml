@@ -588,11 +588,7 @@ let check ?(reorder = false) h (img : image) =
     img;
   (* (g4) setgid outside the user's groups, image or live *)
   let g4 where (perm, uid, gid) path =
-    if
-      perm land 0o2000 <> 0
-      && uid = Int64.of_int user.uid
-      && gid <> Int64.of_int user.gid
-    then
+    if perm land 0o2000 <> 0 && uid = user.uid && gid <> user.gid then
       add "g4:setgid-outside-group"
         (Fmt.str "%s %s %o gid %Ld" where path perm gid)
   in

@@ -5,7 +5,7 @@
 open Reference
 module Crash = Eio_fs.Chaos.Private.Crash
 
-let alice = { Eio_fs.uid = 1000; gid = 1000; groups = []; umask = 0o022 }
+let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 let setup = [ Mkdir "a"; Mkdir "b"; Creat ("a/f", '0') ]
 
 let fresh ~as_alice =

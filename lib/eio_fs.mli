@@ -46,27 +46,6 @@ module Nofollow : sig
       @raise Eio.Io
         when the open or read fails, including when the final component is a
         symbolic link. *)
-
-  val run :
-    max_bytes:int ->
-    validate:(Eio.File.Stat.t -> (unit, string) result) ->
-    stat:Eio.File.Stat.t ->
-    read:(Cstruct.t -> int) ->
-    (Cstruct.t, error) result
-  (** [run ~max_bytes ~validate ~stat ~read] is the bounded read of {!read_file}
-      over a file the caller has already opened. It opens nothing and refuses no
-      symbolic link: that check belongs to the open. It validates [stat] before
-      asking [read] for bytes and reads through end-of-file with one byte of
-      lookahead past [max_bytes]. The buffer offered to [read] starts at
-      [stat]'s size plus one byte and doubles toward [max_bytes + 1] only while
-      the file keeps answering, so a read costs the file and not the bound. A
-      rejected or partially read buffer, and each one outgrown, is overwritten
-      before the function returns or raises. The result is {!read_file}'s, for a
-      caller that opened the file another way; [read] answering [0] or raising
-      [End_of_file] ends the file, and what [validate] or [read] raises
-      otherwise is propagated.
-
-      @raise Stdlib.Invalid_argument if [max_bytes] is negative or [max_int]. *)
 end
 
 (** Helpers over standard {!Eio.Path} values. The lexical arithmetic on the
@@ -149,9 +128,9 @@ module Path : sig
 end
 
 type user = {
-  uid : int;  (** The user id. *)
-  gid : int;  (** The primary group id. *)
-  groups : int list;  (** The supplementary group ids. *)
+  uid : int64;  (** The user id, as {!Eio.File.Stat.t} carries it. *)
+  gid : int64;  (** The primary group id. *)
+  groups : int64 list;  (** The supplementary group ids. *)
   umask : int;  (** The mode bits a new file or directory loses. *)
 }
 (** The type for the user an in-memory filesystem's operations run as. *)
@@ -357,8 +336,8 @@ module Crunch : sig
   val source : t Fmt.t
   (** [source] formats a standalone OCaml module embedding the entries. The
       generated module exposes [entries : Eio_fs.Crunch.t] and
-      [load : unit -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t], which is {!load}
-      of [entries]. *)
+      [load ?clock ?os ()], which is {!load} of [entries] with the same optional
+      arguments. *)
 
   val interface : string
   (** [interface] is the [.mli] file matching what {!source} prints: it declares

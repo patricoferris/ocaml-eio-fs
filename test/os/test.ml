@@ -55,7 +55,9 @@ let traces =
               } )
         | _ -> Fmt.failwith "traces/fs.csv: %s" line))
 
-let user = { Eio_fs.uid = 1000; gid = 1000; groups = [ 4242 ]; umask = 0o022 }
+let user =
+  { Eio_fs.uid = 1000L; gid = 1000L; groups = [ 4242L ]; umask = 0o022 }
+
 let ids = { Os_seq.gid = 1000; other_gid = 4242 }
 
 let replay ~os i ops =

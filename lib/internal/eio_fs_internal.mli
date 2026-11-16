@@ -36,3 +36,21 @@ val base_file : _ Eio.Resource.t -> Eio.File.ro_ty Eio.Resource.t option
 val admin : _ Eio.Resource.t -> Eio.Fs.dir_ty Eio.Resource.t option
 (** [admin r] is [r] with root's rights, or [None] when [r] binds no {!Admin}.
 *)
+
+val bounded_read :
+  max_bytes:int ->
+  validate:(Eio.File.Stat.t -> (unit, string) result) ->
+  stat:Eio.File.Stat.t ->
+  read:(Cstruct.t -> int) ->
+  (Cstruct.t, [> `Invalid of string | `Too_large ]) result
+(** [bounded_read ~max_bytes ~validate ~stat ~read] is the bounded read of
+    [Eio_fs.Nofollow.read_file] over a file the caller has already opened, with
+    [max_bytes] between [0] and [max_int - 1]. It validates [stat] before asking
+    [read] for bytes and reads through end-of-file with one byte of lookahead
+    past [max_bytes]. The buffer offered to [read] starts at [stat]'s size plus
+    one byte and doubles toward [max_bytes + 1] only while the file keeps
+    answering, so a read costs the file and not the bound. A rejected or
+    partially read buffer, and each one outgrown, is overwritten before the
+    function returns or raises. [read] answering [0] or raising [End_of_file]
+    ends the file, and what [validate] or [read] raises otherwise is propagated.
+*)

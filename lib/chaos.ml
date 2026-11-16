@@ -489,7 +489,7 @@ module Recorder = struct
 
   (* The report's lines: the first and last [keep] and those around the
      first fault, or all of them when they are few. *)
-  let pp b t =
+  let pp ppf t =
     finish t;
     let n = t.n in
     let shown i =
@@ -502,21 +502,19 @@ module Recorder = struct
       if i < n then (
         if shown i then begin
           (match line t i with
-          | Line (op, None) ->
-              Printf.bprintf b "    %s\n" (Fmt.str "%a" Op.pp op)
+          | Line (op, None) -> Fmt.pf ppf "    %a@\n" Op.pp op
           | Line (op, Some f) ->
-              Printf.bprintf b "    %s  <- %s\n" (Fmt.str "%a" Op.pp op)
-                (Fmt.str "%a" Fault.pp f)
+              Fmt.pf ppf "    %a  <- %a@\n" Op.pp op Fault.pp f
           | Repeated { period; times; first; last } ->
-              Printf.bprintf b
-                "    ... the %d operation%s above, %d more time%s, #%d to #%d\n"
+              Fmt.pf ppf
+                "    ... the %d operation%s above, %d more time%s, #%d to #%d@\n"
                 period (plural period) times (plural times) first last);
           pp (i + 1)
         end
         else
           let rec skip j = if j < n && not (shown j) then skip (j + 1) else j in
           let j = skip i in
-          Printf.bprintf b "    ... %d more line%s\n" (j - i) (plural (j - i));
+          Fmt.pf ppf "    ... %d more line%s@\n" (j - i) (plural (j - i));
           pp j)
     in
     pp 0
@@ -568,39 +566,42 @@ let found r p =
    replay that runs it alone. *)
 let report name ~title ~tier ~hash ~key ~matched ~(trace : record) ~error lines
     =
-  let b = Buffer.create 256 in
-  let line k v = if v <> "" then Printf.bprintf b "  %-9s %s\n" (k ^ ":") v in
-  Printf.bprintf b "%s: %s\n" name title;
-  List.iter (fun (k, v) -> line k v) lines;
-  line "tier" (tier_name tier);
-  Option.iter
-    (fun old ->
-      line "matched"
-        (Fmt.str "the replay named first run %s, and the workload's is now %s"
-           old hash))
-    matched;
-  line "error" error;
-  Printf.bprintf b "  trace:\n";
-  Recorder.pp b trace.lines;
-  Printf.bprintf b "  replay:   ~replay:%S" (Fmt.str "fs/%s/%s" hash key);
-  failwith (Buffer.contents b)
+  let matched =
+    Option.map
+      (fun old ->
+        Fmt.str "the replay named first run %s, and the workload's is now %s"
+          old hash)
+      matched
+  in
+  let lines =
+    lines
+    @ [ ("tier", tier_name tier) ]
+    @ Option.fold ~none:[] ~some:(fun m -> [ ("matched", m) ]) matched
+    @ [ ("error", error) ]
+  in
+  let line ppf (k, v) = if v <> "" then Fmt.pf ppf "  %-9s %s@\n" (k ^ ":") v in
+  let replay = Fmt.str "fs/%s/%s" hash key in
+  Fmt.failwith "%s: %s@\n%a  trace:@\n%a  replay:   ~replay:%S" name title
+    Fmt.(list ~sep:nop line)
+    lines Recorder.pp trace.lines replay
 
 (* The first run failed, or stopped at the budget: its trace says where. *)
 let refuse_first name ~(trace : record) out ~budget ~what =
-  let b = Buffer.create 256 in
-  (match out with
-  | Over_budget at ->
-      Printf.bprintf b
-        "%s: the linear tier needs more than the budget of %d runs by \
-         operation #%d of the first run, which stopped there, and a check \
-         never passes on a partial one. Shrink the workload, or raise ~budget.\n"
-        name budget at
-  | o ->
-      Printf.bprintf b "%s: the run with no %s failed: %s\n" name what
-        (outcome_text o));
-  Printf.bprintf b "  trace:\n";
-  Recorder.pp b trace.lines;
-  failwith (String.trim (Buffer.contents b))
+  let head ppf = function
+    | Over_budget at ->
+        Fmt.pf ppf
+          "%s: the linear tier needs more than the budget of %d runs by \
+           operation #%d of the first run, which stopped there, and a check \
+           never passes on a partial one. Shrink the workload, or raise \
+           ~budget."
+          name budget at
+    | o ->
+        Fmt.pf ppf "%s: the run with no %s failed: %s" name what
+          (outcome_text o)
+  in
+  Fmt.kstr
+    (fun report -> failwith (String.trim report))
+    "%a@\n  trace:@\n%a" head out Recorder.pp trace.lines
 
 let no_longer name ~hash (h, k) =
   if h = hash then
@@ -891,7 +892,7 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let attempt ?matched tier s =
     let trace, out = exec s in
     if out <> Passed then
-      report name ~title:"the workload failed under a fault." ~tier ~hash
+      report name ~title:"the workload failed under a fault" ~tier ~hash
         ~key:(Plan.check_key s) ~matched ~trace ~error:(outcome_text out)
         [ ("faults", Plan.check_text ~at:(found trace) s) ];
     trace
@@ -928,7 +929,7 @@ module Crash = struct
   type unsynced = M.Crash.unsynced = {
     path : string;
     kind : op_kind;
-    offset : int;
+    file_offset : int;
     length : int;
     seq : int;
   }
@@ -1280,8 +1281,8 @@ module Crash = struct
       | None -> ""
     in
     match u.kind with
-    | Data -> Fmt.str "%swrite %s@%d+%d" n u.path u.offset u.length
-    | Truncate -> Fmt.str "%struncate %s to %d" n u.path u.offset
+    | Data -> Fmt.str "%swrite %s@%d+%d" n u.path u.file_offset u.length
+    | Truncate -> Fmt.str "%struncate %s to %d" n u.path u.file_offset
     | Create -> Fmt.str "%screate %s" n u.path
     | Mkdir -> Fmt.str "%smkdir %s" n u.path
     | Unlink -> Fmt.str "%sunlink %s" n u.path
@@ -1327,11 +1328,11 @@ module Crash = struct
 
   (* The title of a failed run's report, and its error. *)
   let error_text = function
-    | Workload o -> ("the workload failed.", outcome_text o)
-    | Recover o -> ("recover rejected what a cut left.", outcome_text o)
+    | Workload o -> ("the workload failed", outcome_text o)
+    | Recover o -> ("recover rejected what a cut left", outcome_text o)
     | Again x ->
         ( "recover, run again after a cut during recovery, rejected what was \
-           left.",
+           left",
           exn_text x )
 
   (* A state a cut allows, named by key [k] on top of a cut of the plan. *)

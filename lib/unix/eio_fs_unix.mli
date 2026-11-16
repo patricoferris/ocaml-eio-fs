@@ -773,7 +773,7 @@ module Link : sig
 
       @raise Eio.Io if the opened entry cannot be stated or read.
       @raise Stdlib.Invalid_argument
-        if [max_bytes] is negative or [max_int], as {!Eio_fs.Nofollow.run}
+        if [max_bytes] is negative or [max_int], as {!Eio_fs.Nofollow.read_file}
         refuses it. *)
 end
 

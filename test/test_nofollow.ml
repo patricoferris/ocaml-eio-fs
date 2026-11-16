@@ -159,7 +159,7 @@ let test_read_nofollow_wipes_a_failed_read () =
   let stat = Eio.Path.stat ~follow:false (dir / "private") in
   let exposed = ref None in
   (match
-     Eio_fs.Nofollow.run ~max_bytes:6 ~validate:regular_file ~stat
+     Eio_fs_internal.bounded_read ~max_bytes:6 ~validate:regular_file ~stat
        ~read:(fun buffer ->
          Cstruct.blit_from_string "secret" 0 buffer 0 6;
          exposed := Some buffer;
@@ -199,8 +199,8 @@ let test_read_nofollow_costs_the_file_not_the_bound () =
     n
   in
   (match
-     Eio_fs.Nofollow.run ~max_bytes:(1024 * 1024) ~validate:regular_file ~stat
-       ~read
+     Eio_fs_internal.bounded_read ~max_bytes:(1024 * 1024)
+       ~validate:regular_file ~stat ~read
    with
   | Ok bytes ->
       Alcotest.(check string)
@@ -227,7 +227,7 @@ let test_read_nofollow_follows_growth_to_the_bound () =
   in
   let grown = String.make 100 'g' in
   (match
-     Eio_fs.Nofollow.run ~max_bytes:100 ~validate:regular_file ~stat
+     Eio_fs_internal.bounded_read ~max_bytes:100 ~validate:regular_file ~stat
        ~read:(feed grown)
    with
   | Ok bytes ->
@@ -235,7 +235,7 @@ let test_read_nofollow_follows_growth_to_the_bound () =
         "growth up to the bound is read" grown (Cstruct.to_string bytes)
   | Error _ -> Alcotest.fail "growth within the bound was refused");
   match
-    Eio_fs.Nofollow.run ~max_bytes:100 ~validate:regular_file ~stat
+    Eio_fs_internal.bounded_read ~max_bytes:100 ~validate:regular_file ~stat
       ~read:(feed (grown ^ "!"))
   with
   | Ok bytes ->
