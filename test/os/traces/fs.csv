@@ -1,3 +1,18 @@
+# script: test/os/scripts/generate.sh
+# script revision: 53f53c4555eab0f6d3fc4bdcece7921061eea5e1
+# script digest: 1304f4a857e93d2bfc26a39ff41f3eb8
+# recorded: unknown, committed 2026-11-12
+# macos os: unknown
+# macos filesystem: unknown, APFS by generate.sh, case-insensitive by the outcomes
+# macos mount: unknown
+# macos user: unknown, not root by the outcomes
+# macos eio_posix: unknown
+# linux os: unknown
+# linux image: ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460
+# linux filesystem: tmpfs by generate.sh, case-sensitive by the outcomes
+# linux mount: unknown, generate.sh asks Docker for exec,mode=1777
+# linux user: unknown, opam with group 4242 by generate.sh, not root by the outcomes
+# linux eio_posix: unknown
 ops,linux,macos,linux eio_posix,macos eio_posix
 write a x;stat A;read A;ls .,ok|ENOENT|ENOENT|[a],ok|file 1|x|[a],ok|ENOENT|ENOENT|[a],ok|file 1|x|[a]
 write a x;open A x;ls .,ok|ok|[A/a],ok|EEXIST|[a],ok|ok|[A/a],ok|EEXIST|[a]

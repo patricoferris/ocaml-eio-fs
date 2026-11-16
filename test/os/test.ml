@@ -2,12 +2,10 @@
    with [~os:`Linux] it must give Linux's outcomes, and with [~os:`Macos]
    macOS's, except where an exception below says why not.
 
-   Traces recorded as a user, straight from the kernel through [Unix] and
-   through eio_posix, on Linux (Docker image ocaml/opam, pinned by digest in
-   scripts/generate.sh, on a tmpfs) and on macOS (case-insensitive APFS). The
-   filesystem follows the kernel; from an operation [Unix] cannot make on, it
-   follows eio_posix.
-   Regenerate, on macOS: REGEN=1 dune build @test/os/regen-traces *)
+   The traces hold each kernel's answers through [Unix] and through
+   eio_posix; README.md says where they come from and how to regenerate
+   them. The filesystem follows the kernel; from an operation [Unix] cannot
+   make on, it follows eio_posix. *)
 
 type os = [ `Linux | `Macos ]
 
@@ -42,6 +40,7 @@ type row = {
 let traces =
   lazy
     (In_channel.with_open_text "traces/fs.csv" In_channel.input_lines
+    |> List.filter (fun l -> not (String.starts_with ~prefix:"#" l))
     |> List.tl
     |> List.map (fun line ->
         let outcomes s = String.split_on_char '|' s in

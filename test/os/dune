@@ -7,9 +7,6 @@
   scripts/record.ml
   seq/os_seq.ml))
 
-; Re-record the outcomes, on macOS with Docker:
-; REGEN=1 dune build @test/os/regen-traces
-
 (rule
  (alias regen-traces)
  (deps
