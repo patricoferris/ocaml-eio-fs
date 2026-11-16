@@ -5,8 +5,9 @@ with fault injection for crash-consistency tests.
 
 Code written against `Eio.Path` runs the same on a disk or in memory. eio-fs
 provides the in-memory side, for tests and for unikernels that have no disk.
-Each filesystem it creates is separate from the others. Its chaos tests run
-a workload under filesystem errors and power cuts.
+Each filesystem it creates is separate from the others. Its chaos tests run a
+workload under filesystem errors and power cuts, to check how a program copes
+with them.
 
 ## Installation
 
@@ -33,13 +34,19 @@ tree at `dir`. `Eio_fs.Path.pp_tree` prints a tree on any backend.
 
 ## Chaos tests
 
-`Eio_fs.Chaos.check` runs a workload many times on fresh in-memory
-filesystems, each time with a different fault: an open, a write or a sync
-fails, a write moves one byte or is torn, the filesystem turns read-only or
-full. It chooses the faults from what the workload does.
+### Filesystem errors
 
-Here a cache must keep working whatever the filesystem does: any error only
-costs a recomputation. An entry ends with `$`, so a torn one is not trusted.
+`Eio_fs.Chaos.check` runs a workload many times, each time on a fresh
+in-memory filesystem and with a different fault. It chooses the faults from
+what the workload does:
+
+- an open, a write or a sync fails;
+- a write moves one byte, or is torn (only half of its bytes land);
+- the filesystem turns read-only or full.
+
+The example below is a cache that must keep working whatever the filesystem
+does. An error only costs a recomputation. Each entry ends with `$`, so a
+torn entry is not trusted.
 
 ```ocaml
 # let get dir key ~compute =
@@ -67,11 +74,15 @@ val get :
 - : unit = ()
 ```
 
+### Power cuts
+
 `Eio_fs.Chaos.Crash.check` cuts the power during a workload, and during its
 recovery. The workload calls `ack v` once its program has promised that `v` is
-durable. After each cut, `recover ~acked` runs as a fresh process would, on
-the directory as the disk holds it, and checks what survived. Here a config
-is saved with a temporary file, a sync, a rename and a sync of the directory:
+durable. After each cut, `recover ~acked` runs on the directory as the disk
+holds it, and checks what survived.
+
+The example below saves a configuration file in four steps: it writes a
+temporary file, syncs it, renames it, then syncs the directory.
 
 ```ocaml
 # let save ~sync_dir dir v =
@@ -99,8 +110,8 @@ val test : sync_dir:bool -> unit -> unit = <fun>
 - : unit = ()
 ```
 
-Without the sync of the directory, the rename may be lost after the program
-said the config was saved:
+Without the last step, the rename may be lost after the program said that the
+configuration was saved:
 
 ```ocaml
 # let cut f =
@@ -112,46 +123,54 @@ val cut : (unit -> unit) -> string = <fun>
 - : string = "  cut:      at the end, every unsynced change lost"
 ```
 
-The failure also gives the tier that found it, the operations of the failing
-run, and a `~replay:"..."` argument that runs that scenario alone.
+The full message also gives the operations of the failing run, and a
+`~replay:"..."` argument that runs that scenario alone.
 
-The tests follow a few rules:
+### Writing a workload
 
-- At most two faults reach a run, or one lasting condition. A program that
-  tries three times gets past two faults, but no retry gets past a lasting
-  condition, so the workload must accept that any operation fails.
-- A lasting condition, such as a read-only filesystem, reaches every
-  operation from where it starts, the retries included. A program that
-  retries at once with no time passing fails as a hang.
-- `recover` stands for a fresh process: it reads what the disk holds and
-  what the workload acknowledged, never state the workload left in memory.
-- A cut cancels the workload, as `Eio.Cancel` cancels a fiber, and every
-  fiber it runs once they all wait: it must not catch
-  `Eio.Cancel.Cancelled`. Any other exception that escapes the workload fails
-  the check, an injected `Eio.Io` included, so the workload catches the errors
-  its program may raise and checks the results itself.
-- A check blocks the event loop it is called from until it ends. Each run has
-  its own event loop, whose clock moves only when every fiber waits, so a
-  timeout of an hour takes no time.
+A workload has a few rules to follow:
 
-A check is deterministic, reads no environment variable and prints nothing.
-The scenarios it samples, past those that follow the structure of the run, are
-drawn from a fixed seed: a nightly run may pass another with `~seed` to meet
-other faults, and the replay of a failure needs no seed. For a scenario it does
-not try, `Eio_fs.Chaos.wrap f dir` asks `f` about each operation, and
-`Eio_fs.Chaos.Crash.v` builds a power cut by hand.
+- It accepts that any operation fails. A run meets at most two faults, or one
+  lasting condition such as a read-only filesystem. A program that tries three
+  times gets past two faults, but no retry gets past a lasting condition.
+- It lets time pass between its retries. A lasting condition reaches every
+  operation from where it starts, the retries included, so a program that
+  retries at once fails the check as a hang.
+- It catches the errors its program may raise, and checks the results itself.
+  Any exception that escapes the workload fails the check, an injected
+  `Eio.Io` included.
+- It does not catch `Eio.Cancel.Cancelled`. A power cut raises it from the
+  operation it falls before, and cancels every fiber once they all wait.
+- `recover` reads what the disk holds and what the workload acknowledged. It
+  stands for a fresh process, so it must not read state that the workload left
+  in memory.
+
+A check blocks the event loop it is called from until it ends. Each run has
+its own event loop, whose clock moves only when every fiber waits, so a sleep
+takes no time.
+
+A check is deterministic. It draws the scenarios it samples from a fixed seed,
+so it meets the same faults each time. It reads no environment variable and
+prints nothing. A nightly run can pass another `~seed` to meet other faults,
+and the replay of a failure needs no seed.
+
+A test can also inject a fault that a check does not try:
+`Eio_fs.Chaos.wrap f dir` asks `f` about each operation, and
+`Eio_fs.Chaos.Crash.v` builds a power cut by hand. The documentation of
+`Eio_fs.Chaos` has the details.
 
 ## Testing as a user
 
-Code that passes its tests as root in CI can fail for a user, or the reverse:
-a configuration directory it cannot create, a file another user owns, a mode
-that locks it out. An in-memory filesystem runs its operations as a user and
-checks them as POSIX does. The default user is root, which passes every check,
-so a test names a user to find these bugs. `Eio_fs.Fs.as_user` runs a
-directory's operations as another user, to set a tree up as root first.
+Code that passes its tests as root in CI can fail for an ordinary user, for
+instance on a configuration directory that it cannot create, or on a file that
+another user owns. An in-memory filesystem runs its operations as a user and
+applies the POSIX permission checks to them. The default user is root, which
+passes every check, so a test has to name another user to find these bugs.
+`Eio_fs.Fs.as_user` runs a directory's operations as another user, so a test
+can set a tree up as root first.
 
-This test saves a configuration file under `/etc`, which root owns. It works as
-root and fails as a user.
+The test below saves a configuration file under `/etc`, which root owns. It
+works as root and fails as a user.
 
 ```ocaml
 Eio_main.run @@ fun _env ->
@@ -170,10 +189,10 @@ match save_config alice with
 
 ## Embedding a file tree
 
-The `eio-fs-crunch` binary turns a directory tree into an OCaml module, as
-[ocaml-crunch](https://github.com/mirage/ocaml-crunch) does. With `-o assets.ml`
-it writes the module and its interface, `assets.mli`. This dune rule
-regenerates them when the `static` directory changes:
+The `eio-fs-crunch` binary turns a directory tree into an OCaml module, like
+[ocaml-crunch](https://github.com/mirage/ocaml-crunch). With `-o assets.ml` it
+writes the module and its interface, `assets.mli`. This dune rule regenerates
+them when the `static` directory changes:
 
 ```
 (rule
@@ -190,8 +209,8 @@ regenerates them when the `static` directory changes:
 ```
 
 `Assets.load ()` rebuilds the tree in a new in-memory filesystem and returns its
-root. The program links the `assets` library. The example below uses the module built from
-[examples/readme/static](examples/readme/static).
+root. The program links the `assets` library. The example below uses the
+module built from [examples/readme/static](examples/readme/static).
 
 ```ocaml
 Eio_main.run @@ fun _env ->
@@ -206,64 +225,64 @@ assert (
   for `eio-fs-crunch`.
 - `eio-fs.sync` writes a file atomically and durably on any backend.
 - `eio-fs.unix` binds POSIX calls that Eio and `Unix` lack, such as advisory
-  locks and extended attributes, and has a root whose stats, opens and
-  directory listings run on the calling thread rather than a system thread
-  (`Eio_fs_unix.inline_fs`).
+  locks and extended attributes. It also has `Eio_fs_unix.inline_fs`, a root
+  whose stats, opens and directory listings run on the calling thread rather
+  than on a system thread.
 - `eio-fs.path` does lexical operations on path strings.
 
-## What a test covers
+## What the tests model
 
-### What a pass tells you
+Where POSIX systems differ, the in-memory filesystem answers as Linux does.
+With `~os:`Macos`, it answers as macOS does on its default APFS volume: a name
+matches whatever its case and Unicode normalisation, and the errors, modes and
+groups are those of macOS.
+`Eio_fs.Fs` lists the differences, and the tests check them against a trace of
+both kernels, recorded through `Unix` and eio_posix.
 
-A power-cut check models ext4 with `data=writeback`: unsynced writes may be
-lost, and the changes to a directory reach the disk in program order. A sync
-of a directory makes its own changes durable, a rename into or out of it
-whole, and the earlier changes to each directory they touch, but not the
-other changes ext4 commits with it: a program that relies on those fails,
-as it would where only POSIX holds.
+Under Linux, `fs.protected_symlinks` is on, as in most distributions. In a
+sticky directory that others may write, such as `/tmp`, a link is followed only
+by its owner or by the owner of the directory.
 
-With `~os:`Macos` it models APFS on a drive with a cache: `fsync`, as
-`Eio.File.sync` and the portable barriers of `Eio_fs_sync` issue it, stops in
-that cache and alone makes nothing durable, while `Eio_fs_unix.sync_file`,
-`Eio_fs_unix.sync_dir` and `Eio_fs_unix.barrier` are `F_FULLFSYNC` and do.
-Where the sources say nothing of APFS, it keeps ext4's rules, so it may leave
-a state APFS would not, never miss one it would. A program that runs on both
-checks under both.
+A power-cut check models one disk for each system:
 
-Where POSIX systems differ, the in-memory filesystem answers as Linux does,
-or, with `~os:`Macos`, as macOS does on its default APFS volume: a name
-matches whatever its case and Unicode normalisation, and the errors, modes
-and groups are macOS's. `Eio_fs.Fs` lists the differences; a trace of both
-kernels, recorded through `Unix` and eio_posix, checks them. Under Linux it
-has `fs.protected_symlinks` on, as most distributions do: in a sticky
-directory others may write, such as `/tmp`, a link is followed only by its
-owner or the directory's.
+- **Linux** is ext4 with `data=writeback`. Unsynced writes may be lost, and
+  the changes to a directory reach the disk in program order. A sync of a
+  directory makes its own changes durable, a rename into or out of it whole,
+  and the earlier changes to each directory they touch. It does not cover the
+  other changes that ext4 commits with it, so a program that relies on those
+  fails the check, as it would on a filesystem that only follows POSIX.
+- **macOS** is APFS on a drive with a cache. `Eio.File.sync` and the portable
+  barriers of `Eio_fs_sync` issue `fsync`, which stops in that cache and makes
+  nothing durable alone. `Eio_fs_unix.sync_file`, `Eio_fs_unix.sync_dir` and
+  `Eio_fs_unix.barrier` issue `F_FULLFSYNC`, which does. Where the sources say
+  nothing of APFS, the model keeps the rules of ext4. It may then leave a
+  state that APFS would not, but it misses none that APFS would leave.
 
+A program that runs on both systems needs a check under each.
 [test/README.md](test/README.md) says where each oracle the tests compare
-against comes from and how to regenerate it.
+against comes from, and how to regenerate it.
 
-### What a check can miss
+## Limitations
 
-- A bug that needs two faults. Some pairs of faults lie past the default
-  budget of 20,000 runs. Raise `~budget`, or pass another `~seed`, in a nightly
-  run, as the `CHAOS_BUDGET` and `CHAOS_SEED` example in `Eio_fs.Chaos` does.
+A check can miss a bug that needs two faults, as some pairs of faults lie past
+the default budget of 20,000 runs. A nightly run can raise `~budget` or pass
+another `~seed`: `Eio_fs.Chaos` has an example that reads them from
+`CHAOS_BUDGET` and `CHAOS_SEED`.
 
-### How big a test can be
+A workload has a size limit. A run that makes 100,000 filesystem operations,
+or 10 million scheduler turns, fails as a busy loop or as too large for a
+check. A check also fails, and says so, when the scenarios it always runs need
+more runs than its budget. The fix is to shrink the workload or to raise
+`~budget`.
 
-A run that makes 100,000 filesystem operations, or 10 million scheduler
-turns, fails as a busy loop or as too large for a check. The budget also has a
-floor: the linear tier always runs whole, so a check that needs more runs than
-its budget fails and says so. Shrink the workload, or raise `~budget`.
+The in-memory filesystem answers as the kernel does, and eio_posix differs
+from the kernel in a few corners. Code that runs on both should not depend on
+them:
 
-### Where it differs from eio_posix
-
-The in-memory filesystem answers as the kernel does. eio_posix differs in a
-few corners, which code that runs on both should not depend on:
-
-- A path that ends in a `.` or `..` component, and a creating open with a
-  trailing slash. eio_posix rewrites the first lexically
-  ([eio#976](https://github.com/ocaml-multicore/eio/issues/976)), and fails
-  the second with a different errno from the kernel's.
+- A path that ends in a `.` or `..` component, which eio_posix rewrites
+  lexically ([eio#976](https://github.com/ocaml-multicore/eio/issues/976)).
+- A creating open with a trailing slash, which eio_posix fails with a
+  different errno from the kernel's.
 - Directories on macOS. eio_posix needs read permission on each directory a
   path walks, and follows up to 40 links to stat a path where the kernel
   stops at 32.
