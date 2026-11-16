@@ -55,8 +55,8 @@ type t = {
 val all : t list
 (** [all] is one entry for each operation, in interface order. *)
 
-val find : iface -> string -> t
-(** [find iface name] is the entry for [name] in [iface].
+val get : iface -> string -> t
+(** [get iface name] is the entry for [name] in [iface].
 
     @raise Not_found if there is none. *)
 
@@ -74,3 +74,6 @@ val pp_iface : iface Fmt.t
 
 val pp_cls : cls Fmt.t
 (** [pp_cls] formats a class. *)
+
+val pp : t Fmt.t
+(** [pp] formats an entry as its interface and its name. *)

@@ -707,7 +707,7 @@ let file_writable side f =
   match side.files.(f) with Some (_, w) -> w | None -> true
 
 let rec entry_of side step =
-  let op iface name = Some (Law.find iface name) in
+  let op iface name = Some (Law.get iface name) in
   let write f name =
     if file_writable side f then op Write name
     else op File_handler "write side of a file opened for reading"
@@ -1080,7 +1080,7 @@ let test_lifecycle () =
   List.iter
     (fun (e : Law.t) ->
       if (not (List.memq e reached)) && not (List.mem e.name not_driven) then
-        Alcotest.failf "no program reaches %a %s" Law.pp_iface e.iface e.name)
+        Alcotest.failf "no program reaches %a" Law.pp e)
     Law.all
 
 let test_generated () =

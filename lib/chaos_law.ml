@@ -291,7 +291,7 @@ let handlers =
 
 let all = operations @ handlers
 
-let find iface name =
+let get iface name =
   List.find (fun e -> e.iface = iface && String.equal e.name name) all
 
 (* A file's Close is its READ close. *)
@@ -303,7 +303,7 @@ let binding (type a) iface (Eio.Resource.H (pi, _) : a Eio.Resource.binding) =
   | Eio.File.Pi.Write -> `Interface Write
   | Eio.Flow.Pi.Sink -> `Interface Write
   | Eio.Resource.Close when iface = Dir_handler -> `Op close_dir
-  | Eio.Resource.Close -> `Op (find Read "close")
+  | Eio.Resource.Close -> `Op (get Read "close")
   | Eio.Flow.Pi.Shutdown -> `Op shutdown
   | Eio_fs_internal.Admin -> `Op admin
   | Eio_fs_internal.Base_dir -> `Op base_dir
@@ -339,3 +339,5 @@ let pp_cls ppf = function
         | `Change -> "change")
   | Synthesized -> Fmt.string ppf "synthesized"
   | Unsupported -> Fmt.string ppf "unsupported"
+
+let pp ppf e = Fmt.pf ppf "%a %s" pp_iface e.iface e.name
