@@ -231,6 +231,9 @@ has `fs.protected_symlinks` on, as most distributions do: in a sticky
 directory others may write, such as `/tmp`, a link is followed only by its
 owner or the directory's.
 
+[test/README.md](test/README.md) says where each oracle the tests compare
+against comes from and how to regenerate it.
+
 ### What a check can miss
 
 - A bug that needs two faults. Some pairs of faults lie past the default
