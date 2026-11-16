@@ -159,10 +159,14 @@ let pinned_image () =
 
 let test_provenance () =
   let meta = provenance () in
+  (* opam answers "--" for a package the switch lacks. *)
+  let measured v =
+    v <> "" && v <> "--" && not (String.starts_with ~prefix:"unknown" v)
+  in
   let get k =
     match List.assoc_opt k meta with
-    | Some v when v <> "" -> v
-    | _ -> Alcotest.failf "traces/fs.csv has no %S line: regenerate it" k
+    | Some v when measured v -> v
+    | _ -> Alcotest.failf "traces/fs.csv has no measured %S: regenerate it" k
   in
   List.iter (fun k -> ignore (get k)) provenance_keys;
   Alcotest.(check string)
