@@ -24,7 +24,10 @@ type op =
   | Dsync of int  (** A barrier through a directory handle. *)
 
 val pp_op : op Fmt.t
+(** [pp_op] formats an operation as a command line. *)
+
 val pp_ops : op list Fmt.t
+(** [pp_ops] formats operations separated by semicolons. *)
 
 val exec :
   ?sw:Eio.Switch.t ->
@@ -49,8 +52,14 @@ type ids
 (** The type for small ids given to inodes in the order they are met. *)
 
 val ids : unit -> ids
+(** [ids ()] gives no inode an id yet. *)
+
 val id : ids -> int64 -> int
+(** [id ids ino] is the id of inode [ino], the next free one if it has none yet.
+*)
+
 val id_opt : ids -> int64 -> int option
+(** [id_opt ids ino] is the id of inode [ino], if it has one. *)
 
 val snapshot : ids -> Eio.Fs.dir_ty Eio.Path.t -> tree
 (** [snapshot ids root] is the tree below [root]. *)
@@ -72,6 +81,7 @@ type event =
   | Bfile of int
 
 val pp_events : event list Fmt.t
+(** [pp_events] formats events separated by semicolons. *)
 
 val events : before:tree -> after:tree -> barrier:event list -> event list
 (** [events ~before ~after ~barrier] are the events of the operation that took
@@ -93,11 +103,15 @@ type entry = {
 type state = entry list
 
 val pp_state : state Fmt.t
+(** [pp_state] formats a crash state as its entries. *)
 
 module States : Set.S with type elt = state
 
 val without_data : state -> state
+(** [without_data s] is [s] with every file's content emptied. *)
+
 val without_modes : state -> state
+(** [without_modes s] is [s] with every permission set to [0]. *)
 
 type states = {
   all : States.t;  (** Every state the reference allows. *)

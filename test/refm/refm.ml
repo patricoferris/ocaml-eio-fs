@@ -50,6 +50,9 @@ let v s =
     pend = [];
   }
 
+let length r = r.clen
+let pending r = r.pend
+
 let copy r =
   {
     r with
@@ -205,7 +208,6 @@ let lengths ~policy r =
       done;
       !s
 
-(* [None] if the image is allowed, or a reason. *)
 let check ~policy r img =
   let bs = !bs in
   let l = String.length img in

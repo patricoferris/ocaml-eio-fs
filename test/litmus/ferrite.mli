@@ -36,9 +36,10 @@ val ext4 : ?block_size:int -> ?nodelalloc:bool -> unit -> model
 
 val envelope : ?block_size:int -> unit -> model
 (** [envelope ()] is the weakest model eio-fs claims to stay inside: ext4 with
-    [writeback] and [local_fsync]. *)
+    {!field-writeback} and {!field-local_fsync}. *)
 
 val pp_model : model Fmt.t
+(** [pp_model] formats a model by its name and the ext4 options it sets. *)
 
 val outcomes : model -> Litmus.t -> Litmus.Set.t
 (** [outcomes m t] is every post-crash outcome [m] allows for [t].

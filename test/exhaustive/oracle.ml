@@ -202,7 +202,7 @@ let blocks root (snaps : snap array) ops =
       | Append (p, len) ->
           with_file p (fun ino ->
               let r = get ino in
-              Refm.write r r.Refm.clen (data len))
+              Refm.write r (Refm.length r) (data len))
       | Write_h (off, len) -> (
           match !hino with
           | Some ino ->
@@ -559,7 +559,7 @@ let check ?(reorder = false) h (img : image) =
                 | Refm.CW (o, d) -> Refm.IS.add (o + String.length d) acc
                 | CR m -> Refm.IS.add m acc)
               (Refm.lengths ~policy:Refm.Reorder r)
-              r.pend
+              (Refm.pending r)
           in
           let ok j =
             let k = ref (j + 1) in

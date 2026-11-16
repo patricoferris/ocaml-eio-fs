@@ -37,6 +37,9 @@ type t = {
 }
 (** The type for litmus tests. *)
 
+val pp : t Fmt.t
+(** [pp] formats a litmus test as its name, its setup and its body. *)
+
 (** {1 Outcomes} *)
 
 type entry = Absent | File of string | Dir | Link of string
@@ -49,7 +52,10 @@ module Outcome : sig
   type t = outcome
 
   val compare : t -> t -> int
+  (** [compare] orders outcomes structurally. *)
+
   val pp : t Fmt.t
+  (** [pp] formats an outcome as each observed name and what it holds. *)
 
   val file : ?marked:bool -> (string * string option) list -> t
   (** [file l] is the outcome holding each regular file of [l], [None] for
@@ -59,7 +65,10 @@ end
 module Set : Set.S with type elt = outcome
 
 val pp_set : Set.t Fmt.t
+(** [pp_set] formats a set of outcomes one per line. *)
+
 val testable : Set.t Alcotest.testable
+(** [testable] compares sets of outcomes in Alcotest checks. *)
 
 (** {1 Running under eio-fs} *)
 

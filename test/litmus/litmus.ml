@@ -22,6 +22,24 @@ type t = {
   observe : string list;
 }
 
+let pp_op ppf = function
+  | Creat f -> Fmt.pf ppf "creat %s" f
+  | Write (f, s) -> Fmt.pf ppf "write %s %S" f s
+  | Pwrite (f, o, s) -> Fmt.pf ppf "pwrite %s %d %S" f o s
+  | Rename (a, b) -> Fmt.pf ppf "rename %s %s" a b
+  | Fsync f -> Fmt.pf ppf "fsync %s" f
+  | Mark -> Fmt.string ppf "mark"
+  | Mkdir d -> Fmt.pf ppf "mkdir %s" d
+  | Unlink f -> Fmt.pf ppf "unlink %s" f
+  | Symlink { target; name } -> Fmt.pf ppf "symlink %s %s" target name
+  | Truncate (f, n) -> Fmt.pf ppf "truncate %s %d" f n
+  | Fsync_dir d -> Fmt.pf ppf "fsync_dir %S" d
+  | Fsync_fails f -> Fmt.pf ppf "fsync_fails %s" f
+
+let pp ppf t =
+  let ops = Fmt.(list ~sep:(any "; ") pp_op) in
+  Fmt.pf ppf "%s: %a | %a" t.name ops t.setup ops t.body
+
 type entry = Absent | File of string | Dir | Link of string
 type outcome = { marked : bool; entries : (string * entry) list }
 
