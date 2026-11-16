@@ -47,16 +47,13 @@ let cmd =
       `P
         "$(tname) walks $(i,DIR) and prints an OCaml module that embeds every \
          directory, file and symbolic link it contains. Linking the generated \
-         module and calling its [load ()] rebuilds the tree in a new eio-fs \
-         in-memory filesystem, giving programs without a real filesystem \
-         (unikernels, tests) an ordinary [Eio.Path] view of static assets.";
+         module and calling its $(b,load \\(\\)) rebuilds the tree in a new \
+         eio-fs in-memory filesystem, giving programs without a real \
+         filesystem (unikernels, tests) an ordinary $(b,Eio.Path) view of \
+         static assets.";
     ]
   in
   let info = Cmd.info "eio-fs-crunch" ~doc ~man in
-  Cmd.v info
-    Term.(
-      const (fun dir output ->
-          match run dir output with 0 -> () | n -> Stdlib.exit n)
-      $ dir $ output)
+  Cmd.v info Term.(const run $ dir $ output)
 
-let () = exit (Cmd.eval cmd)
+let () = exit (Cmd.eval' cmd)
