@@ -283,6 +283,19 @@ let truncate_order ~truncate_first ~barrier ~len () =
         && String.length (P.load P.(env#fs / "f")) <> len
       then failwith "d without the truncation")
 
+(* An empty write at offset 100 of a three-byte file, with no sync: it
+   changes nothing, on Linux as everywhere. *)
+let empty_write () =
+  Eio_fs.Chaos.Crash.check
+    ~setup:(fun env -> P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "abc")
+    (fun ~ack:_ env ->
+      try
+        P.with_open_out ~create:`Never P.(env#fs / "f") @@ fun f ->
+        Eio.File.seek f (Optint.Int63.of_int 100) `Set |> ignore;
+        Eio.Flow.single_write f [ Cstruct.empty ] |> ignore
+      with Eio.Io _ -> ())
+    ~recover:(fun ~acked:_ env ->
+      if P.load P.(env#fs / "f") <> "abc" then failwith "f changed")
 
 (* A new page with no sync: its first sector stale under the written ones.
    The cut's first state drops the file, and the states that vary the first
@@ -506,6 +519,8 @@ let suite =
                 "error" "Failure(\"d without the truncation\")"
                 (Expect.field "error" m))
             [ 0; 8192 ]);
+      Alcotest.test_case "an empty write changes nothing" `Quick
+        (Expect.passes empty_write);
       Alcotest.test_case "a stale first sector of a large new page is reached"
         `Quick (fun () ->
           let m = Expect.report stale_first in
