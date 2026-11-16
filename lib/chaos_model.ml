@@ -1362,8 +1362,10 @@ module Crash = struct
     ctl.logged <- ctl.logged + 1;
     ctl.pending_changes <- ctl.pending_changes + 1
 
+  (* An empty write changes nothing: Linux returns before the file system
+     sees it. *)
   let clog_write ctl fs ~offset data =
-    clog_change ctl fs (Write { offset; data })
+    if Cstruct.length data > 0 then clog_change ctl fs (Write { offset; data })
 
   let to_unsynced e =
     match e.change with
