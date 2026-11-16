@@ -220,11 +220,14 @@ let fail name fmt = Fmt.kstr (fun s -> failwith (name ^ ": " ^ s)) fmt
 
 let budget_of name = function
   | None -> 20_000
-  | Some b when b < 1 -> Fmt.invalid_arg "%s: the budget is %d" name b
+  | Some b when b < 1 ->
+      Fmt.invalid_arg "%s: budget is %d, must be positive" name b
   | Some b -> b
 
 let parse_replay ?(well_formed = fun _ -> true) name r =
-  let bad () = fail name "~replay:%S is not a replay of eio-fs" r in
+  let bad () =
+    Fmt.invalid_arg "%s: replay is %S, not a replay string of eio-fs" name r
+  in
   if not (String.starts_with ~prefix:"fs/" r) then bad ()
   else
     let r' = String.sub r 3 (String.length r - 3) in
@@ -677,7 +680,8 @@ let failed st (op : Op.t) =
       if n >= limit then begin
         st.hit <- Some (tag, at, limit);
         if n >= 2 * limit then park ();
-        failwith ("Eio_fs.Chaos: " ^ outcome_text (Livelock (tag, at, limit)))
+        failwith
+          ("Eio_fs.Chaos.check: " ^ outcome_text (Livelock (tag, at, limit)))
       end)
     (targets op)
 

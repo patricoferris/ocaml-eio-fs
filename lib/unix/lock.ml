@@ -672,8 +672,8 @@ let take_record_lock ~taken ~patience ~on_wait ~name file path =
   | None ->
       if not (Eio_fs_sync.is_process_local (fst path)) then
         Fmt.invalid_arg
-          "Eio_fs_unix.with_lock: %s: the rendezvous carries no Unix file \
-           descriptor and its backend registers no Eio_fs_sync.Process_local"
+          "Eio_fs_unix.with_lock: path is %s, a file with no Unix descriptor \
+           on a backend that registers no Eio_fs_sync.Process_local"
           name
 
 let take_inode_gate ~taken ~shared ~patience ~on_wait ~name ~opened_first local
@@ -715,8 +715,7 @@ let take_lease_lock ~shared ~patience ~on_wait ~name file =
         ~on_wait raw_fd ignore
   | None ->
       Fmt.invalid_arg
-        "Eio_fs_unix.Lease: %s: the rendezvous carries no Unix file descriptor"
-        name
+        "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor" name
 
 (* The mutex is keyed by the file the name holds, read before anything is
    opened: an ask a fiber of this process refuses opens no descriptor, whose
@@ -972,7 +971,9 @@ module Lease = struct
         t
     | None ->
         let_go ();
-        invalid_arg "Eio_fs_unix.Lease: acquired descriptor is unavailable"
+        Fmt.invalid_arg
+          "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor"
+          (Eio_fs.Path.name path)
 
   (* The refusal an exclusive holder of [path] gives: a shared lease tried
      without waiting and let go at once is granted beside shared holders, and

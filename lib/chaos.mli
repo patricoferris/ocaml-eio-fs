@@ -192,7 +192,9 @@ val check :
     found it.
 
     @raise Failure with a report of the first failing run.
-    @raise Invalid_argument if [budget] is not positive. *)
+    @raise Invalid_argument
+      if [budget] is not positive, or [replay] is not a replay string of eio-fs.
+*)
 
 (** Power cuts.
 
@@ -305,7 +307,9 @@ module Crash : sig
       that found it.
 
       @raise Failure with a report of the first failing run.
-      @raise Invalid_argument if [budget] is not positive. *)
+      @raise Invalid_argument
+        if [budget] is not positive, or [replay] is not a replay string of
+        eio-fs. *)
 
   (** {1:blocks Building blocks}
 

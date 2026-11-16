@@ -28,12 +28,13 @@ let root = Low_level.User.root
 module Nofollow = struct
   type error = [ `Invalid of string | `Too_large ]
 
-  let check_bound max_bytes =
+  let check_bound fn max_bytes =
     if max_bytes < 0 || max_bytes = max_int then
-      invalid_arg "Eio_fs.Nofollow: invalid byte bound"
+      Fmt.invalid_arg "%s: max_bytes is %d, must be between 0 and max_int - 1"
+        fn max_bytes
 
   let run ~max_bytes ~validate ~stat ~read =
-    check_bound max_bytes;
+    check_bound "Eio_fs.Nofollow.run" max_bytes;
     match validate stat with
     | Error reason -> Error (`Invalid reason)
     | Ok () ->
@@ -78,7 +79,7 @@ module Nofollow = struct
             end)
 
   let read_file ~max_bytes ~validate path =
-    check_bound max_bytes;
+    check_bound "Eio_fs.Nofollow.read_file" max_bytes;
     Eio.Switch.run @@ fun sw ->
     let file = Eio.Path.open_in ~sw ~follow:false path in
     run ~max_bytes ~validate ~stat:(Eio.File.stat file)
@@ -153,13 +154,17 @@ module Path = struct
     | [ paths ] -> batch f paths
     | batches -> List.concat (Eio.Fiber.List.map (batch f) batches)
 
-  let iter ?(max_fibers = 32) f path =
-    if max_fibers <= 0 then invalid_arg "Eio_fs.Path.iter: max_fibers <= 0";
+  let walk ~fn ~max_fibers f path =
+    if max_fibers <= 0 then
+      Fmt.invalid_arg "%s: max_fibers is %d, must be positive" fn max_fibers;
     let rec loop = function
       | [] -> ()
       | paths -> loop (level ~max_fibers f paths)
     in
     loop [ path ]
+
+  let iter ?(max_fibers = 32) f path =
+    walk ~fn:"Eio_fs.Path.iter" ~max_fibers f path
 
   let rec grant_owner p =
     match Eio.Path.stat ~follow:false p with
@@ -179,9 +184,11 @@ module Path = struct
     if stat.kind <> `Symbolic_link && stat.perm land 0o222 <> 0 then
       Eio.Path.chmod ~follow:false ~perm:(stat.perm land lnot 0o222) p
 
-  let usage ?max_fibers path =
+  let usage ?(max_fibers = 32) path =
     let total = ref empty in
-    iter ?max_fibers (fun _ stat -> total := add !total (own stat)) path;
+    walk ~fn:"Eio_fs.Path.usage" ~max_fibers
+      (fun _ stat -> total := add !total (own stat))
+      path;
     !total
 
   (* The native spelling names a host file; [Eio.Path.pp] renders through the
@@ -332,7 +339,7 @@ type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
    [user]. *)
 let run ?clock ?(cwd = "/") ?(user = root) ?os fn =
   if not (Eio_fs_path.is_abs cwd) then
-    Fmt.invalid_arg "Eio_fs.run: the cwd %S is not an absolute path" cwd;
+    Fmt.invalid_arg "Eio_fs.run: cwd is %S, must be an absolute path" cwd;
   let t = Low_level.v ?clock ~cwd ?os () in
   let admin = (Eio.Path.of_dir (Fs.fs t) :> Eio.Fs.dir_ty Eio.Path.t) in
   Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 Eio.Path.(admin / cwd);

@@ -131,7 +131,11 @@ module Barrier : sig
   (** [none] issues no barrier: a publication keeps only its atomicity. *)
 
   val sync_file : t -> _ Eio.File.ro -> unit
-  (** [sync_file t file] is [t]'s barrier over [file]'s data. *)
+  (** [sync_file t file] is [t]'s barrier over [file]'s data.
+
+      @raise Invalid_argument
+        if [t] is {!portable} and [file]'s backend registers no {!File_sync} and
+        its handle has no sync. *)
 
   val sync_dir : t -> _ Eio.Path.t -> unit
   (** [sync_dir t dir] is [t]'s barrier over [dir]'s entries. *)

@@ -8,6 +8,11 @@ type t = { run : 'a. (unit -> 'a) -> 'a }
    exceptions, which a backend-free component cannot name. *)
 exception Unavailable of string
 
+let () =
+  Printexc.register_printer (function
+    | Unavailable why -> Some ("Eio_fs_sync.Lock.Unavailable: " ^ why)
+    | _ -> None)
+
 let use t f = t.run f
 let none = { run = (fun f -> f ()) }
 

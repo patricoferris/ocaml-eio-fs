@@ -218,7 +218,11 @@ let v ?clock ?(user = Low_level.User.root) ?os () =
 
 let as_user user ((d, path) : _ Eio.Path.t) =
   match as_memfs_dir d with
-  | None -> invalid_arg "Eio_fs.Fs.as_user: not an in-memory directory"
+  | None ->
+      Fmt.invalid_arg
+        "Eio_fs.Fs.as_user: path is %a, not a directory of an in-memory \
+         filesystem"
+        Eio.Path.pp (d, path)
   | Some fd ->
       let label = Fmt.to_to_string Eio.Path.pp (d, "") in
       (dir ~label ~path:"." { fd with user }, path)

@@ -13,8 +13,11 @@ module Make (B : S) = struct
   let v backend = B.rename backend
 end
 
-let capability _ _ =
-  invalid_arg "Eio_fs_sync.Rename: directory has no exclusive rename operation"
+let capability source _ =
+  Fmt.invalid_arg
+    "Eio_fs_sync.Rename.exclusive: source is %a, in a directory with no \
+     exclusive rename, pass a backend such as Eio_fs_unix.exclusive_rename"
+    Eio.Path.pp source
 
 type (_, _, _) Eio.Resource.pi +=
   | Exclusive :

@@ -546,8 +546,9 @@ let pread_leaves_the_offset ~cached () =
     "a read at the end is 0" 0
     (pread ~file_offset:16 buf ~pos:0 ~len:8);
   Alcotest.check_raises "a range past the buffer is refused"
-    (Invalid_argument "Eio_fs_unix.pread") (fun () ->
-      ignore (pread ~file_offset:0 buf ~pos:6 ~len:4 : int))
+    (Invalid_argument
+       "Eio_fs_unix.pread: pos is 6 and len is 4, outside the 8-byte buffer")
+    (fun () -> ignore (pread ~file_offset:0 buf ~pos:6 ~len:4 : int))
 
 (* A cached read longer than the 65536 bytes it reads with the lock held is
    an uncached one, which takes at most 65536 bytes a call: the count says
@@ -588,7 +589,9 @@ let test_pwrite_leaves_the_offset () =
     "the span at offset 10, the gap as zeros" "0123456789WXYZef\000\000!"
     (Bytes.to_string buf);
   Alcotest.check_raises "a range past the buffer is refused"
-    (Invalid_argument "Eio_fs_unix.pwrite") (fun () ->
+    (Invalid_argument
+       "Eio_fs_unix.pwrite: pos is 2 and len is 2, outside the 3-byte buffer")
+    (fun () ->
       ignore (Eio_fs_unix.pwrite file ~file_offset:0 "abc" ~pos:2 ~len:2 : int))
 
 (* A file with no host descriptor, in memory, is read and written by Eio's

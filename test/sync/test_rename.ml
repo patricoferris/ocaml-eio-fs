@@ -22,7 +22,12 @@ let test_unregistered_directory_is_refused () =
   | exception Invalid_argument message ->
       Alcotest.(check string)
         "missing operation named"
-        "Eio_fs_sync.Rename: directory has no exclusive rename operation"
+        (Fmt.str
+           "Eio_fs_sync.Rename.exclusive: source is %a, in a directory with no \
+            exclusive rename, pass a backend such as \
+            Eio_fs_unix.exclusive_rename"
+           Eio.Path.pp
+           Eio.Path.(fs / "source"))
         message
 
 let test_fallback_receives_paths_and_propagates_refusal () =

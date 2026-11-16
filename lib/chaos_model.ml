@@ -1552,7 +1552,7 @@ module Crash = struct
         end;
         stamp path times
     | File _ | Link _ ->
-        invalid_arg "Chaos.Crash: wrapped root is not a directory"
+        invalid_arg "Eio_fs.Chaos.Crash.wrap: base is not a directory"
 
   let locations ctl =
     Hashtbl.fold (fun _ fs acc -> (fs, fs.rel) :: acc) ctl.files []
@@ -1563,7 +1563,8 @@ module Crash = struct
   let root ctl =
     match (ctl.admin, ctl.base) with
     | Some admin, Some (_, path) -> (admin, path)
-    | _ -> invalid_arg "Chaos.Crash: controller was never wrapped"
+    | _ ->
+        invalid_arg "Eio_fs.Chaos.Crash.cut: the controller wraps no directory"
 
   (* A journal path as the model records it: root-relative, '/'-separated, ""
      for the root itself. A barrier names its directory in whatever spelling
@@ -2088,7 +2089,8 @@ module Crash = struct
   let durable ctl =
     match (ctl.durable, ctl.snapshot) with
     | Some st, _ -> st
-    | None, None -> invalid_arg "Chaos.Crash: controller was never wrapped"
+    | None, None ->
+        invalid_arg "Eio_fs.Chaos.Crash.cut: the controller wraps no directory"
     | None, Some snapshot ->
         let st =
           Chaos_journal.fold
@@ -2262,7 +2264,7 @@ module Crash = struct
   let do_crash ctl =
     if not ctl.crashed then begin
       if Option.is_none ctl.base then
-        invalid_arg "Chaos.Crash: controller was never wrapped";
+        invalid_arg "Eio_fs.Chaos.Crash.cut: the controller wraps no directory";
       ctl.crashed <- true;
       ctl.queued <- [];
       Eio.Cancel.protect @@ fun () ->
@@ -2678,7 +2680,7 @@ module Crash = struct
                     let segs = path_segments key in
                     touched (tree_find tree segs) segs )
             | File _ | Link _ ->
-                invalid_arg "Chaos.Crash: wrapped root is not a directory")
+                invalid_arg "Eio_fs.Chaos.Crash.wrap: base is not a directory")
       in
       restore_root ~stamp:ctl.set_times owner root_path tree;
       (* Each tracked file is rewritten where the image holds it, which a
@@ -3888,7 +3890,8 @@ module Crash = struct
     (* One controller, one wrapper: a second would reset the durable image
        and split the files' state between the two. *)
     if Option.is_some ctl.base then
-      invalid_arg "Chaos.Crash.wrap: controller already wrapped";
+      invalid_arg
+        "Eio_fs.Chaos.Crash.wrap: the controller already wraps a directory";
     let base = (base :> Eio.Fs.dir_ty r) in
     ctl.base <- Some (base, path);
     let proot = box_dir base in

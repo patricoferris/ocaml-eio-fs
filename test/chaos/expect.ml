@@ -24,4 +24,9 @@ let refused prefix f () =
   if not (String.starts_with ~prefix m) then
     Alcotest.failf "the check failed with %S" m
 
+let invalid message f () =
+  match f () with
+  | () -> Alcotest.fail "the check passed: it did not refuse its argument"
+  | exception Invalid_argument m -> Alcotest.(check string) "refusal" message m
+
 let passes f () = f ()

@@ -14,5 +14,9 @@ val refused : string -> (unit -> unit) -> unit -> unit
 (** [refused prefix f ()] tests that the check [f] fails with a report that
     starts with [prefix]: a guard, not a scenario. *)
 
+val invalid : string -> (unit -> unit) -> unit -> unit
+(** [invalid message f ()] tests that the check [f] refuses its arguments with
+    [Invalid_argument message] before it runs. *)
+
 val passes : (unit -> unit) -> unit -> unit
 (** [passes f ()] tests that [f] returns. *)

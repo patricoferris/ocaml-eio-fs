@@ -161,9 +161,10 @@ let test_replay_malformed_state () =
   List.iter
     (fun st ->
       let replay = Fmt.str "fs/00000000/none|end|%s" st in
-      Expect.refused
+      Expect.invalid
         (Fmt.str
-           "Eio_fs.Chaos.Crash.check: ~replay:%S is not a replay of eio-fs"
+           "Eio_fs.Chaos.Crash.check: replay is %S, not a replay string of \
+            eio-fs"
            replay)
         (fun () -> save ~replay ())
         ())
@@ -247,8 +248,9 @@ let test_unknown_replay () =
         ~replay:(Fmt.str "fs/%s/none|before:sync:/nowhere#9|drop" (hash replay))
         ())
     ();
-  Expect.refused
-    "Eio_fs.Chaos.Crash.check: ~replay:\"net/x/y\" is not a replay of eio-fs"
+  Expect.invalid
+    "Eio_fs.Chaos.Crash.check: replay is \"net/x/y\", not a replay string of \
+     eio-fs"
     (fun () -> log_mutant ~replay:"net/x/y" ())
     ()
 

@@ -33,8 +33,12 @@ type (_, _, _) Eio.Resource.pi +=
 let positioned_max = 65536
 
 let check_span name ~file_offset ~length ~pos ~len =
-  if file_offset < 0 || pos < 0 || len < 0 || pos > length - len then
-    invalid_arg name
+  if file_offset < 0 then
+    Fmt.invalid_arg "%s: file_offset is %d, must not be negative" name
+      file_offset;
+  if pos < 0 || len < 0 || pos > length - len then
+    Fmt.invalid_arg "%s: pos is %d and len is %d, outside the %d-byte buffer"
+      name pos len length
 
 let on_descriptor name fd f =
   eio_unix_errors @@ fun () -> Eio_unix.Fd.use_exn name fd f
@@ -108,7 +112,8 @@ type statvfs = {
 let with_entry ~label (path : _ Eio.Path.t) fn =
   let path = (path :> Eio.Fs.dir_ty Eio.Path.t) in
   if String.contains (snd path) '\000' then
-    Fmt.invalid_arg "Eio_fs_unix.%s: NUL byte in path" label;
+    Fmt.invalid_arg "Eio_fs_unix.%s: path is %S, which holds a NUL byte" label
+      (snd path);
   let dir, name =
     match Eio.Path.split path with
     | Some (dir, name) when name <> "." && name <> ".." -> (dir, name)
@@ -244,14 +249,19 @@ module Exclusive_rename = struct
     match Eio.Path.split path with
     | Some (parent, name) when name <> "" && name <> "." && name <> ".." ->
         (parent, name)
-    | _ -> invalid_arg "Eio_fs_unix.exclusive_rename: expected a file name"
+    | _ ->
+        Fmt.invalid_arg
+          "Eio_fs_unix.exclusive_rename: path is %a, which ends in no file name"
+          Eio.Path.pp path
 
-  let descriptor file =
+  let descriptor path file =
     match Eio_unix.Resource.fd_opt file with
     | Some fd -> fd
     | None ->
-        invalid_arg
-          "Eio_fs_unix.exclusive_rename: unsupported directory backend"
+        Fmt.invalid_arg
+          "Eio_fs_unix.exclusive_rename: path is %a, in a directory with no \
+           Unix descriptor"
+          Eio.Path.pp path
 
   let rename () source target =
     let source_parent, source_name = parent source in
@@ -263,8 +273,8 @@ module Exclusive_rename = struct
     let target_dir = Eio.Path.open_dir ~sw target_parent in
     let source_file = Eio.Path.open_in ~sw source_dir in
     let target_file = Eio.Path.open_in ~sw target_dir in
-    let source_fd = descriptor source_file in
-    let target_fd = descriptor target_file in
+    let source_fd = descriptor source source_file in
+    let target_fd = descriptor target target_file in
     eio_unix_errors @@ fun () ->
     Eio_unix.Fd.use_exn "exclusive rename source" source_fd @@ fun source_fd ->
     Eio_unix.Fd.use_exn "exclusive rename target" target_fd @@ fun target_fd ->
@@ -541,8 +551,10 @@ module Link = struct
           match Eio_unix.Resource.fd_opt (Eio.Path.open_in ~sw directory) with
           | Some fd -> fd
           | None ->
-              invalid_arg
-                "Eio_fs_unix.Link.with_parent: native directory required"
+              Fmt.invalid_arg
+                "Eio_fs_unix.Link.with_parent: path is %s, in a directory with \
+                 no Unix descriptor"
+                original
         in
         eio_unix_errors (fun () -> descend descriptor components)
       with Eio.Io _ as ex ->
@@ -590,7 +602,10 @@ module Link = struct
 
   let read_regular ~max_bytes t =
     if max_bytes < 0 || max_bytes = max_int then
-      invalid_arg "Eio_fs_unix.Link.read_regular: invalid byte bound";
+      Fmt.invalid_arg
+        "Eio_fs_unix.Link.read_regular: max_bytes is %d, must be between 0 and \
+         max_int - 1"
+        max_bytes;
     let err_read fmt = Fmt.error fmt in
     let opened =
       match at t.parent (fun dir -> At.open_leaf dir t.name) with
@@ -913,7 +928,7 @@ module Batch = struct
     match (t, ops) with
     | _, [] -> []
     | Portable (_, live), _ when not !live ->
-        invalid_arg "Eio_fs_unix.Batch.run: switch finished"
+        invalid_arg "Eio_fs_unix.Batch.run: the batch's switch has finished"
     | Portable (root, _), ops -> List.map (portable_attempt root) ops
     | Native fd, ops ->
         Eio_unix.Fd.use_exn "Eio_fs_unix.Batch.run" fd @@ fun root ->

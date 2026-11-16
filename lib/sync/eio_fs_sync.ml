@@ -24,8 +24,8 @@ let fsync_handle (Eio.Resource.T (v, ops)) =
   | Some (module W) -> W.sync v
   | None ->
       invalid_arg
-        "Eio_fs_sync.sync_dir: this backend's directory handle cannot sync; \
-         register a Dir_sync barrier on the directory resource"
+        "Eio_fs_sync.sync_dir: the directory's backend has no sync, register a \
+         Dir_sync barrier on the directory resource"
 
 let sync_dir ((res, path) as p : _ Eio.Path.t) =
   match dir_barrier res with
@@ -61,8 +61,8 @@ let sync_any_file (Eio.Resource.T (v, ops) as file) =
   | None, Some (module W) -> W.sync v
   | None, None ->
       invalid_arg
-        "Eio_fs_sync: this backend's file handle cannot sync; register a \
-         File_sync barrier on the file resource"
+        "Eio_fs_sync.Barrier.sync_file: the file's backend has no sync, \
+         register a File_sync barrier on the file resource"
 
 let can_sync (Eio.Resource.T (_, ops) as file) =
   Option.is_some (file_barrier file)
@@ -164,11 +164,10 @@ exception Limit_exceeded of { max_bytes : int64; attempted : int64 }
 let () =
   Printexc.register_printer (function
     | Limit_exceeded { max_bytes; attempted } ->
-        Some
-          (Fmt.str
-             "Eio_fs_sync.Limit_exceeded: the write reaches %Ld bytes, past \
-              max_bytes %Ld"
-             attempted max_bytes)
+        Fmt.kstr Option.some
+          "Eio_fs_sync.Limit_exceeded: the write reaches %Ld bytes, past \
+           max_bytes %Ld"
+          attempted max_bytes
     | _ -> None)
 
 let check_max_bytes fn max_bytes =
@@ -272,7 +271,24 @@ let fresh_tmp ~collisions (dir, target) =
 let same_file (a : Eio.File.Stat.t) (b : Eio.File.Stat.t) =
   Int64.equal a.dev b.dev && Int64.equal a.ino b.ino
 
-let produce ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
+(* The temporary just created must not be the target, and carries exactly
+   [perm]: the create's mode is narrowed by the umask, and the published file
+   keeps [perm] on a backend that keeps one. *)
+let prepare_tmp ~fn ~perm tmp path file =
+  let tmp_stat = Eio.File.stat file in
+  (match Eio.Path.stat ~follow:false path with
+  | target_stat when same_file tmp_stat target_stat ->
+      Fmt.invalid_arg
+        "Eio_fs_sync.%s: tmp is %a, the same file as the path to publish" fn
+        Eio.Path.pp tmp
+  | _ -> ()
+  | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ());
+  if
+    (not (is_modeless (fst tmp)))
+    && not (Int.equal (tmp_stat.perm land 0o7777) perm)
+  then Eio.Path.chmod ~follow:false ~perm tmp
+
+let produce ~fn ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
   let rec produce collisions =
     let tmp =
       match requested_tmp with
@@ -281,7 +297,8 @@ let produce ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
     in
     let tmp_resource, tmp_path = tmp in
     if tmp_resource == dir && String.equal tmp_path target then
-      invalid_arg "Eio_fs_sync.publish: temporary and target must differ";
+      Fmt.invalid_arg "Eio_fs_sync.%s: tmp is %a, the path to publish" fn
+        Eio.Path.pp tmp;
     let owned = ref false in
     let cleanup () =
       if !owned then
@@ -292,19 +309,7 @@ let produce ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
       let result =
         Eio.Path.with_open_out ~create:(`Exclusive perm) tmp (fun file ->
             owned := true;
-            let tmp_stat = Eio.File.stat file in
-            (match Eio.Path.stat ~follow:false path with
-            | target_stat when same_file tmp_stat target_stat ->
-                invalid_arg
-                  "Eio_fs_sync.publish: temporary and target are the same file"
-            | _ -> ()
-            | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ());
-            (* The create's mode is narrowed by the umask; the published file
-               carries exactly [perm], on a backend that keeps one. *)
-            if
-              (not (is_modeless tmp_resource))
-              && not (Int.equal (tmp_stat.perm land 0o7777) perm)
-            then Eio.Path.chmod ~follow:false ~perm tmp;
+            prepare_tmp ~fn ~perm tmp path file;
             let result = write file in
             Barrier.sync_file barrier file;
             result)
@@ -323,9 +328,9 @@ let produce ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
 
 (* Write a temporary, push its bytes to stable storage, rename it over the
    target, and barrier the target's directory. *)
-let publish_file ~barrier ~perm ~exclusive ~requested_tmp path write =
+let publish_file ~fn ~barrier ~perm ~exclusive ~requested_tmp path write =
   let tmp, owned, cleanup, result =
-    produce ~barrier ~perm ~requested_tmp path write
+    produce ~fn ~barrier ~perm ~requested_tmp path write
   in
   (try
      Eio.Cancel.protect @@ fun () ->
@@ -342,7 +347,8 @@ let publish_file ~barrier ~perm ~exclusive ~requested_tmp path write =
 let publish ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
     ?tmp:requested_tmp ~max_bytes path write =
   check_max_bytes "publish" max_bytes;
-  publish_file ~barrier ~perm ~exclusive ~requested_tmp path (fun file ->
+  publish_file ~fn:"publish" ~barrier ~perm ~exclusive ~requested_tmp path
+    (fun file ->
       let sink = (file :> Eio.Flow.sink_ty Eio.Resource.t) in
       write (bounded_sink ~max_bytes sink))
 
@@ -353,12 +359,14 @@ let publish_sparse ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
     ?tmp:requested_tmp ~max_bytes ~size_bytes path spans =
   check_max_bytes "publish_sparse" max_bytes;
   if Int64.compare size_bytes 0L < 0 then
-    Fmt.invalid_arg "Eio_fs_sync.publish_sparse: negative logical size %Ld"
+    Fmt.invalid_arg
+      "Eio_fs_sync.publish_sparse: size_bytes is %Ld, must not be negative"
       size_bytes;
   if Int64.compare size_bytes (Optint.Int63.to_int64 Optint.Int63.max_int) > 0
   then
     Fmt.invalid_arg
-      "Eio_fs_sync.publish_sparse: logical size %Ld exceeds file offsets"
+      "Eio_fs_sync.publish_sparse: size_bytes is %Ld, past the largest file \
+       offset"
       size_bytes;
   if Int64.compare size_bytes max_bytes > 0 then
     raise (Limit_exceeded { max_bytes; attempted = size_bytes });
@@ -368,20 +376,22 @@ let publish_sparse ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
         let length = Int64.of_int (Cstruct.length data) in
         if Int64.compare offset previous < 0 then
           Fmt.invalid_arg
-            "Eio_fs_sync.publish_sparse: extent at %Ld precedes prior end %Ld"
+            "Eio_fs_sync.publish_sparse: spans has an extent at %Ld, before \
+             the end %Ld of the one before it"
             offset previous;
         if
           Int64.compare offset size_bytes > 0
           || Int64.compare length (Int64.sub size_bytes offset) > 0
         then
           Fmt.invalid_arg
-            "Eio_fs_sync.publish_sparse: %Ld-byte extent at %Ld exceeds \
-             logical size %Ld"
+            "Eio_fs_sync.publish_sparse: spans has a %Ld-byte extent at %Ld, \
+             past size_bytes %Ld"
             length offset size_bytes;
         validate (Int64.add offset length) rest
   in
   validate 0L spans;
-  publish_file ~barrier ~perm ~exclusive ~requested_tmp path (fun file ->
+  publish_file ~fn:"publish_sparse" ~barrier ~perm ~exclusive ~requested_tmp
+    path (fun file ->
       Eio.File.truncate file (Optint.Int63.of_int64 size_bytes);
       List.iter
         (fun (offset, data) ->
@@ -419,7 +429,8 @@ let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644) path lines =
   List.iter
     (fun l ->
       if String.contains l '\n' then
-        invalid_arg "Eio_fs_sync.append_lines: a line holds LF")
+        Fmt.invalid_arg
+          "Eio_fs_sync.append_lines: lines holds %S, a line with an LF in it" l)
     lines;
   let torn = ends_torn path in
   let b = Buffer.create 256 in
@@ -571,6 +582,21 @@ let reclaim path =
 let discard p =
   Eio.Cancel.protect @@ fun () -> try reclaim p with Eio.Io _ -> ()
 
+(* The generation the pointer at [path] names, read without following it:
+   [None] when there is no entry. Any other entry is refused, as an existing
+   target is. *)
+let pointer path =
+  match Eio.Path.kind ~follow:false path with
+  | `Not_found -> None
+  | `Symbolic_link -> Some (Eio.Path.read_link path)
+  | _ ->
+      let ex =
+        Eio.Fs.err
+          (Eio.Fs.Already_exists
+             (Generation "the entry is not a generation pointer"))
+      in
+      raise (Eio.Exn.add_context ex "publishing generation %a" Eio.Path.pp path)
+
 (* Stage a fresh sibling generation, commit it whole, rename a pointer to it
    over the published name, commit that, then reclaim the owned generations
    older than the one the old pointer named, which a reader may still be
@@ -581,21 +607,12 @@ let publish_generation ?(barrier = Barrier.portable) ?(perm = 0o755) path
     match Eio.Path.split path with
     | Some split -> split
     | None ->
-        invalid_arg "Eio_fs_sync.publish_generation: the root has no parent"
+        Fmt.invalid_arg
+          "Eio_fs_sync.publish_generation: path is %a, the root of its \
+           capability, which has no parent"
+          Eio.Path.pp path
   in
-  let previous =
-    match Eio.Path.kind ~follow:false path with
-    | `Not_found -> None
-    | `Symbolic_link -> Some (Eio.Path.read_link path)
-    | _ ->
-        let ex =
-          Eio.Fs.err
-            (Eio.Fs.Already_exists
-               (Generation "the entry is not a generation pointer"))
-        in
-        raise
-          (Eio.Exn.add_context ex "publishing generation %a" Eio.Path.pp path)
-  in
+  let previous = pointer path in
   let generation = fresh_generation name in
   let staged = Eio.Path.(parent / generation) in
   Eio.Path.mkdir ~perm staged;
@@ -652,7 +669,11 @@ let stage_link ~barrier ~expected ~target path =
   let parent, name =
     match Eio.Path.split path with
     | Some pair -> pair
-    | None -> invalid_arg "Eio_fs_sync.publish_link: the root has no parent"
+    | None ->
+        Fmt.invalid_arg
+          "Eio_fs_sync.publish_link: path is %a, the root of its capability, \
+           which has no parent"
+          Eio.Path.pp path
   in
   let stage = Eio.Path.(parent / fresh_name name) in
   let staged = ref false in
