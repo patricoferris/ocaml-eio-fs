@@ -307,4 +307,4 @@ val well_formed : string -> bool
 
 val split_state_key : string -> (string * state) option
 (** [split_state_key k] is the key of the scenario [k] names with its state
-    replaced by [Drop], and that state. *)
+    replaced by {!constructor-Drop}, and that state. *)

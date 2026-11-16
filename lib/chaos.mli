@@ -254,7 +254,7 @@ module Crash : sig
       each cut leaves.
 
       [setup] (defaults to nothing) prepares the directory, and what it makes is
-      durable. [run] calls [ack v] once its program has promised that [v] is
+      durable. [run] calls [ack a] once its program has promised that [a] is
       durable, as a database acknowledges a commit. After a cut,
       [recover ~acked env] runs as a fresh process would, on the directory as
       the disk holds it, with [acked] the values acknowledged before the cut, in
@@ -392,13 +392,13 @@ module Crash : sig
       {!Chaos.wrap} hook over the wrapper, it cuts the power before that
       operation, in the middle of a run:
       {[
+      let cut_at_seventh base =
         let t = Crash.v Drop_unsynced in
         let hook (op : Op.t) =
           if op.index = 7 then ignore (Crash.cut t);
           None
         in
-        let dir = Chaos.wrap hook (Crash.wrap t base) in
-        ...
+        Chaos.wrap hook (Crash.wrap t base)
       ]}
 
       @raise Invalid_argument if [t] was never wrapped. *)
@@ -472,13 +472,13 @@ module Fault : sig
             target: the window a time-of-check to time-of-use attack uses. Code
             that must not follow a link an attacker plants tests it this way:
             {[
+            let swapped base =
               let swap (op : Op.t) =
                 if op.kind = `Stat && op.path = "/out" then
                   Some (Fault.Swap_symlink "secret/key")
                 else None
               in
-              let dir = Chaos.wrap swap base in
-              ...
+              Chaos.wrap swap base
             ]} *)
 
   val pp : t Fmt.t

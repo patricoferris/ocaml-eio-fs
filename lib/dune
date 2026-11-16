@@ -24,3 +24,9 @@
   domain-local-await
   uucp
   uunf))
+
+(mdx
+ (package eio-fs)
+ (files chaos.mli)
+ (preludes prelude.txt)
+ (libraries eio-fs eio))

@@ -260,10 +260,10 @@ its budget fails and says so. Shrink the workload, or raise `~budget`.
 The in-memory filesystem answers as the kernel does. eio_posix differs in a
 few corners, which code that runs on both should not depend on:
 
-- `x/.`, `x/d/..` and a creating open with a trailing slash. eio_posix
-  rewrites the first two lexically
+- A path that ends in a `.` or `..` component, and a creating open with a
+  trailing slash. eio_posix rewrites the first lexically
   ([eio#976](https://github.com/ocaml-multicore/eio/issues/976)), and fails
-  the last with a different errno from the kernel's.
+  the second with a different errno from the kernel's.
 - Directories on macOS. eio_posix needs read permission on each directory a
   path walks, and follows up to 40 links to stat a path where the kernel
   stops at 32.
