@@ -298,9 +298,10 @@ module Crash : sig
 
   type unsynced = {
     path : string;
-        (** The path of the change: for a write or a truncation, the file's path
-            with its links resolved; for a directory change, the path as given.
-        *)
+        (** The path of the change when it was made: for a write or a
+            truncation, the file's path then, with its links resolved; for a
+            directory change, the path as given. A later rename does not change
+            it. *)
     kind : op_kind;
     offset : int;
     length : int;

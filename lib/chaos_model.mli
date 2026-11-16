@@ -328,8 +328,9 @@ module Crash : sig
   type unsynced = {
     path : string;
         (** The path the change was made at: for a write or a truncation, the
-            file's path with its symbolic links resolved; for a directory
-            operation, the path as the caller gave it. *)
+            file's path then, with its symbolic links resolved; for a directory
+            operation, the path as the caller gave it. A later rename does not
+            change it. *)
     kind : op_kind;  (** What the change is. *)
     offset : int;
         (** The byte offset of a {!Data} write, the new length of a {!Truncate},

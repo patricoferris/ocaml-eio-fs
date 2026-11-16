@@ -1040,6 +1040,7 @@ module Crash = struct
 
   and entry = {
     efs : fstate;
+    epath : string; (* the file's path when the change was made *)
     change : change;
     seq : int;
     egen : int;
@@ -1352,7 +1353,14 @@ module Crash = struct
   let clog_change ctl fs change =
     ctl.seq <- ctl.seq + 1;
     let e =
-      { efs = fs; change; seq = ctl.seq; egen = fs.gen; cached = false }
+      {
+        efs = fs;
+        epath = fs.rel;
+        change;
+        seq = ctl.seq;
+        egen = fs.gen;
+        cached = false;
+      }
     in
     ctl.log <- e :: ctl.log;
     fs.pending <- e :: fs.pending;
@@ -1366,20 +1374,14 @@ module Crash = struct
     match e.change with
     | Write { offset; data } ->
         {
-          path = e.efs.rel;
+          path = e.epath;
           kind = Data;
           offset;
           length = Cstruct.length data;
           seq = e.seq;
         }
     | Resize n ->
-        {
-          path = e.efs.rel;
-          kind = Truncate;
-          offset = n;
-          length = 0;
-          seq = e.seq;
-        }
+        { path = e.epath; kind = Truncate; offset = n; length = 0; seq = e.seq }
 
   let unsynced ctl =
     let data =
