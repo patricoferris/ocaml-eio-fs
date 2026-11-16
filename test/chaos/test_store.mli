@@ -1,4 +1,4 @@
-(** The first review's tests and their mutants. *)
+(** A key-value store and a retry path, and their mutants. *)
 
 val suite : string * unit Alcotest.test_case list
 (** [suite] runs a store whose recovery compacts, a larger store and a retry

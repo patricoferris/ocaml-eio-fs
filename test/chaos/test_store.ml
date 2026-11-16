@@ -1,7 +1,7 @@
-open Review1
+open Store
 
 let suite =
-  ( "review1",
+  ( "store",
     [
       Alcotest.test_case "kv: correct" `Quick
         (Expect.passes (fun () -> After.test_kv ()));

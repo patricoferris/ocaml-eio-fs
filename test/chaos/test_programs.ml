@@ -5,7 +5,7 @@
    catches it. [check] does not swap a stat's path for a link, so a test of a
    time-of-check to time-of-use window asks for the swap with [wrap]. *)
 let suite =
-  ( "review2",
+  ( "programs",
     [
       Alcotest.test_case "lock: correct" `Quick
         (Expect.passes (fun () -> Lock.test ()));
@@ -71,16 +71,16 @@ let suite =
       Alcotest.test_case "records: a crash leaves a length the file had" `Quick
         (Expect.passes Probe.fixed_records);
       Alcotest.test_case "a/b: correct" `Quick
-        (Expect.passes (fun () -> Second.Ab.test ()));
+        (Expect.passes (fun () -> Two_faults.Ab.test ()));
       (* The pair is the fifth on the path of one of 174 first faults that
          change what the run writes: past the default budget. *)
       Alcotest.test_case "a/b: slot A by default, by the sampled tier" `Quick
         (Expect.caught ~tier:"sampled"
-           (Second.Ab.test ~budget:100_000 ~bug:`Default_slot));
+           (Two_faults.Ab.test ~budget:100_000 ~bug:`Default_slot));
       Alcotest.test_case "seqlock: correct" `Quick
-        (Expect.passes (fun () -> Second.Seqlock.test ()));
+        (Expect.passes (fun () -> Two_faults.Seqlock.test ()));
       Alcotest.test_case "seqlock: advance on failure, by the sampled tier"
         `Quick
         (Expect.caught ~tier:"sampled"
-           (Second.Seqlock.test ~bug:`Advance_on_failure));
+           (Two_faults.Seqlock.test ~bug:`Advance_on_failure));
     ] )

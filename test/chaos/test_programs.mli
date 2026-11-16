@@ -1,4 +1,4 @@
-(** The second review's tests and their mutants. *)
+(** Small programs that keep data on disk, and their mutants. *)
 
 val suite : string * unit Alcotest.test_case list
 (** [suite] runs a lock file, content-addressed blobs, a two-file config, a

@@ -1,5 +1,5 @@
-(* The first review's tests: a larger store, recovery that compacts, and a
-   retry path a second fault breaks. *)
+(* A key-value store, whose recovery compacts it, and a retry path that a
+   second fault breaks. *)
 
 let first = [ ("k0", "s0"); ("k1", "s1") ]
 

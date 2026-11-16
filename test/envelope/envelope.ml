@@ -1,6 +1,6 @@
-(* A second reference crash model, written from lib/chaos.mli, POSIX fsync
-   and rename, and ext4 data=writeback, apart from the first one and from
-   the crash model it checks. It runs a workload on a logical filesystem and
+(* A reference crash model, written from lib/chaos.mli, POSIX fsync and
+   rename, and ext4 data=writeback, apart from the one in test/reference and
+   from the crash model it checks. It runs a workload on a logical filesystem and
    answers, for a crash at the end of it, which post-crash images the
    documented envelope permits. *)
 

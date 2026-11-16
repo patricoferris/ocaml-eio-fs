@@ -1,11 +1,11 @@
-(* A differential of Chaos.Crash against the reference in ref.ml, under
+(* A differential of Chaos.Crash against the reference in envelope.ml, under
    every policy: the image Drop_unsynced leaves, every Survive choice of
    uncommitted entries and data changes, compared exactly when the unsynced
    lists line up, and Reorder_unsynced seeds at block sizes 1, 7 and 4096,
    each image a member of what the reference allows. Data is compared, not
    only names and modes. *)
 
-open Ref
+open Envelope
 module Crash = Eio_fs.Chaos.Private.Crash
 module Chaos = Eio_fs.Chaos.Private
 
@@ -174,7 +174,7 @@ let run_eio ?(probe = []) ~user ~init ~ops ~policy () =
 
 (* Reference run: per-op success and the model. *)
 let run_ref ?bs ~user ~init ~ops () =
-  let t = Ref.v ?bs ~user init in
+  let t = Envelope.v ?bs ~user init in
   let results =
     List.map
       (fun op ->
@@ -185,7 +185,7 @@ let run_ref ?bs ~user ~init ~ops () =
 
 (* {1 Generator} *)
 
-let live_paths (t : Ref.t) =
+let live_paths (t : Envelope.t) =
   let rec go prefix d depth acc =
     List.fold_left
       (fun acc (name, c) ->
@@ -224,7 +224,7 @@ let gen rs ~(user : user) =
   let pick a = a.(int (Array.length a)) in
   let pickl l = List.nth l (int (List.length l)) in
   let init = pick inits in
-  let t = Ref.v ~user init in
+  let t = Envelope.v ~user init in
   let n = 3 + int 5 in
   let nh = ref 0 and nd = ref 0 in
   let wchar = ref 0 in
@@ -953,7 +953,7 @@ let test_differential () =
         (user, init, ops) pp_findings [ f ]
 
 let suite =
-  ( "reference2",
+  ( "envelope",
     Alcotest.test_case
       (Fmt.str "%d workloads under every policy" workloads)
       `Quick test_differential

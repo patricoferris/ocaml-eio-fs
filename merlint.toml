@@ -26,7 +26,7 @@ exclude = ["E606"]
 # A setup's I_dir, I_file and I_link stand beside a node's Dir, File and Link
 # in the same module: bare, the later type would take the names.
 [[rules]]
-files = ["test/reference2/ref.ml"]
+files = ["test/envelope/envelope.ml"]
 exclude = ["E334"]
 
 # The litmus tests check Chaos.Crash through the Litmus runner against
