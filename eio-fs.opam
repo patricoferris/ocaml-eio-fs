@@ -36,6 +36,7 @@ depends: [
   "mdx" {with-test & >= "2.3.0"}
   "alcotest" {with-test & >= "1.7.0"}
   "alcobar" {with-test}
+  "eio_posix" {with-test}
   "odoc" {with-doc}
 ]
 build: [

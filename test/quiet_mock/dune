@@ -7,7 +7,6 @@
  (name test)
  (libraries
   hermetic
-  eio_fs
   eio
   eio.utils
   eio.unix
