@@ -40,10 +40,3 @@ or when the image is not the one `generate.sh` pins. It cannot check the
 revision: tests run in dune's build directory, often from a release tarball,
 with no git history. A failing check means re-recording; never edit a value by
 hand.
-
-The trace committed in 53f53c4 was recorded before `generate.sh` wrote these
-lines. What git and the outcomes establish is filled in, the rest says
-`unknown`: its scripts first appear in that same commit and have not changed
-since, the digest is theirs, and the outcomes show both users were not root
-(the kernels deny permission checks root passes) and the macOS filesystem
-folds case.
