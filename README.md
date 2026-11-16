@@ -263,8 +263,7 @@ few corners, which code that runs on both should not depend on:
 - `x/.`, `x/d/..` and a creating open with a trailing slash. eio_posix
   rewrites the first two lexically
   ([eio#976](https://github.com/ocaml-multicore/eio/issues/976)), and fails
-  the last differently
-  ([eio#975](https://github.com/ocaml-multicore/eio/issues/975)).
+  the last with a different errno from the kernel's.
 - Directories on macOS. eio_posix needs read permission on each directory a
   path walks, and follows up to 40 links to stat a path where the kernel
   stops at 32.
