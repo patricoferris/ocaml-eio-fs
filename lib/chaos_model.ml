@@ -1239,29 +1239,14 @@ module Crash = struct
      over it in program order, and a crash replays the committed and the
      surviving ones the same way. [recorded] is where the files under the
      paths [delta] touched sat when the entry was recorded. *)
-  type metadata_entry = {
+  type op = {
     meta : unsynced;
-    dirs : int64 list;
-        (* The directories, by inode, whose barrier commits the entry. *)
-    mutable barred : int64 list;
-        (* Those of [dirs] a barrier has reached since: the entry is durable
-           once one of them is. *)
     delta : delta;
     paths : string list list; (* the paths it names, below the root *)
     mutable recorded : location list;
-    attrs_ino : int64 option;
-        (* For a chmod or a chown, the node it changed: it holds once that
-           node is durable, and a sync of that file commits it too. *)
-    nodes : int64 list; (* the nodes it makes *)
-    parents : int64 list; (* the directories whose entries it changes *)
-    ancestors : int64 list;
-        (* For a rename, the directories from the root down to where it
-           lands. *)
-    mutable synced : bool; (* a sync of that file has run since *)
-    clear : bool;
-        (* A write's setuid or setgid clear: any later commit carries it. *)
-    mutable committed : bool;
   }
+
+  type metadata_entry = op Chaos_journal.entry
 
   (* Documented in chaos.mli. *)
   type policy =
@@ -1312,20 +1297,8 @@ module Crash = struct
            log is compacted. *)
     mutable logged : int; (* the log's length *)
     mutable pending_changes : int; (* its entries still pending *)
-    mutable journal : metadata_entry Ids.t;
-        (* Every entry since the last whole snapshot, committed or not, by
-           seq. *)
-    mutable pool : metadata_entry Ids.t;
-        (* The pending entries a barrier or a sync has reached. *)
-    by_dir : (int64, metadata_entry Ids.t) Hashtbl.t;
-        (* The pending entries by the directories whose barrier commits them. *)
-    made : (int64, metadata_entry) Hashtbl.t;
-        (* The entry that made each node, committed or not, until the
-           snapshot holds the node. *)
-    by_parent : (int64, metadata_entry Ids.t) Hashtbl.t;
-    by_moved : (int64, metadata_entry Ids.t) Hashtbl.t;
-    mutable clears : metadata_entry Ids.t; (* the pending setuid clears *)
-    by_attrs : (int64, metadata_entry Ids.t) Hashtbl.t;
+    journal : op Chaos_journal.t;
+        (* Every entry since the last whole snapshot, committed or not. *)
     mutable snapshot : state option; (* the last whole snapshot *)
     mutable snapped : (string * Cstruct.t) Inos.t;
         (* The path and bytes of every file a whole snapshot held, by inode:
@@ -1415,8 +1388,9 @@ module Crash = struct
         ctl.log
     in
     let metadata =
-      Ids.fold
-        (fun _ e acc -> if e.committed then acc else e.meta :: acc)
+      Chaos_journal.fold
+        (fun (e : metadata_entry) acc ->
+          if e.committed then acc else e.op.meta :: acc)
         ctl.journal []
     in
     List.sort
@@ -1806,7 +1780,7 @@ module Crash = struct
      not at all, so a node put in a directory the image does not hold is not
      made, and an rmdir of a directory that still holds entries there removes
      nothing. A rename always lands. *)
-  let applies st e =
+  let applies st (e : metadata_entry) =
     List.for_all
       (fun (segs, edit) ->
         match edit with
@@ -1820,7 +1794,7 @@ module Crash = struct
                 | Some (File _ | Link _) | None -> true)
             | None -> true)
         | Attrs _ | Times _ -> true)
-      e.delta
+      e.op.delta
 
   (* A node a rename took where the image has no directory for it stays in
      the image under the root, by a name no directory entry can have, so a
@@ -1887,7 +1861,7 @@ module Crash = struct
             | [] -> { st with tree = node }
             | _ -> { st with tree = tree_replace st.tree at (Some node) }))
 
-  let replay ~root ~made st e =
+  let replay ~root ~made st (e : metadata_entry) =
     if not (applies st e) then st
     else
       List.fold_left
@@ -1921,8 +1895,8 @@ module Crash = struct
               match target_dir st segs parent with
               | None -> st
               | Some _ when Inos.mem (ino_of node) st.inos -> st
-              | Some at -> put ~root st ~segs ~at ~node ~recorded:e.recorded))
-        st e.delta
+              | Some at -> put ~root st ~segs ~at ~node ~recorded:e.op.recorded))
+        st e.op.delta
 
   (* The path of [p]'s directory, spelt as [p] is. *)
   let parent_path p =
@@ -1964,96 +1938,6 @@ module Crash = struct
     match ctl.base with
     | Some (_, root_path) -> path_segments root_path
     | None -> []
-
-  (* {2 The journal and its indexes} *)
-
-  let add_to tbl key e =
-    let m = Option.value ~default:Ids.empty (Hashtbl.find_opt tbl key) in
-    Hashtbl.replace tbl key (Ids.add e.meta.seq e m)
-
-  let remove_from tbl key e =
-    match Hashtbl.find_opt tbl key with
-    | None -> ()
-    | Some m ->
-        let m = Ids.remove e.meta.seq m in
-        if Ids.is_empty m then Hashtbl.remove tbl key
-        else Hashtbl.replace tbl key m
-
-  let candidate e =
-    (not e.committed)
-    && (e.barred <> [] || (e.synced && Option.is_some e.attrs_ino))
-
-  let refresh ctl e =
-    ctl.pool <-
-      (if candidate e then Ids.add e.meta.seq e ctl.pool
-       else Ids.remove e.meta.seq ctl.pool)
-
-  let moved e =
-    List.filter_map
-      (fun (_, edit) ->
-        match edit with
-        | Move { ino; _ } -> Some ino
-        | Place _ | Remove _ | Attrs _ | Times _ -> None)
-      e.delta
-
-  let index_entry ctl e =
-    ctl.journal <- Ids.add e.meta.seq e ctl.journal;
-    List.iter (fun d -> add_to ctl.by_dir d e) e.dirs;
-    List.iter (fun n -> Hashtbl.replace ctl.made n e) e.nodes;
-    List.iter (fun p -> add_to ctl.by_parent p e) e.parents;
-    List.iter (fun n -> add_to ctl.by_moved n e) (moved e);
-    Option.iter (fun a -> add_to ctl.by_attrs a e) e.attrs_ino
-
-  (* A committed entry leaves the indexes of pending ones. *)
-  let mark_committed ctl e =
-    ctl.effects <- ctl.effects + 1;
-    e.committed <- true;
-    List.iter (fun d -> remove_from ctl.by_dir d e) e.dirs;
-    List.iter (fun p -> remove_from ctl.by_parent p e) e.parents;
-    List.iter (fun n -> remove_from ctl.by_moved n e) (moved e);
-    Option.iter (fun a -> remove_from ctl.by_attrs a e) e.attrs_ino;
-    if e.clear then ctl.clears <- Ids.remove e.meta.seq ctl.clears;
-    ctl.pool <- Ids.remove e.meta.seq ctl.pool
-
-  (* The pending entries before [e] it depends on: those that changed a
-     directory [e] changes, as one directory's entries stay in order; those
-     that made a node [e] names; for an rmdir, those that changed the
-     directory it removes; and for a rename, those that moved a directory
-     above where it lands, so it never lands inside itself. A directory renamed before [e] changed it is no
-     dependency: its inode is durable under one name or the other. A change
-     of attributes waits for its node and pulls nothing in. *)
-  let deps ctl e =
-    match e.attrs_ino with
-    | Some _ -> []
-    | None ->
-        let earlier tbl key =
-          match Hashtbl.find_opt tbl key with
-          | None -> []
-          | Some m ->
-              Ids.fold
-                (fun s e' acc -> if s < e.meta.seq then e' :: acc else acc)
-                m []
-        in
-        List.concat_map (earlier ctl.by_parent) e.parents
-        @ List.concat_map (earlier ctl.by_moved) e.ancestors
-        @ List.concat_map
-            (fun (_, edit) ->
-              match edit with
-              | Remove ino -> earlier ctl.by_parent ino
-              | Place _ | Move _ | Attrs _ | Times _ -> [])
-            e.delta
-
-  (* [e] and, transitively, the pending entries it depends on. *)
-  let closure ctl e =
-    let seen = Hashtbl.create 8 in
-    let rec go acc e =
-      if Hashtbl.mem seen e.meta.seq then acc
-      else begin
-        Hashtbl.replace seen e.meta.seq ();
-        List.fold_left go (e :: acc) (deps ctl e)
-      end
-    in
-    go [] e
 
   (* [path] and [kind] as the caller spelled them, [resolved] the paths the
      operation touched, resolved: its own first. [gone] gives the inode a
@@ -2181,32 +2065,24 @@ module Crash = struct
             (List.map parent_path resolved @ moved)
     in
     let delta = delta @ stamps in
-    index_entry ctl
-      {
-        meta;
-        dirs;
-        barred = [];
-        delta;
-        paths = List.filter_map (tree_path ~root) resolved;
-        recorded;
-        attrs_ino;
-        nodes;
-        parents;
-        ancestors;
-        synced = false;
-        clear = false;
-        committed = false;
-      }
-
-  let reset_journal ctl =
-    ctl.journal <- Ids.empty;
-    ctl.pool <- Ids.empty;
-    Hashtbl.reset ctl.by_dir;
-    Hashtbl.reset ctl.made;
-    Hashtbl.reset ctl.by_parent;
-    Hashtbl.reset ctl.by_moved;
-    ctl.clears <- Ids.empty;
-    Hashtbl.reset ctl.by_attrs
+    let moved, removed =
+      List.fold_right
+        (fun (_, edit) (moved, removed) ->
+          match edit with
+          | Move { ino; _ } -> (ino :: moved, removed)
+          | Remove ino -> (moved, ino :: removed)
+          | Place _ | Attrs _ | Times _ -> (moved, removed))
+        delta ([], [])
+    in
+    Chaos_journal.add ctl.journal
+      (Chaos_journal.entry ~seq:ctl.seq ~dirs ?attrs_ino ~nodes ~parents
+         ~ancestors ~moved ~removed
+         {
+           meta;
+           delta;
+           paths = List.filter_map (tree_path ~root) resolved;
+           recorded;
+         })
 
   let snap ctl st =
     ctl.snapshot <- Some st;
@@ -2227,7 +2103,7 @@ module Crash = struct
         (locs_of ~root:(path_segments root_path) (locations ctl))
     in
     snap ctl st;
-    reset_journal ctl
+    Chaos_journal.reset ctl.journal
 
   (* The proper prefixes of [segs], outermost first: the directories above
      the entry it names. *)
@@ -2249,14 +2125,14 @@ module Crash = struct
   let touched ?(committed = false) ctl =
     let root = root_segs ctl in
     let paths = Hashtbl.create 16 and inos = Hashtbl.create 16 in
-    Ids.iter
-      (fun _ e ->
+    Chaos_journal.fold
+      (fun (e : metadata_entry) () ->
         if committed || not e.committed then begin
-          List.iter (fun segs -> Hashtbl.replace paths segs ()) e.paths;
-          List.iter (fun ino -> Hashtbl.replace inos ino ()) (e.nodes @ moved e);
+          List.iter (fun segs -> Hashtbl.replace paths segs ()) e.op.paths;
+          List.iter (fun ino -> Hashtbl.replace inos ino ()) (e.nodes @ e.moved);
           Option.iter (fun ino -> Hashtbl.replace inos ino ()) e.attrs_ino
         end)
-      ctl.journal;
+      ctl.journal ();
     Hashtbl.iter
       (fun _ (fs : fstate) ->
         if fs.pending <> [] then
@@ -2386,16 +2262,16 @@ module Crash = struct
   (* How the entry that made [ino] put it: where, as what, and the files it
      recorded below it. *)
   let made_node ctl ino =
-    match Hashtbl.find_opt ctl.made ino with
+    match Chaos_journal.made ctl.journal ino with
     | None -> None
     | Some e ->
         List.find_map
           (fun (segs, edit) ->
             match edit with
             | Place { node; _ } when Int64.equal (ino_of node) ino ->
-                Some (segs, node, e.recorded)
+                Some (segs, node, e.op.recorded)
             | Place _ | Move _ | Remove _ | Attrs _ | Times _ -> None)
-          e.delta
+          e.op.delta
 
   let replay_in ctl st e =
     replay ~root:(root_segs ctl) ~made:(made_node ctl) st e
@@ -2407,8 +2283,9 @@ module Crash = struct
     | None, None -> invalid_arg "Chaos.Crash: controller was never wrapped"
     | None, Some snapshot ->
         let st =
-          Ids.fold
-            (fun _ e st -> if e.committed then replay_in ctl st e else st)
+          Chaos_journal.fold
+            (fun (e : metadata_entry) st ->
+              if e.committed then replay_in ctl st e else st)
             ctl.journal snapshot
         in
         ctl.durable <- Some st;
@@ -2421,15 +2298,15 @@ module Crash = struct
     | None -> ()
     | Some snapshot ->
         let rec go st =
-          match Ids.min_binding_opt ctl.journal with
-          | Some (s, e) when e.committed ->
-              ctl.journal <- Ids.remove s ctl.journal;
+          match Chaos_journal.pop_committed ctl.journal with
+          | Some e ->
               let st = replay_in ctl st e in
               List.iter
-                (fun n -> if Inos.mem n st.inos then Hashtbl.remove ctl.made n)
+                (fun n ->
+                  if Inos.mem n st.inos then Chaos_journal.forget ctl.journal n)
                 e.nodes;
               go st
-          | Some _ | None -> st
+          | None -> st
         in
         ctl.snapshot <- Some (go snapshot)
 
@@ -2437,7 +2314,7 @@ module Crash = struct
      of attributes once its node is there, and an entry a barrier reached
      once a directory it changes is there, as the entry changes that one even
      where the other is not durable yet. *)
-  let reached st e =
+  let reached st (e : metadata_entry) =
     let held ino =
       match Inos.find_opt ino st.inos with
       | Some at -> not (in_limbo at)
@@ -2460,48 +2337,20 @@ module Crash = struct
      one committed late is replayed over the durable image as it stands: it
      changes no directory a later committed entry changes, as that entry
      would have pulled it in, so it lands as it would in program order. *)
-  let rec settle ctl =
-    let st = durable ctl in
-    let ready e = (not e.committed) && reached st e in
-    match
-      Ids.fold (fun _ e acc -> if ready e then e :: acc else acc) ctl.pool []
-    with
-    | [] -> fold_committed ctl
-    | ready ->
-        let newly = List.concat_map (closure ctl) ready in
-        (* A commit carries the setuid clears before it, which ext4
-           journals in the running transaction. *)
-        let last = List.fold_left (fun m e -> max m e.meta.seq) 0 newly in
-        let clears =
-          Ids.fold
-            (fun s e acc -> if s < last then e :: acc else acc)
-            ctl.clears []
-        in
-        let newly =
-          List.sort_uniq
-            (fun a b -> Int.compare a.meta.seq b.meta.seq)
-            (clears @ newly)
-        in
-        List.iter (mark_committed ctl) newly;
-        ctl.durable <- Some (List.fold_left (replay_in ctl) st newly);
-        settle ctl
+  let settle ctl =
+    (* The image the commits replay over, built before any of them. *)
+    let (_ : state) = durable ctl in
+    Chaos_journal.settle ctl.journal
+      ~reached:(fun e -> reached (durable ctl) e)
+      ~commit:(fun newly ->
+        ctl.effects <- ctl.effects + List.length newly;
+        ctl.durable <- Some (List.fold_left (replay_in ctl) (durable ctl) newly));
+    fold_committed ctl
 
   (* Hold a barrier on the directory [ino] for the entries that changed it,
      then commit what it can. *)
-  let commit_dir_ino ?(upto = max_int) ctl ino =
-    (match Hashtbl.find_opt ctl.by_dir ino with
-    | None -> ()
-    | Some m ->
-        Ids.iter
-          (fun _ e ->
-            if
-              e.meta.seq <= upto && not (List.exists (Int64.equal ino) e.barred)
-            then begin
-              ctl.effects <- ctl.effects + 1;
-              e.barred <- ino :: e.barred;
-              refresh ctl e
-            end)
-          m);
+  let commit_dir_ino ?upto ctl ino =
+    ctl.effects <- ctl.effects + Chaos_journal.bar ?upto ctl.journal ino;
     settle ctl
 
   let dir_ino ctl dir =
@@ -2512,18 +2361,9 @@ module Crash = struct
      once the image holds the file. It covers the changes made before
      [upto], as a barrier on a directory does. *)
   let commit_attrs ~upto ctl ~ino =
-    if Hashtbl.length ctl.by_attrs > 0 then begin
-      (match Hashtbl.find_opt ctl.by_attrs ino with
-      | None -> ()
-      | Some m ->
-          Ids.iter
-            (fun _ e ->
-              if (not e.synced) && e.meta.seq <= upto then begin
-                ctl.effects <- ctl.effects + 1;
-                e.synced <- true;
-                refresh ctl e
-              end)
-            m);
+    if Chaos_journal.has_attrs ctl.journal then begin
+      ctl.effects <-
+        ctl.effects + Chaos_journal.sync_attrs ~upto ctl.journal ino;
       settle ctl
     end
 
@@ -2537,39 +2377,28 @@ module Crash = struct
     let segs =
       Option.value ~default:[] (tree_path ~root:(root_segs ctl) fs.rel)
     in
-    let e =
-      {
-        meta =
-          metadata_unsynced ~path:fs.rel
-            ~kind:(Chmod { perm = st.perm })
-            ~seq:ctl.seq;
-        dirs = [];
-        barred = [];
-        paths = [ segs ];
-        delta =
-          [
-            ( segs,
-              Attrs
-                {
-                  ino = st.ino;
-                  perm = st.perm;
-                  uid = st.uid;
-                  gid = st.gid;
-                  times = times_of st;
-                } );
-          ];
-        recorded = [];
-        attrs_ino = Some st.ino;
-        nodes = [];
-        parents = [];
-        ancestors = [];
-        synced = false;
-        clear = true;
-        committed = false;
-      }
-    in
-    index_entry ctl e;
-    ctl.clears <- Ids.add e.meta.seq e ctl.clears
+    Chaos_journal.add ctl.journal
+      (Chaos_journal.entry ~seq:ctl.seq ~attrs_ino:st.ino ~clear:true
+         {
+           meta =
+             metadata_unsynced ~path:fs.rel
+               ~kind:(Chmod { perm = st.perm })
+               ~seq:ctl.seq;
+           paths = [ segs ];
+           delta =
+             [
+               ( segs,
+                 Attrs
+                   {
+                     ino = st.ino;
+                     perm = st.perm;
+                     uid = st.uid;
+                     gid = st.gid;
+                     times = times_of st;
+                   } );
+             ];
+           recorded = [];
+         })
 
   (* A file the wrapper first meets on an open that finds it on disk was made
      by nothing the model recorded. It is the file an image holds at its
@@ -2605,7 +2434,7 @@ module Crash = struct
         in
         ctl.snapshot <- Option.map locate ctl.snapshot;
         ctl.durable <- Option.map locate ctl.durable;
-        let in_delta e =
+        let in_delta (e : metadata_entry) =
           List.exists
             (fun (s, edit) ->
               match edit with
@@ -2614,11 +2443,12 @@ module Crash = struct
                   | Some (File f) -> Int64.equal f.ino ino
                   | Some (Dir _ | Link _) | None -> false)
               | Place _ | Move _ | Remove _ | Attrs _ | Times _ -> false)
-            e.delta
+            e.op.delta
         in
-        Ids.iter
-          (fun _ e -> if in_delta e then e.recorded <- location :: e.recorded)
-          ctl.journal
+        Chaos_journal.fold
+          (fun (e : metadata_entry) () ->
+            if in_delta e then e.op.recorded <- location :: e.op.recorded)
+          ctl.journal ()
 
   (* The image is rebuilt whole even in a fiber being cancelled, as the one
      whose operation cuts the power often is. *)
@@ -2877,9 +2707,14 @@ module Crash = struct
             c
       in
       let journal =
-        List.rev (Ids.fold (fun _ e acc -> e :: acc) ctl.journal [])
+        List.rev
+          (Chaos_journal.fold
+             (fun (e : metadata_entry) acc -> e :: acc)
+             ctl.journal [])
       in
-      let pending = List.filter (fun e -> not e.committed) journal in
+      let pending =
+        List.filter (fun (e : metadata_entry) -> not e.committed) journal
+      in
       let rec take_prefix pred = function
         | x :: xs when pred x -> x :: take_prefix pred xs
         | _ -> []
@@ -2887,7 +2722,8 @@ module Crash = struct
       let survivors =
         match ctl.policy with
         | Drop_unsynced -> []
-        | Survive pred -> take_prefix (fun e -> pred e.meta) pending
+        | Survive pred ->
+            take_prefix (fun (e : metadata_entry) -> pred e.op.meta) pending
         | Reorder_unsynced seed ->
             (* Arbitrary salt for the reorder RNG. Written as a shift so the
                32-bit "META" value (0x4d455441) is not an int literal that
@@ -2917,30 +2753,25 @@ module Crash = struct
           match ctl.snapshot with Some st -> st | None -> assert false
         in
         List.iter
-          (fun e ->
-            if e.committed || survives e then
-              Hashtbl.replace included e.meta.seq ())
+          (fun (e : metadata_entry) ->
+            if e.committed || survives e then Hashtbl.replace included e.seq ())
           journal;
         let rec build () =
           let again = ref false in
           let st =
             List.fold_left
-              (fun st e ->
+              (fun st (e : metadata_entry) ->
                 if !again then st
-                else if Hashtbl.mem included e.meta.seq then replay_in ctl st e
+                else if Hashtbl.mem included e.seq then replay_in ctl st e
                 else if reached st e then begin
-                  let clears =
-                    Ids.fold
-                      (fun s c acc -> if s < e.meta.seq then c :: acc else acc)
-                      ctl.clears []
-                  in
+                  let clears = Chaos_journal.clears_before ctl.journal e.seq in
                   List.iter
-                    (fun d ->
-                      if not (Hashtbl.mem included d.meta.seq) then begin
-                        Hashtbl.replace included d.meta.seq ();
+                    (fun (d : metadata_entry) ->
+                      if not (Hashtbl.mem included d.seq) then begin
+                        Hashtbl.replace included d.seq ();
                         if d != e then again := true
                       end)
-                    (clears @ closure ctl e);
+                    (clears @ Chaos_journal.closure ctl.journal e);
                   replay_in ctl st e
                 end
                 else st)
@@ -2951,11 +2782,11 @@ module Crash = struct
         build ()
       in
       List.iter
-        (fun e ->
+        (fun (e : metadata_entry) ->
           match e.attrs_ino with
-          | Some ino when e.clear && not (Hashtbl.mem included e.meta.seq) -> (
+          | Some ino when e.clear && not (Hashtbl.mem included e.seq) -> (
               (* The write that cleared it was logged just before it. *)
-              let at = e.meta.seq - 1 in
+              let at = e.seq - 1 in
               match Hashtbl.find_opt clear_cut ino with
               | Some s when s <= at -> ()
               | Some _ | None -> Hashtbl.replace clear_cut ino at)
@@ -4109,14 +3940,7 @@ module Crash = struct
       files = Hashtbl.create 8;
       known = Hashtbl.create 8;
       log = [];
-      journal = Ids.empty;
-      pool = Ids.empty;
-      by_dir = Hashtbl.create 16;
-      made = Hashtbl.create 16;
-      by_parent = Hashtbl.create 16;
-      by_moved = Hashtbl.create 16;
-      clears = Ids.empty;
-      by_attrs = Hashtbl.create 16;
+      journal = Chaos_journal.v ();
       snapshot = None;
       snapped = Inos.empty;
       left = [];

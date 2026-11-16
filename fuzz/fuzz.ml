@@ -5,4 +5,5 @@ let () =
       Fuzz_eio_fs_sync.suite;
       Fuzz_extents.suite;
       Fuzz_chaos_blocks.suite;
+      Fuzz_chaos_journal.suite;
     ]

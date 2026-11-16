@@ -1,7 +1,13 @@
 (library
  (name eio_fs)
  (public_name eio-fs)
- (private_modules low_level memfs quiet_mock chaos_plan chaos_blocks)
+ (private_modules
+  low_level
+  memfs
+  quiet_mock
+  chaos_plan
+  chaos_blocks
+  chaos_journal)
  (libraries
   hermetic
   eio
