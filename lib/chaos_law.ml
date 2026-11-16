@@ -250,8 +250,8 @@ let sync_failed =
 
 let shutdown =
   file_handler "Eio.Flow.Pi.Shutdown" Unsupported
-    "A file is no socket: the in-memory backend's handle raises Failure there \
-     and eio_posix's ENOTSOCK."
+    "A file is no socket: the in-memory backend's handle and eio_posix's \
+     refuse it with ENOTSOCK."
 
 (* Eio hides this one, so [binding] cannot name it. *)
 let socket =

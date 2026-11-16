@@ -1593,7 +1593,8 @@ module Flow = struct
     let single_read t buf =
       match readv t [ buf ] with 0 -> raise End_of_file | got -> got
 
-    let shutdown _ _ = Fmt.failwith "TODO: shutdown"
+    (* ENOTSOCK, which eio_posix and eio_linux raise as a bare [Eio.Io]. *)
+    let shutdown _ _ = Error.err "shutdown: not a socket"
     let getsockopt _ _ = Fmt.failwith "in-memory flow has no socket options"
     let setsockopt _ _ _ = Fmt.failwith "in-memory flow has no socket options"
     let read_methods = []
