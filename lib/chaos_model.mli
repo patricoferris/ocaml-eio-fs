@@ -1,18 +1,14 @@
-(** An adversarial {!Eio.Fs.dir} wrapper for fault-injection testing.
+(** The fault wrapper and the crash model that [Eio_fs.Chaos] is built on, which
+    the tests reach as [Eio_fs.Chaos.Private].
 
-    {!wrap} composes with any base directory capability, such as the in-memory
-    backend from {!Eio_fs.Fs} or a real filesystem, and perturbs reads, writes,
-    syncs, opens, stats and directory reads according to a {!Schedule.t}. A
-    schedule is either {e seeded} (deterministic pseudo-random faults, for
-    fuzzing) or {e scripted} (an inspectable list of rules, for pinning an exact
-    scenario such as a torn write during a superblock flush).
+    {!wrap} wraps a directory, in memory or on disk, and asks a {!Schedule.t}
+    about each read, write, sync, open, stat, listing and directory change. A
+    schedule is scripted (rules that pin one scenario), a hook, or seeded
+    (faults drawn from a seed). A fault is raised as an ordinary {!Eio.Io}, so
+    the code under test cannot tell it from a failure of the base.
 
-    All injected faults surface as ordinary {!Eio.Io} exceptions, so code under
-    test cannot distinguish an injected failure from a real backend failure.
-
-    {!Crash} is the companion model of power loss: it tracks which writes and
-    directory operations a barrier has made durable, and rebuilds the base as a
-    crash would leave it. *)
+    {!Crash} models power loss: it tracks which writes and directory changes a
+    barrier has made durable, and rebuilds the base as a cut leaves it. *)
 
 type code = [ `Enoent | `Eacces | `Eperm | `Erofs | `Enospc | `Eio ]
 (** The type for the POSIX error codes an injected fault raises. An
@@ -183,8 +179,8 @@ module Schedule : sig
       trigger. A fired rule is consumed; unmatched rules never fire. When
       several pending rules match one operation, the first in [rules] fires and
       the others stay pending. This pins an exact scenario: for example, a
-      single {!Write_covering} rule carrying a {!Fault.t.Torn_write} fault
-      reproduces a torn superblock flush at a chosen offset. *)
+      single {!Write_covering} rule carrying a {!Fault.t.Torn_write} fault tears
+      a write at a chosen offset. *)
 
   val observing : (Op.t -> unit) -> t -> t
   (** [observing f t] is [t] with [f] called on every operation the wrapper

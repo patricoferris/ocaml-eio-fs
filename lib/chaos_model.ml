@@ -1,8 +1,6 @@
-(* An adversarial [Eio.Fs.dir] wrapper for fault-injection testing. It composes
-   with any base directory capability (the in-memory backend or a real one) and
-   perturbs reads, writes, syncs, opens, stats and directory reads according to a
-   schedule that is
-   either seeded (for fuzzing) or scripted (for pinning an exact scenario). *)
+(* The fault wrapper and the crash model behind Chaos. The wrapper asks its
+   schedule about each operation on a base directory; the crash model tracks
+   what a barrier made durable and rebuilds the base as a cut leaves it. *)
 
 open! Hermetic
 open Eio.Std
@@ -300,7 +298,9 @@ module Schedule = struct
         (* A swap needs a concrete symlink target, so it has no random form; it is
            driven by a scripted rule, never a seed. [all_kinds] omits it, and
            [applies_to] excludes it, so a seeded schedule never reaches here. *)
-        invalid_arg "Chaos: `Swap is scripted-only, not a seeded fault"
+        invalid_arg
+          "Eio_fs.Chaos.Private.Schedule.seeded: kind is `Swap, a fault only a \
+           scripted rule injects"
 
   let rec next t (op : Op.t) =
     match t with
@@ -578,7 +578,10 @@ let sync_base ~full (Eio.Resource.T (v, ops) as base) =
   | None -> (
       match Eio.Resource.get_opt ops Eio.File.Pi.Write with
       | Some (module W) -> W.sync v
-      | None -> invalid_arg "Chaos: the base file opened read-only cannot sync")
+      | None ->
+          invalid_arg
+            "Eio_fs.Chaos.wrap: base opens read-only files that cannot sync, \
+             register Eio_fs_sync.File_sync on them")
 
 let sync_ro t ~full =
   match Schedule.next t.sched (Op.sync t.path) with
@@ -896,6 +899,15 @@ module Crash = struct
   type boxed = base_dir
 
   let raise_power_lost () = raise_io `Eio "power lost"
+
+  let err_not_wrapped () =
+    invalid_arg
+      "Eio_fs.Chaos.Crash.cut: t wraps no directory, so it has nothing to cut"
+
+  let err_base_not_dir () =
+    invalid_arg
+      "Eio_fs.Chaos.Crash.wrap: base is not a directory, so a cut has no tree \
+       to rebuild"
 
   (* An independent copy of the first [n] bytes offered by [bufs]. The caller's
      buffers may be reused after the write returns, so the log must not alias
@@ -1453,7 +1465,11 @@ module Crash = struct
     | { kind = `Symbolic_link; uid; gid; ino; _ } as st ->
         Link
           { target = B.read_link bv path; uid; gid; ino; times = times_of st }
-    | _ -> invalid_arg "Chaos.Crash: unsupported filesystem entry"
+    | _ ->
+        Fmt.invalid_arg
+          "Eio_fs.Chaos.Crash.wrap: base's entry %S is neither a regular file, \
+           a directory nor a symbolic link, so a cut cannot rebuild it"
+          path
 
   (* The entry at [path] given back to its owner, unless it has them: a host
      process that is not root may give a file only to itself. *)
@@ -1557,8 +1573,7 @@ module Crash = struct
           B.chmod bv ~follow:true ~perm path
         end;
         stamp path times
-    | File _ | Link _ ->
-        invalid_arg "Eio_fs.Chaos.Crash.wrap: base is not a directory"
+    | File _ | Link _ -> err_base_not_dir ()
 
   let locations ctl =
     Hashtbl.fold (fun _ fs acc -> (fs, fs.rel) :: acc) ctl.files []
@@ -1569,8 +1584,7 @@ module Crash = struct
   let root ctl =
     match (ctl.admin, ctl.base) with
     | Some admin, Some (_, path) -> (admin, path)
-    | _ ->
-        invalid_arg "Eio_fs.Chaos.Crash.cut: the controller wraps no directory"
+    | _ -> err_not_wrapped ()
 
   (* A journal path as the model records it: root-relative, '/'-separated, ""
      for the root itself. A barrier names its directory in whatever spelling
@@ -1983,7 +1997,7 @@ module Crash = struct
       | Some (Dir _ as d) -> Some (kept_dir ~touched ~model segs d)
 
   and kept_dir ~touched ~model segs = function
-    | File _ | Link _ -> invalid_arg "Chaos.Crash: not a directory"
+    | File _ | Link _ -> err_base_not_dir ()
     | Dir d ->
         let names m = Paths.fold (fun name _ acc -> name :: acc) m [] in
         let model_names =
@@ -2095,8 +2109,7 @@ module Crash = struct
   let durable ctl =
     match (ctl.durable, ctl.snapshot) with
     | Some st, _ -> st
-    | None, None ->
-        invalid_arg "Eio_fs.Chaos.Crash.cut: the controller wraps no directory"
+    | None, None -> err_not_wrapped ()
     | None, Some snapshot ->
         let st =
           Chaos_journal.fold
@@ -2269,8 +2282,7 @@ module Crash = struct
      whose operation cuts the power often is. *)
   let do_crash ctl =
     if not ctl.crashed then begin
-      if Option.is_none ctl.base then
-        invalid_arg "Eio_fs.Chaos.Crash.cut: the controller wraps no directory";
+      if Option.is_none ctl.base then err_not_wrapped ();
       ctl.crashed <- true;
       ctl.queued <- [];
       Eio.Cancel.protect @@ fun () ->
@@ -2685,8 +2697,7 @@ module Crash = struct
                   fun key ->
                     let segs = path_segments key in
                     touched (tree_find tree segs) segs )
-            | File _ | Link _ ->
-                invalid_arg "Eio_fs.Chaos.Crash.wrap: base is not a directory")
+            | File _ | Link _ -> err_base_not_dir ())
       in
       restore_root ~stamp:ctl.set_times owner root_path tree;
       (* Each tracked file is rewritten where the image holds it, which a
@@ -3854,7 +3865,10 @@ module Crash = struct
 
   let v ?os ?(policy = Drop_unsynced) ?(trigger = Manual) ?(outside = Dropped)
       ?(block_size = 4096) ?(pause = ignore) () =
-    if block_size <= 0 then invalid_arg "Chaos.Crash.v: block_size <= 0";
+    if block_size <= 0 then
+      Fmt.invalid_arg
+        "Eio_fs.Chaos.Private.Crash.v: block_size is %d, must be positive"
+        block_size;
     let os =
       match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
     in
@@ -3897,7 +3911,8 @@ module Crash = struct
        and split the files' state between the two. *)
     if Option.is_some ctl.base then
       invalid_arg
-        "Eio_fs.Chaos.Crash.wrap: the controller already wraps a directory";
+        "Eio_fs.Chaos.Crash.wrap: t already wraps a directory, and a \
+         controller tracks one";
     let base = (base :> Eio.Fs.dir_ty r) in
     ctl.base <- Some (base, path);
     let proot = box_dir base in
