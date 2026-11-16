@@ -701,6 +701,46 @@ let met_no_fault st (op : Op.t) =
   if Hashtbl.length st.counts > 0 then
     List.iter (Hashtbl.remove st.counts) (targets op)
 
+(* The fault scenario [s] puts on [op]: a lasting fault from its point on, or
+   the next pending one placed at [op]. *)
+let scheduled_fault (s : Plan.check) ~on ~pending op =
+  match s.lasting with
+  | Some (l, p) ->
+      if Plan.at p op then on := true;
+      if !on then Option.map (fun c -> Fault.Fail c) (Plan.lasting_code l op)
+      else None
+  | None -> (
+      match List.partition (fun (p, _) -> Plan.at p op) !pending with
+      | (_, f) :: _, rest ->
+          pending := rest;
+          Some f
+      | [], _ -> None)
+
+(* Runs [setup] then [run] over a fresh base wrapped by [hook], on a disk
+   model when a fault of [s] evicts pages. *)
+let run_scenario ~halted ~os ~setup ~hook ~st run (s : Plan.check) =
+  match
+    in_loop ~halted @@ fun clock mono ->
+    st.mono <- Some mono;
+    let base = fresh ~os clock in
+    with_env clock mono base setup;
+    (* Pages a failed sync evicts read as the disk holds them, which the
+       model of the disk knows. *)
+    let base =
+      if List.exists (function _, Fault.Evict _ -> true | _ -> false) s.faults
+      then (M.Crash.wrap (M.Crash.v ~os ()) base :> Eio.Fs.dir_ty Eio.Path.t)
+      else base
+    in
+    let wrap d =
+      (M.wrap (M.Schedule.hook hook) d :> Eio.Fs.dir_ty Eio.Path.t)
+    in
+    match with_env ~wrap clock mono base run with
+    | () -> Passed
+    | exception x -> Raised x
+  with
+  | Ok o -> o
+  | Error o -> o
+
 let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
   let marked op =
     List.exists (fun (p, _) -> Plan.at p op) s.faults
@@ -723,24 +763,8 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
           mop.space)
       spaces;
     let fault =
-      match s.lasting with
-      | Some (l, p) ->
-          if Plan.at p op then on := true;
-          if !on then
-            Option.map (fun c -> Fault.Fail c) (Plan.lasting_code l op)
-          else None
-      | None -> (
-          match List.partition (fun (p, _) -> Plan.at p op) !pending with
-          | (_, f) :: _, rest ->
-              pending := rest;
-              Some f
-          | [], _ -> None)
-    in
-    let fault =
-      match fault with
-      | Some f ->
-          Option.map (fun m -> (f, m)) (model_fault ~space:mop.space op f)
-      | None -> None
+      Option.bind (scheduled_fault s ~on ~pending op) (fun f ->
+          Option.map (fun m -> (f, m)) (model_fault ~space:mop.space op f))
     in
     note trace (op, Option.map fst fault);
     match fault with
@@ -752,32 +776,7 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
         take_time st op;
         None
   in
-  let outcome =
-    match
-      in_loop ~halted @@ fun clock mono ->
-      st.mono <- Some mono;
-      let base = fresh ~os clock in
-      with_env clock mono base setup;
-      (* Pages a failed sync evicts read as the disk holds them, which the
-         model of the disk knows. *)
-      let base =
-        if
-          List.exists
-            (function _, Fault.Evict _ -> true | _ -> false)
-            s.faults
-        then (M.Crash.wrap (M.Crash.v ~os ()) base :> Eio.Fs.dir_ty Eio.Path.t)
-        else base
-      in
-      let wrap d =
-        (M.wrap (M.Schedule.hook hook) d :> Eio.Fs.dir_ty Eio.Path.t)
-      in
-      match with_env ~wrap clock mono base run with
-      | () -> Passed
-      | exception x -> Raised x
-    with
-    | Ok o -> o
-    | Error o -> o
-  in
+  let outcome = run_scenario ~halted ~os ~setup ~hook ~st run s in
   let outcome =
     match (!halted, st.hit) with
     | Some o, _ -> o
@@ -785,6 +784,83 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
     | None, None -> outcome
   in
   (trace, outcome)
+
+(* The scenario a replay's key [k] names, and its tier: a linear one, another
+   single fault, or a second fault a linear one's run allows. *)
+let replayed ~exec ~meets ~rng ~disk ~first linear k =
+  let find l = List.find_opt (fun s -> Plan.check_key s = k) l in
+  match find linear with
+  | Some s -> Some (s, Linear)
+  | None -> (
+      match find (List.filter meets (Plan.check_others first)) with
+      | Some s -> Some (s, Sampled)
+      | None ->
+          List.find_map
+            (fun (s : Plan.check) ->
+              match s.faults with
+              | [ one ]
+                when String.starts_with ~prefix:(Plan.check_key s ^ "+") k ->
+                  let r = fst (exec s) in
+                  let changed, rest =
+                    Plan.check_seconds ~rng one ~first:disk ~after:(kept r)
+                  in
+                  Option.map (fun s -> (s, Sampled)) (find (changed @ rest))
+              | _ -> None)
+            linear)
+
+(* The linear tier whole, then the sampled one: other single faults and the
+   best second faults the linear runs allowed, each class with its share of
+   the budget. *)
+let run_tiers name ~budget ~rng ~meets ~disk ~first ~attempt linear =
+  let n = List.length linear in
+  (* Evictions are linear runs the sampled tier does not grow with. *)
+  let n_share =
+    List.length
+      (List.filter
+         (fun (s : Plan.check) -> not (List.exists Plan.is_evict s.faults))
+         linear)
+  in
+  if n > budget then
+    fail name
+      "the linear tier needs %d runs, more than the budget of %d, and a check \
+       never passes on a partial one. Shrink the workload, or raise ~budget."
+      n budget;
+  let others, pick_others = Plan.check_others_sample ~keep:meets first in
+  let share classes = Plan.sampled_share ~budget ~linear:n_share ~classes in
+  (* The second faults each run allows, drawn as it ends, so no run's
+     operations outlive it: the best of each, round by round. *)
+  let sh = share (if others = 0 then 1 else 2) in
+  let best = Plan.Pairs.v sh in
+  List.iter
+    (fun (s : Plan.check) ->
+      let r = attempt Linear s in
+      match s.faults with
+      | [ one ] when not (Plan.is_evict one) ->
+          Plan.Pairs.add best
+            (Plan.check_seconds ~limit:sh ~rng one ~first:disk ~after:(kept r))
+      | _ -> ())
+    linear;
+  let pairs = Plan.Pairs.to_list best in
+  let classes =
+    List.filter
+      (fun (n, _) -> n > 0)
+      [ (others, pick_others rng); (List.length pairs, fun n -> take n pairs) ]
+  in
+  let share = share (List.length classes) in
+  List.iter
+    (fun (_, pick) ->
+      List.iter (fun s -> ignore (attempt Sampled s : record)) (pick share))
+    classes
+
+(* A scenario whose fault the operation never meets is none: an [ENOSPC] on
+   an operation that takes no space. *)
+let meets spaces (s : Plan.check) =
+  List.for_all
+    (fun (p, f) ->
+      match f with
+      | Fault.Fail `Enospc -> Hashtbl.find_opt spaces p <> Some false
+      | _ -> true)
+    s.faults
 
 let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let os = os_of os in
@@ -810,7 +886,6 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
     exec_check ~cap ~os ~first:(made first) ~setup run s
   in
   let again = kept (fst (exec ~cap:(n + 1) Plan.none)) in
-
   if again <> first then
     fail name
       "two runs with no fault made different operations (%s); the workload \
@@ -818,15 +893,7 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
       (diverge first again);
   let hash = digest first in
   let disk = Plan.Disk.v first in
-  (* A scenario whose fault the operation never meets is none. *)
-  let meets (s : Plan.check) =
-    List.for_all
-      (fun (p, f) ->
-        match f with
-        | Fault.Fail `Enospc -> Hashtbl.find_opt spaces p <> Some false
-        | _ -> true)
-      s.faults
-  in
+  let meets = meets spaces in
   let linear = List.filter meets (Plan.check_linear first) in
   let attempt ?matched tier s =
     let trace, out = exec s in
@@ -840,80 +907,15 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   | Some ((h, k) as r) -> (
       (* After a fix the first run may differ: the scenario is found by the
          operations it names, which its key carries. *)
-      let find l = List.find_opt (fun s -> Plan.check_key s = k) l in
-      let found =
-        match find linear with
-        | Some s -> Some (s, Linear)
-        | None -> (
-            match find (List.filter meets (Plan.check_others first)) with
-            | Some s -> Some (s, Sampled)
-            | None ->
-                List.find_map
-                  (fun (s : Plan.check) ->
-                    match s.faults with
-                    | [ one ]
-                      when String.starts_with ~prefix:(Plan.check_key s ^ "+") k
-                      ->
-                        let r = fst (exec s) in
-                        let changed, rest =
-                          Plan.check_seconds ~rng one ~first:disk
-                            ~after:(kept r)
-                        in
-                        Option.map
-                          (fun s -> (s, Sampled))
-                          (find (changed @ rest))
-                    | _ -> None)
-                  linear)
-      in
-      match found with
+      match replayed ~exec ~meets ~rng ~disk ~first linear k with
       | Some (s, tier) ->
           let matched = if h = hash then None else Some h in
           ignore (attempt ?matched tier s : record)
       | None -> no_longer name ~hash r)
   | None ->
-      let n = List.length linear in
-      (* Evictions are linear runs the sampled tier does not grow with. *)
-      let n_share =
-        List.length
-          (List.filter
-             (fun (s : Plan.check) -> not (List.exists Plan.is_evict s.faults))
-             linear)
-      in
-      if n > budget then
-        fail name
-          "the linear tier needs %d runs, more than the budget of %d, and a \
-           check never passes on a partial one. Shrink the workload, or raise \
-           ~budget."
-          n budget;
-      let others, pick_others = Plan.check_others_sample ~keep:meets first in
-      let share classes = Plan.sampled_share ~budget ~linear:n_share ~classes in
-      (* The second faults each run allows, drawn as it ends, so no run's
-         operations outlive it: the best of each, round by round. *)
-      let sh = share (if others = 0 then 1 else 2) in
-      let best = Plan.Pairs.v sh in
-      List.iter
-        (fun (s : Plan.check) ->
-          let r = attempt Linear s in
-          match s.faults with
-          | [ one ] when not (Plan.is_evict one) ->
-              Plan.Pairs.add best
-                (Plan.check_seconds ~limit:sh ~rng one ~first:disk
-                   ~after:(kept r))
-          | _ -> ())
-        linear;
-      let pairs = Plan.Pairs.to_list best in
-      let classes =
-        List.filter
-          (fun (n, _) -> n > 0)
-          [
-            (others, pick_others rng); (List.length pairs, fun n -> take n pairs);
-          ]
-      in
-      let share = share (List.length classes) in
-      List.iter
-        (fun (_, pick) ->
-          List.iter (fun s -> ignore (attempt Sampled s : record)) (pick share))
-        classes
+      run_tiers name ~budget ~rng ~meets ~disk ~first
+        ~attempt:(fun tier s -> attempt tier s)
+        linear
 
 (* {1 Crash} *)
 
@@ -1329,6 +1331,60 @@ module Crash = struct
             |> String.concat "\n            " );
     ]
 
+  (* The title of a failed run's report, and its error. *)
+  let error_text = function
+    | Workload o -> ("the workload failed.", outcome_text o)
+    | Recover o -> ("recover rejected what a cut left.", outcome_text o)
+    | Again x ->
+        ( "recover, run again after a cut during recovery, rejected what was \
+           left.",
+          exn_text x )
+
+  (* A state a cut allows, named by key [k] on top of a cut of the plan. *)
+  let state_of_cut cuts k =
+    match Plan.split_state_key k with
+    | None -> None
+    | Some (k', st) ->
+        Option.map
+          (fun (s : Plan.crash) -> ({ s with state = st }, Sampled))
+          (List.find_opt (fun s -> Plan.crash_key s = k') cuts)
+
+  (* A state drawn at random is one of a cut that allows more than two
+     states, which the check may not try one by one. *)
+  let drawn ~exec (s : Plan.crash) =
+    let more (st : Plan.state) =
+      Plan.next_choices (exec { s with state = st }).trail
+    in
+    match s.state with
+    | Seed _ | Shape _ -> (
+        match more (Enum []) with
+        | None -> false
+        | Some v -> Option.is_some (more (Enum v)))
+    | Drop | Keep | Enum _ -> true
+
+  (* The files [setup] makes, with their sizes. *)
+  let setup_files ~os ~setup =
+    match
+      in_loop (fun clock mono ->
+          let d = fresh ~os clock in
+          with_env clock mono d setup;
+          files d)
+    with
+    | Ok l -> l
+    | Error o -> fail name "setup failed: %s" (outcome_text o)
+
+  (* A shape is named by the choices its run made, which a replay makes
+     again. *)
+  let named (s : Plan.crash) (r : run) =
+    match s.state with
+    | Shape _ ->
+        {
+          s with
+          state =
+            Shape (List.rev_map (fun (c, n) -> if c < n then c else 0) r.trail);
+        }
+    | _ -> s
+
   let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run ~recover =
     let os = os_of os in
     let rng = Random.State.make [| seed |] in
@@ -1361,16 +1417,7 @@ module Crash = struct
         (diverge first_ops again);
     let hash = digest first_ops in
     let disk = Plan.Disk.v first_ops in
-    let sizes =
-      match
-        in_loop (fun clock mono ->
-            let d = fresh ~os clock in
-            with_env clock mono d setup;
-            files d)
-      with
-      | Ok l -> l
-      | Error o -> fail name "setup failed: %s" (outcome_text o)
-    in
+    let sizes = setup_files ~os ~setup in
     (* Whether recover looked at the directory in some run. *)
     let reads = ref (first.rtrace <> []) in
     let tears = Plan.tears ~sizes first_ops in
@@ -1380,32 +1427,12 @@ module Crash = struct
     let attempt ?matched tier s =
       incr runs;
       let r = exec s in
-      (* A shape is named by the choices it made, which a replay makes
-         again. *)
-      let s =
-        match s.state with
-        | Shape _ ->
-            {
-              s with
-              state =
-                Shape
-                  (List.rev_map (fun (c, n) -> if c < n then c else 0) r.trail);
-            }
-        | _ -> s
-      in
+      let s = named s r in
       if r.rtrace <> [] then reads := true;
       (match r.error with
       | None -> ()
       | Some e ->
-          let title, err =
-            match e with
-            | Workload o -> ("the workload failed.", outcome_text o)
-            | Recover o -> ("recover rejected what a cut left.", outcome_text o)
-            | Again x ->
-                ( "recover, run again after a cut during recovery, rejected \
-                   what was left.",
-                  exn_text x )
-          in
+          let title, err = error_text e in
           report name ~title ~tier ~hash ~key:(Plan.crash_key s) ~matched
             ~trace:r.trace ~error:err (lines s r));
       r
@@ -1446,33 +1473,12 @@ module Crash = struct
             candidates
         in
         let found =
-          match found with
-          | Some _ -> found
-          | None -> (
-              (* A state a cut allows, named on top of a cut of the plan. *)
-              match Plan.split_state_key k with
-              | Some (k', st) -> (
-                  match List.find_opt (fun s -> Plan.crash_key s = k') cuts with
-                  | Some s -> Some ({ s with state = st }, Sampled)
-                  | None -> None)
-              | None -> None)
+          match found with Some _ -> found | None -> state_of_cut cuts k
         in
-        (* A state drawn at random is one of a cut that allows more than two
-           states, which the check may not try one by one, by a seed below a
-           fourth of the budget. *)
-        let drawn (s : Plan.crash) =
-          let more (st : Plan.state) =
-            Plan.next_choices (exec { s with state = st }).trail
-          in
-          match s.state with
-          | Seed _ | Shape _ -> (
-              match more (Enum []) with
-              | None -> false
-              | Some v -> Option.is_some (more (Enum v)))
-          | Drop | Keep | Enum _ -> true
-        in
+        (* A state drawn at random is drawn by a seed below a fourth of the
+           budget. *)
         match found with
-        | Some (s, _) when not (drawn s && (exec s).allowed) ->
+        | Some (s, _) when not (drawn ~exec s && (exec s).allowed) ->
             no_longer name ~hash r
         | Some ({ state = Seed n; _ }, _) when n >= budget / 4 ->
             let need = 4 * (n + 1) in
