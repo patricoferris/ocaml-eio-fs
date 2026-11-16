@@ -2275,27 +2275,6 @@ module Crash = struct
     snap ctl st;
     reset_journal ctl
 
-  (* Whether the model holds a change at a path below the root: an entry of
-     the journal names it ([~committed] counts the committed ones, which a
-     crash replays over the snapshot too), or a file there has unsynced
-     writes. *)
-  let touched ?(committed = false) ctl =
-    let root = root_segs ctl in
-    let paths = Hashtbl.create 16 in
-    Ids.iter
-      (fun _ e ->
-        if committed || not e.committed then
-          List.iter (fun segs -> Hashtbl.replace paths segs ()) e.paths)
-      ctl.journal;
-    Hashtbl.iter
-      (fun _ (fs : fstate) ->
-        if fs.pending <> [] then
-          Option.iter
-            (fun segs -> Hashtbl.replace paths segs ())
-            (tree_path ~root fs.rel))
-      ctl.files;
-    Hashtbl.mem paths
-
   (* The proper prefixes of [segs], outermost first: the directories above
      the entry it names. *)
   let above segs =
@@ -2307,100 +2286,42 @@ module Crash = struct
     in
     go [] [] segs
 
-  (* [node], read from the store at [segs], with what the model holds at each
-     path below it that it holds a change for. *)
-  let rec prune ~touched ~model segs node =
-    match node with
-    | File _ | Link _ -> Some node
-    | Dir d ->
-        let entries =
-          Paths.fold
-            (fun name child acc ->
-              let segs = segs @ [ name ] in
-              let child =
-                if touched segs then tree_find model segs
-                else prune ~touched ~model segs child
-              in
-              match child with
-              | Some c -> Paths.add name c acc
-              | None -> Paths.remove name acc)
-            d.entries d.entries
-        in
-        Some (Dir { d with entries })
-
-  (* Under [Kept], the store at a path the model holds no change for is the
-     outside writers', durable as they leave it. [adopt ctl paths] runs
-     before the wrapper changes [paths]: the entry the store holds at each
-     such path, and each directory above it the snapshot lacks, enter the
-     snapshot, so that the wrapper's own change starts from what the store
-     held there, and a barrier on a directory an outside writer made commits
-     what the wrapper put in it. *)
-  let adopt ctl paths =
-    match (ctl.outside, ctl.snapshot) with
-    | Dropped, _ | Kept, None -> ()
-    | Kept, Some _ ->
-        let owner, root_path = root ctl in
-        let root = path_segments root_path in
-        let touched = touched ~committed:true ctl in
-        let (Base_dir ((module B), bv)) = owner in
-        let at segs = Eio_fs_path.append root_path (String.concat "/" segs) in
-        List.iter
-          (fun path ->
-            match tree_path ~root path with
-            | None | Some [] -> ()
-            | Some segs when touched segs -> ()
-            | Some segs ->
-                let st = Option.get ctl.snapshot in
-                let dir st pre =
-                  match tree_find st.tree pre with
-                  | Some _ -> st
-                  | None -> (
-                      if touched pre then st
-                      else
-                        match B.stat bv ~follow:false (at pre) with
-                        | { kind = `Directory; perm; uid; gid; ino; _ } as s ->
-                            set_node st pre
-                              (Some
-                                 (Dir
-                                    {
-                                      perm;
-                                      uid;
-                                      gid;
-                                      ino;
-                                      times = times_of s;
-                                      entries = Paths.empty;
-                                    }))
-                        | _ | (exception Eio.Io _) -> st)
-                in
-                let st = List.fold_left dir st (above segs) in
-                let node =
-                  match snapshot_at owner path with
-                  | node -> prune ~touched ~model:st.tree segs node
-                  | exception e when is_gone e -> None
-                in
-                let st = set_node st segs node in
-                ctl.snapshot <- Some st;
-                ctl.durable <- None;
-                Option.iter
-                  (fun node ->
-                    ctl.snapped <-
-                      fold_nodes
-                        (fun segs n acc ->
-                          match n with
-                          | File f ->
-                              Inos.add f.ino
-                                ("/" ^ String.concat "/" segs, f.data)
-                                acc
-                          | _ -> acc)
-                        segs node ctl.snapped)
-                  node)
-          paths
+  (* [touched ctl node segs] is whether the model holds a change at the path
+     [segs] below the root, or for the [node] the store holds there: an entry of the journal ([~committed]
+     counts the committed ones, which a crash replays over the snapshot too)
+     names the path or a directory above it, or makes, moves or changes the
+     attributes of the node, wherever a later rename took it; or a file there
+     has unsynced writes. *)
+  let touched ?(committed = false) ctl =
+    let root = root_segs ctl in
+    let paths = Hashtbl.create 16 and inos = Hashtbl.create 16 in
+    Ids.iter
+      (fun _ e ->
+        if committed || not e.committed then begin
+          List.iter (fun segs -> Hashtbl.replace paths segs ()) e.paths;
+          List.iter (fun ino -> Hashtbl.replace inos ino ()) (e.nodes @ moved e);
+          Option.iter (fun ino -> Hashtbl.replace inos ino ()) e.attrs_ino
+        end)
+      ctl.journal;
+    Hashtbl.iter
+      (fun _ (fs : fstate) ->
+        if fs.pending <> [] then
+          Option.iter
+            (fun segs -> Hashtbl.replace paths segs ())
+            (tree_path ~root fs.rel))
+      ctl.files;
+    fun node segs ->
+      Hashtbl.mem paths segs
+      || List.exists (Hashtbl.mem paths) (above segs)
+      || Option.fold ~none:false
+           ~some:(fun n -> Hashtbl.mem inos (ino_of n))
+           node
 
   (* The image under [Kept]: at a path the model holds a change for, what
      [model] holds there; at any other, what the store holds once the outside
      writers have stopped. *)
   let rec kept_entry ~touched ~model segs store =
-    if touched segs then tree_find model segs
+    if touched store segs then tree_find model segs
     else
       match store with
       | None | Some (File _ | Link _) -> store
@@ -2433,11 +2354,80 @@ module Crash = struct
         let times =
           match tree_find model segs with
           | Some (Dir m)
-            when List.exists (fun name -> touched (segs @ [ name ])) all ->
+            when List.exists (fun name -> touched None (segs @ [ name ])) all ->
               m.times
           | Some _ | None -> d.times
         in
         Dir { d with entries; times }
+
+  (* Under [Kept], the store at a path the model holds no change for is the
+     outside writers', durable as they leave it. [adopt ctl paths] runs
+     before the wrapper changes [paths]: the entry the store holds at each
+     such path, with what the model holds below it where it holds a change,
+     and each directory above it the snapshot lacks, enter the snapshot, so
+     that the wrapper's own change starts from what the store
+     held there, and a barrier on a directory an outside writer made commits
+     what the wrapper put in it. *)
+  let adopt ctl paths =
+    match (ctl.outside, ctl.snapshot) with
+    | Dropped, _ | Kept, None -> ()
+    | Kept, Some _ ->
+        let owner, root_path = root ctl in
+        let root = path_segments root_path in
+        let touched = touched ~committed:true ctl in
+        let (Base_dir ((module B), bv)) = owner in
+        let at segs = Eio_fs_path.append root_path (String.concat "/" segs) in
+        List.iter
+          (fun path ->
+            match tree_path ~root path with
+            | None | Some [] -> ()
+            | Some segs when touched None segs -> ()
+            | Some segs ->
+                let st = Option.get ctl.snapshot in
+                let dir st pre =
+                  match tree_find st.tree pre with
+                  | Some _ -> st
+                  | None -> (
+                      if touched None pre then st
+                      else
+                        match B.stat bv ~follow:false (at pre) with
+                        | { kind = `Directory; perm; uid; gid; ino; _ } as s ->
+                            set_node st pre
+                              (Some
+                                 (Dir
+                                    {
+                                      perm;
+                                      uid;
+                                      gid;
+                                      ino;
+                                      times = times_of s;
+                                      entries = Paths.empty;
+                                    }))
+                        | _ | (exception Eio.Io _) -> st)
+                in
+                let st = List.fold_left dir st (above segs) in
+                let node =
+                  match snapshot_at owner path with
+                  | node -> kept_entry ~touched ~model:st.tree segs (Some node)
+                  | exception e when is_gone e -> None
+                in
+                let st = set_node st segs node in
+                ctl.snapshot <- Some st;
+                ctl.durable <- None;
+                Option.iter
+                  (fun node ->
+                    ctl.snapped <-
+                      fold_nodes
+                        (fun segs n acc ->
+                          match n with
+                          | File f ->
+                              Inos.add f.ino
+                                ("/" ^ String.concat "/" segs, f.data)
+                                acc
+                          | _ -> acc)
+                        segs node ctl.snapped)
+                  node)
+          paths
 
   (* How the entry that made [ino] put it: where, as what, and the files it
      recorded below it. *)
@@ -3514,8 +3504,11 @@ module Crash = struct
             let touched = touched ctl in
             match snapshot_at owner root_path with
             | Dir _ as d ->
-                ( kept_dir ~touched ~model:tree [] d,
-                  fun key -> touched (path_segments key) )
+                let tree = kept_dir ~touched ~model:tree [] d in
+                ( tree,
+                  fun key ->
+                    let segs = path_segments key in
+                    touched (tree_find tree segs) segs )
             | File _ | Link _ ->
                 invalid_arg "Chaos.Crash: wrapped root is not a directory")
       in

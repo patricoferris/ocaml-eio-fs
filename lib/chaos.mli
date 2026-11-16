@@ -339,10 +339,11 @@ module Crash : sig
       from a process the workload started, is kept by a cut as durable, as a
       process that syncs its own writes leaves it: the wrapper sees no other
       process's syncs, so what a test checks is the wrapper's writes, with the
-      others' kept. At a path the wrapper changed, the policy decides, starting
-      from what [base] held there when the wrapper first changed it, and a
-      barrier on a directory another process made commits what the wrapper put
-      in it. Stop those processes before calling {!cut}.
+      others' kept. At or below a path the wrapper changed, and at an entry it
+      changed wherever a rename took it, the policy decides, starting from what
+      [base] held there when the wrapper first changed it, and a barrier on a
+      directory another process made commits what the wrapper put in it. Stop
+      those processes before calling {!cut}.
 
       @raise Invalid_argument if [t] is already wrapped. *)
 

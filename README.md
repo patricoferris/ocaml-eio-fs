@@ -213,8 +213,13 @@ assert (
 ### What a pass tells you
 
 A power-cut check models ext4 with `data=writeback`: unsynced writes may be
-lost, and directory changes reach the disk in program order. With
-`~os:`Macos` it models APFS on a drive with a cache: `fsync`, as
+lost, and the changes to a directory reach the disk in program order. A sync
+of a directory makes its own changes durable, a rename into or out of it
+whole, and the earlier changes to each directory they touch, but not the
+other changes ext4 commits with it: a program that relies on those fails,
+as it would where only POSIX holds.
+
+With `~os:`Macos` it models APFS on a drive with a cache: `fsync`, as
 `Eio.File.sync` and the portable barriers of `Eio_fs_sync` issue it, stops in
 that cache and alone makes nothing durable, while `Eio_fs_unix.sync_file`,
 `Eio_fs_unix.sync_dir` and `Eio_fs_unix.barrier` are `F_FULLFSYNC` and do.
