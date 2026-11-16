@@ -658,19 +658,26 @@ let append fs m path more =
   Model.write m path (Model.contents m path ^ more)
 
 (* Seek into the file [path] at an offset picked by [k] and write [data] there,
-   unsynced. *)
+   unsynced. An empty write seeks up to eight bytes past the end, where it
+   changes nothing. *)
 let write_at fs m path k data =
   let old = Model.contents m path in
-  let at = k mod (String.length old + 1) in
-  Eio.Path.with_open_out ~create:`Never (fs / path) (fun file ->
-      ignore (Eio.File.seek file (i63 at) `Set : Optint.Int63.t);
-      Eio.Flow.copy_string data file);
-  let tail_at = at + String.length data in
-  let tail =
-    if tail_at >= String.length old then ""
-    else String.sub old tail_at (String.length old - tail_at)
-  in
-  Model.write m path (String.sub old 0 at ^ data ^ tail)
+  if data = "" then
+    Eio.Path.with_open_out ~create:`Never (fs / path) (fun file ->
+        let past = String.length old + (k mod 8) + 1 in
+        ignore (Eio.File.seek file (i63 past) `Set : Optint.Int63.t);
+        ignore (Eio.Flow.single_write file [ Cstruct.empty ] : int))
+  else
+    let at = k mod (String.length old + 1) in
+    Eio.Path.with_open_out ~create:`Never (fs / path) (fun file ->
+        ignore (Eio.File.seek file (i63 at) `Set : Optint.Int63.t);
+        Eio.Flow.copy_string data file);
+    let tail_at = at + String.length data in
+    let tail =
+      if tail_at >= String.length old then ""
+      else String.sub old tail_at (String.length old - tail_at)
+    in
+    Model.write m path (String.sub old 0 at ^ data ^ tail)
 
 (* One tape step: four bytes pick an operation and its arguments. Picks that
    do not apply to the current tree (unlink with nothing to unlink, mkdir over
@@ -752,7 +759,8 @@ let apply_op fs ctl (m : Model.t) b0 b1 b2 b3 =
       (* seek into a file and write there, unsynced *)
       match pick (files m) b1 with
       | None -> ()
-      | Some path -> write_at fs m path b2 (Fmt.str "s%d" b3))
+      | Some path ->
+          write_at fs m path b2 (if b3 mod 8 = 0 then "" else Fmt.str "s%d" b3))
   | 8 ->
       (* the barrier on every directory *)
       Crash.sync_metadata ctl;
