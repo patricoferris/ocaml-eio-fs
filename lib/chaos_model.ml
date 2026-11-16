@@ -606,6 +606,7 @@ let ro_handler =
     @ [
         Eio.Resource.H (Eio_fs_sync.File_sync, sync_ro);
         Eio.Resource.H (Sync_failed, fun t ~evict -> sync_failed ~evict t.ro);
+        Eio.Resource.H (Eio_fs_internal.Base_file, fun t -> t.ro);
       ])
 
 let wrap_ro sched ~path base : Eio.File.ro_ty r =
