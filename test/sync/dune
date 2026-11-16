@@ -12,8 +12,3 @@
   optint
   alcotest
   unix))
-
-(mdx
- (package eio-fs)
- (files sparse-typing.md)
- (libraries eio-fs.sync eio cstruct))

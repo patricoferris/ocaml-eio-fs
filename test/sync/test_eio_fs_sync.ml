@@ -12,6 +12,19 @@ let contains ~affix s =
 
 let config max_bytes = Eio_fs_sync.config ~max_bytes ()
 
+(* A sparse publication takes the bounded publisher's config and its
+   exclusive mode, and its extents as offsets with their bytes. *)
+let _ :
+    config:Eio_fs_sync.config ->
+    ?mode:[ `Replace | `Exclusive ] ->
+    ?rename:Eio_fs_sync.Rename.t ->
+    ?tmp:'a Eio.Path.t ->
+    size_bytes:int64 ->
+    'a Eio.Path.t ->
+    (int64 * Cstruct.t) list ->
+    unit =
+  Eio_fs_sync.publish_sparse
+
 (* The in-memory backend registers its barrier (a no-op: volatile storage has
    nothing to sync), so the portable entry points work unchanged over it. *)
 let test_registered_backend () =

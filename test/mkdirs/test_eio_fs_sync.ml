@@ -11,6 +11,16 @@ module Crash = Eio_fs.Chaos.Private.Crash
 
 let ( / ) = Eio.Path.( / )
 
+(* The caller lends the directory and the creation mode; [exists_ok] accepts
+   an existing target, which is barriered too. *)
+let _ :
+    ?exists_ok:bool ->
+    ?barrier:Eio_fs_sync.Barrier.t ->
+    perm:Eio.File.Unix_perm.t ->
+    Eio.Fs.dir_ty Eio.Path.t ->
+    unit =
+  Eio_fs_sync.mkdirs
+
 let with_crash ctl fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env -> fn (Crash.wrap ctl env#fs)

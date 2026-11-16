@@ -1,9 +1,3 @@
-; Native crash regressions and the typing specification use the same public API.
-
 (test
  (name test)
  (libraries eio eio.mock eio_main eio_fs eio-fs.sync eio-fs.unix alcotest))
-
-(mdx
- (files typing.md)
- (libraries eio-fs.sync eio eio.core))

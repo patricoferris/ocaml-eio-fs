@@ -129,13 +129,17 @@ let () =
   | [ _; arg; path ] when String.equal arg exit_holding_arg -> exit_holding path
   | [ _; arg; gate; path ] when String.equal arg gated_taker_arg ->
       gated_taker gate path
+  | [ _; arg ] when String.equal arg Holder.owner_arg ->
+      Holder.shared_lease_outlives_its_owner ()
   | [ _; arg ] when String.equal arg lease_test_arg ->
       Sys.argv.(1) <- "test";
-      Alcotest.run "eio-fs.unix.lease" [ Test_eio_fs_unix.lease_suite ]
+      Alcotest.run "eio-fs.unix.lease" [ Test_lease.lease_suite ]
   | _ ->
       Alcotest.run "eio-fs.unix"
         [
           Test_eio_fs_unix.suite;
+          Test_lock.suite;
+          Test_lease.suite;
           Test_link.suite;
           Test_batch.suite;
           Test_inline.suite;
