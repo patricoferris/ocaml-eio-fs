@@ -1247,9 +1247,6 @@ module Plant_after_stat = struct
   let chown ~follow ?uid ?gid t path =
     Eio.Path.chown ~follow ?uid ?gid (at t path)
 
-  (* TODO: drop the attribute when Eio 1.7, whose [Pi.DIR] has [sync_dir], is
-     released, and call [Eio.Path.sync_dir]. *)
-  let sync_dir t path = Eio_fs_sync.sync_dir (at t path) [@@warning "-32"]
   let native t path = Eio.Path.native (at t path)
   let pp f _ = Format.pp_print_string f "plant-after-stat"
 
@@ -1505,9 +1502,6 @@ module Slow_open = struct
   let chown ~follow ?uid ?gid t path =
     Eio.Path.chown ~follow ?uid ?gid (at t path)
 
-  (* TODO: drop the attribute when Eio 1.7, whose [Pi.DIR] has [sync_dir], is
-     released, and call [Eio.Path.sync_dir]. *)
-  let sync_dir t path = Eio_fs_sync.sync_dir (at t path) [@@warning "-32"]
   let native t path = Eio.Path.native (at t path)
   let pp f _ = Format.pp_print_string f "slow-open"
   let open_subtree _ ~sw:_ _ = failwith "Slow_open: the lock opens no subtree"
@@ -1687,9 +1681,6 @@ module Hide_descriptors = struct
   let chown ~follow ?uid ?gid t path =
     Eio.Path.chown ~follow ?uid ?gid (at t path)
 
-  (* TODO: drop the attribute when Eio 1.7, whose [Pi.DIR] has [sync_dir], is
-     released, and call [Eio.Path.sync_dir]. *)
-  let sync_dir t path = Eio_fs_sync.sync_dir (at t path) [@@warning "-32"]
   let native t path = Eio.Path.native (at t path)
   let pp f _ = Format.pp_print_string f "hide-descriptors"
 
