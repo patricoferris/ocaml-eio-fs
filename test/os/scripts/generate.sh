@@ -13,6 +13,11 @@ command -v docker >/dev/null || { echo "docker not on PATH" >&2; exit 1; }
 out="$(cd "$(dirname "$1")" && pwd)/$(basename "$1")"
 record="$(cd "$(dirname "$2")" && pwd)/$(basename "$2")"
 src="${DUNE_SOURCEROOT:?run through dune: REGEN=1 dune build @regen-traces}"
+# The switch dune builds the recorder in; Linux installs the same eio_posix.
+switch="${OPAM_SWITCH_PREFIX:?run in an opam switch}"
+pkg=("$switch"/.opam-switch/packages/eio_posix.*)
+[ -d "${pkg[0]}" ] || { echo "eio_posix is not installed in $switch" >&2; exit 1; }
+eio="${pkg[0]##*/eio_posix.}"
 image="ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460"
 
 scripts=(test/os/scripts test/os/seq)
@@ -39,7 +44,7 @@ docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:ex
     echo '(lang dune 3.0)' >~/rec/dune-project
     cd ~/rec
     opam update -y >/dev/null
-    opam install -y eio_posix fmt cstruct optint >/dev/null
+    opam install -y eio_posix.$eio fmt cstruct optint >/dev/null
     opam exec -- dune build ./scripts/record.exe
     mkdir /work/linux /work/case && cd /work/linux
     ~/rec/_build/default/scripts/record.exe >/out/linux.csv
@@ -56,7 +61,6 @@ docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:ex
 
 macos_os="$(sw_vers -productName) $(sw_vers -productVersion), $(uname -srm)"
 macos_user="uid $(id -u), groups $(id -G)"
-macos_eio="$(opam show -f installed-version eio_posix)"
 {
   printf '# %s: %s\n' \
     script test/os/scripts/generate.sh \
@@ -67,7 +71,7 @@ macos_eio="$(opam show -f installed-version eio_posix)"
     "macos filesystem" "${mount_opts%%,*}, $case_" \
     "macos mount" "$mount_opts" \
     "macos user" "$macos_user" \
-    "macos eio_posix" "$macos_eio"
+    "macos eio_posix" "$eio"
   cat "$work/out/linux.meta"
   "$record" merge "$work/out/linux.csv" "$work/out/macos.csv"
 } >"$out"

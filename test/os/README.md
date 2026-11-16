@@ -13,7 +13,9 @@ On macOS, with Docker running:
 
 `scripts/generate.sh` records macOS natively in `$TMPDIR` and Linux in the
 Docker image it pins by digest, on a tmpfs, both as an ordinary user with a
-supplementary group. dune promotes the result into `traces/fs.csv`.
+supplementary group. Both run the eio_posix of the opam switch dune builds in:
+Linux installs that version in the image. dune promotes the result into
+`traces/fs.csv`.
 
 ## Provenance
 
@@ -30,7 +32,7 @@ The trace starts with `# key: value` lines, written by `generate.sh`:
 | `macos filesystem`, `linux filesystem` | the type, and whether a name's case matters |
 | `macos mount`, `linux mount` | the mount options |
 | `macos user`, `linux user` | uid and groups |
-| `macos eio_posix`, `linux eio_posix` | the eio_posix version in the opam switch that built the recorder |
+| `macos eio_posix`, `linux eio_posix` | the eio_posix version the recorder was built with |
 
 The `trace` test fails when a line is missing, when the digest is not that of
 the current `record.ml` and `os_seq.ml` (the code that decides every outcome),
