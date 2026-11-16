@@ -19,12 +19,10 @@ type env =
   ; cwd : Eio.Fs.dir_ty Eio.Path.t
   ; clock : float Eio.Time.clock_ty Eio.Resource.t
   ; mono_clock : Eio.Time.Mono.ty Eio.Resource.t >
-(** The type for what a workload runs with, as [Eio_main] gives it: the root of
-    a fresh in-memory filesystem as [fs], the same directory as [cwd], confined
-    to itself as eio_posix confines a process's (an absolute path or link and a
-    [".."] above it are refused with [Permission_denied]), and the run's clocks.
-    [Eio_net_chaos.env] has the same shape, with [net] in place of [fs] and
-    [cwd]. *)
+(** The type for what a workload runs with: the root of a fresh in-memory
+    filesystem as [fs], the same directory as [cwd], confined to itself as
+    eio_posix confines a process's (an absolute path or link and a [".."] above
+    it are refused with [Permission_denied]), and the run's clocks. *)
 
 (** {1:checks Checks} *)
 
@@ -200,38 +198,41 @@ module Crash : sig
       builds it from a controller. A particular state a cut may leave is pinned
       with [~replay] rather than built by hand. *)
 
-  (** The type for the kinds of unsynced change. *)
-  type op_kind =
-    | Data  (** A write; its offset and length locate it. *)
-    | Truncate  (** A truncation; its offset is the new length. *)
-    | Create  (** The open that created the file. *)
-    | Mkdir  (** A new directory. *)
-    | Unlink  (** A removed file or symbolic link. *)
-    | Rmdir  (** A removed directory. *)
-    | Symlink of { target : string }  (** A new symbolic link to [target]. *)
-    | Rename of { dest : string }  (** An entry moved to [dest]. *)
-    | Chmod of { perm : int }  (** A new mode. *)
-    | Chown of { uid : int64; gid : int64 }  (** A new owner. *)
+  (** The changes no sync has made durable. *)
+  module Unsynced : sig
+    (** The type for the kinds of unsynced change. *)
+    type kind =
+      | Data  (** A write; its offset and length locate it. *)
+      | Truncate  (** A truncation; its offset is the new length. *)
+      | Create  (** The open that created the file. *)
+      | Mkdir  (** A new directory. *)
+      | Unlink  (** A removed file or symbolic link. *)
+      | Rmdir  (** A removed directory. *)
+      | Symlink of { target : string }  (** A new symbolic link to [target]. *)
+      | Rename of { dest : string }  (** An entry moved to [dest]. *)
+      | Chmod of { perm : int }  (** A new mode. *)
+      | Chown of { uid : int64; gid : int64 }  (** A new owner. *)
 
-  type unsynced = {
-    path : string;
-        (** The path of the change when it was made: for a write or a
-            truncation, the file's path then, with its links resolved; for a
-            directory change, the path as given. A later rename does not change
-            it. *)
-    kind : op_kind;  (** What the change is. *)
-    file_offset : int;
-        (** The byte offset of a {!Data} write, the new length of a {!Truncate},
-            and [0] for a directory operation. *)
-    length : int;
-        (** The byte length of a {!Data} write, and [0] for a {!Truncate} or a
-            directory operation. *)
-    seq : int;  (** The change's place in program order. *)
-  }
-  (** The type for changes no sync has made durable. *)
+    type t = {
+      path : string;
+          (** The path of the change when it was made: for a write or a
+              truncation, the file's path then, with its links resolved; for a
+              directory change, the path as given. A later rename does not
+              change it. *)
+      kind : kind;  (** What the change is. *)
+      file_offset : int;
+          (** The byte offset of a {!Data} write, the new length of a
+              {!Truncate}, and [0] for a directory operation. *)
+      length : int;
+          (** The byte length of a {!Data} write, and [0] for a {!Truncate} or a
+              directory operation. *)
+      seq : int;  (** The change's place in program order. *)
+    }
+    (** The type for unsynced changes. *)
 
-  val pp_unsynced : unsynced Fmt.t
-  (** [pp_unsynced] formats a change for logs and reports. *)
+    val pp : t Fmt.t
+    (** [pp] formats a change for logs and reports. *)
+  end
 
   (** The type for how a cut rebuilds the disk. *)
   type policy =
@@ -239,7 +240,7 @@ module Crash : sig
         (** Every unsynced write and every uncommitted directory change is lost:
             the state at the last syncs, with the truncations made before a
             committed directory change. *)
-    | Survive of (unsynced -> bool)
+    | Survive of (Unsynced.t -> bool)
         (** The writes for which the predicate holds survive, whole but for the
             sectors they overwrite, which hold every earlier overwrite of
             theirs, and, if they change the length, only with every directory
@@ -272,7 +273,7 @@ module Crash : sig
 
       @raise Invalid_argument if [t] is already wrapped. *)
 
-  val unsynced : t -> unsynced list
+  val unsynced : t -> Unsynced.t list
   (** [unsynced t] is the changes not yet durable, in program order. *)
 
   val cut : t -> Eio.Fs.dir_ty Eio.Path.t
@@ -306,9 +307,9 @@ module Op : sig
   type kind =
     [ `Open_read  (** An open for reading, of a file or a directory. *)
     | `Open_write  (** An open that may write or create the file. *)
-    | `Stat
+    | `Stat  (** A stat, of a path or of an open file. *)
     | `Read  (** A read of a file's bytes. *)
-    | `Read_dir
+    | `Read_dir  (** A listing of a directory's entries. *)
     | `Write  (** A write of a file's bytes. *)
     | `Truncate  (** A truncation of a file; [file_offset] is its new length. *)
     | `Sync  (** A sync of a file or of a directory. *)

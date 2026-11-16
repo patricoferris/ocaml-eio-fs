@@ -914,29 +914,32 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
 (* {1 Crash} *)
 
 module Crash = struct
-  type op_kind = M.Crash.op_kind =
-    | Data
-    | Truncate
-    | Create
-    | Mkdir
-    | Unlink
-    | Rmdir
-    | Symlink of { target : string }
-    | Rename of { dest : string }
-    | Chmod of { perm : int }
-    | Chown of { uid : int64; gid : int64 }
+  module Unsynced = struct
+    type kind = M.Crash.op_kind =
+      | Data
+      | Truncate
+      | Create
+      | Mkdir
+      | Unlink
+      | Rmdir
+      | Symlink of { target : string }
+      | Rename of { dest : string }
+      | Chmod of { perm : int }
+      | Chown of { uid : int64; gid : int64 }
 
-  type unsynced = M.Crash.unsynced = {
-    path : string;
-    kind : op_kind;
-    file_offset : int;
-    length : int;
-    seq : int;
-  }
+    type t = M.Crash.unsynced = {
+      path : string;
+      kind : kind;
+      file_offset : int;
+      length : int;
+      seq : int;
+    }
 
-  let pp_unsynced = M.Crash.pp_unsynced
+    let pp = M.Crash.pp_unsynced
+  end
 
-  type policy = Drop_unsynced | Survive of (unsynced -> bool)
+  type unsynced = Unsynced.t
+  type policy = Drop_unsynced | Survive of (Unsynced.t -> bool)
   type t = M.Crash.t
 
   (* A controller built by hand may wrap a directory other processes write,

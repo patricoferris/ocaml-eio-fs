@@ -165,9 +165,9 @@ let named_when_made () =
   P.rename P.(fs / "d") P.(fs / "e");
   let changes =
     List.filter_map
-      (fun (u : Crash.unsynced) ->
+      (fun (u : Crash.Unsynced.t) ->
         match u.kind with
-        | Data | Truncate -> Fmt.kstr Option.some "%a" Crash.pp_unsynced u
+        | Data | Truncate -> Fmt.kstr Option.some "%a" Crash.Unsynced.pp u
         | _ -> None)
       (Crash.unsynced t)
   in
