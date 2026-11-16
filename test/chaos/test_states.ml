@@ -257,6 +257,33 @@ let length_order ~mkdir_first ~hole () =
       if grown && not (P.is_directory P.(env#fs / "d")) then
         failwith "f grown without d")
 
+(* [f] truncated to [len] before [e/d] is made, or after unless
+   [truncate_first], with no sync but, with [barrier], one on [e]: ext4
+   journals a truncation in the syscall's own handle, so a cut that keeps
+   [d] made after it keeps it. *)
+let truncate_order ~truncate_first ~barrier ~len () =
+  Eio_fs.Chaos.Crash.check
+    ~setup:(fun env ->
+      P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "abcdef";
+      P.mkdir ~perm:0o755 P.(env#fs / "e"))
+    (fun ~ack:_ env ->
+      try
+        let truncate () =
+          P.with_open_out ~create:`Never P.(env#fs / "f") @@ fun f ->
+          Eio.File.truncate f (Optint.Int63.of_int len)
+        in
+        if truncate_first then truncate ();
+        P.mkdir ~perm:0o755 P.(env#fs / "e" / "d");
+        if barrier then Eio_fs_sync.sync_dir P.(env#fs / "e");
+        if not truncate_first then truncate ()
+      with Eio.Io _ -> ())
+    ~recover:(fun ~acked:_ env ->
+      if
+        P.is_directory P.(env#fs / "e" / "d")
+        && String.length (P.load P.(env#fs / "f")) <> len
+      then failwith "d without the truncation")
+
+
 (* A new page with no sync: its first sector stale under the written ones.
    The cut's first state drops the file, and the states that vary the first
    sector come last one by one, past what the check enumerates. *)
@@ -459,6 +486,26 @@ let suite =
                 "error" "Failure(\"f grown without d\")"
                 (Expect.field "error" m))
             [ false; true ]);
+      Alcotest.test_case "a truncation lands with the changes after it" `Quick
+        (fun () ->
+          List.iter
+            (fun (barrier, len) ->
+              Expect.passes
+                (truncate_order ~truncate_first:true ~barrier ~len)
+                ())
+            [ (false, 0); (false, 8192); (true, 0); (true, 8192) ]);
+      Alcotest.test_case "a truncation may land after the changes before it"
+        `Quick (fun () ->
+          List.iter
+            (fun len ->
+              let m =
+                Expect.report
+                  (truncate_order ~truncate_first:false ~barrier:false ~len)
+              in
+              Alcotest.(check string)
+                "error" "Failure(\"d without the truncation\")"
+                (Expect.field "error" m))
+            [ 0; 8192 ]);
       Alcotest.test_case "a stale first sector of a large new page is reached"
         `Quick (fun () ->
           let m = Expect.report stale_first in
