@@ -41,9 +41,13 @@ external lock_range_native : Unix.file_descr -> int -> int -> int -> unit
 external range_holder_native : Unix.file_descr -> int -> int -> int
   = "caml_eio_fs_range_holder"
 
+(* Another process's conflicting lock fails F_SETLK with EAGAIN or EACCES,
+   as POSIX allows either. *)
 let lock_range fd kind ~file_offset ~length =
   let kind = match kind with `Read -> 0 | `Write -> 1 | `Unlock -> 2 in
-  lock_range_native fd kind file_offset length
+  match lock_range_native fd kind file_offset length with
+  | () -> true
+  | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) -> false
 
 let range_holder fd ~file_offset ~length =
   match range_holder_native fd file_offset length with
@@ -57,7 +61,7 @@ external pread_head : Unix.file_descr -> int -> string
 type record_lock_wait
 
 external record_lock_wait_start :
-  Unix.file_descr -> Unix.file_descr -> bool -> record_lock_wait
+  Unix.file_descr -> Unix.file_descr -> record_lock_wait
   = "caml_eio_fs_record_lock_wait_start"
 
 external record_lock_wait_end : record_lock_wait -> bool -> bool
@@ -65,27 +69,27 @@ external record_lock_wait_end : record_lock_wait -> bool -> bool
 
 type block = [ `Yes | `No | `Fibers | `For of float ]
 type create = [ `Never | `If_missing of Eio.File.Unix_perm.t ]
-type refusal = { path : string; holder : int option; record : string }
+type refusal = { path : string; holder : int option; contents : string }
 
 exception Lock_unavailable of refusal
 
 (* What the holder wrote: the record's first line that is not blank. *)
-let pp_doing f record =
+let pp_doing f contents =
   match
     List.find_opt
       (fun l -> String.trim l <> "")
-      (String.split_on_char '\n' record)
+      (String.split_on_char '\n' contents)
   with
   | Some line -> Fmt.pf f ": %s" (String.trim line)
   | None -> ()
 
 (* POSIX record locks belong to a process, so the kernel never names this
    process as the holder: this process is named only for a fiber's hold. *)
-let pp_refusal f { path; holder; record } =
+let pp_refusal f { path; holder; contents } =
   match holder with
   | Some pid when pid = Unix.getpid () ->
       Fmt.pf f "%s is held by another fiber of this process%a" path pp_doing
-        record
+        contents
   | Some pid -> Fmt.pf f "%s is held by process %d" path pid
   | None -> Fmt.pf f "%s is held" path
 
@@ -129,7 +133,7 @@ let read_held_record file = function
 (* A fiber holder is this process; another process's hold is named by the
    kernel, and [None] means it let go before it could be asked. *)
 let refusal ~name ~holder file =
-  Lock_unavailable { path = name; holder; record = read_record file }
+  Lock_unavailable { path = name; holder; contents = read_record file }
 
 let held_by_a_fiber () = Some (Unix.getpid ())
 
@@ -268,10 +272,10 @@ let with_held_file local ~otherwise fn =
 (* A fiber of this process holds the file: its record is read through the
    holder's descriptor. *)
 let refused_by_a_fiber ~name local =
-  let record =
+  let contents =
     with_held_file local ~otherwise:(fun () -> "") read_held_record
   in
-  Lock_unavailable { path = name; holder = held_by_a_fiber (); record }
+  Lock_unavailable { path = name; holder = held_by_a_fiber (); contents }
 
 (* One budget covers both halves of the exclusion, so it is a moment both watch
    for rather than a duration each is handed. A daemon of the switch sleeps it
@@ -398,14 +402,13 @@ let os_unlock fd =
    fiber waits on the pipe and a cancel reaches it; the cancel then withdraws
    the request before the fiber goes, and a lock granted in that instant is
    let go. *)
-let await_record_lock ?(mode = `Exclusive) fd =
-  let shared = match mode with `Shared -> true | `Exclusive -> false in
+let await_record_lock fd =
   let answered, notify = Unix.pipe ~cloexec:true () in
   Fun.protect ~finally:(fun () ->
       Unix.close answered;
       Unix.close notify)
   @@ fun () ->
-  let wait = record_lock_wait_start fd notify shared in
+  let wait = record_lock_wait_start fd notify in
   match Eio_unix.await_readable answered with
   | () -> ignore (record_lock_wait_end wait false : bool)
   | exception (Eio.Cancel.Cancelled _ as e) ->
@@ -462,7 +465,7 @@ let take_os_lock ~patience ~refused ~on_taken ~on_wait fd =
               false)));
   if not !acquired then raise (refused ())
 
-(* A planted link under the rendezvous name would send the record lock to
+(* A planted link under the lock file's name would send the record lock to
    whatever it names. Creating is an exclusive open (O_CREAT|O_EXCL refuses an
    existing name, a dangling link included), and the opened descriptor's device
    and inode are then weighed against the name's own. Weighing the name before
@@ -525,7 +528,7 @@ let update_lock_contents file contents =
   Eio.Flow.copy_string contents file;
   Eio.File.truncate file (Optint.Int63.of_int (String.length contents))
 
-(* An absent rendezvous is created exclusively, so the kernel refuses the name
+(* An absent lock file is created exclusively, so the kernel refuses the name
    a link holds rather than following it; an existing one is opened without
    creating and its identity settled by [check_locked_file]. *)
 let open_lock_file ~sw ~name ~(create : create) path =
@@ -570,19 +573,19 @@ exception Renamed
 (* The key of the file the name holds, read before anything is opened; a
    name that holds nothing yet is opened (or created) first and keyed by its
    descriptor, which is returned with it. *)
-let key_of_name ~taken ~name path open_rendezvous =
+let key_of_name ~taken ~name path open_lock_file =
   in_entry_order name @@ fun () ->
   match named_key ~name path with
   | Some key -> (key, None)
   | None ->
-      let file, (opened : Eio.File.Stat.t) = open_rendezvous () in
+      let file, (opened : Eio.File.Stat.t) = open_lock_file () in
       taken (fun () -> Eio.Resource.close file);
       ((opened.dev, opened.ino), Some (file, opened))
 
-(* The rendezvous opened once the mutex is held, which must be the file
+(* The lock file opened once the mutex is held, which must be the file
    [key] names: a name given to another file in between raises [Renamed]. *)
-let open_keyed ~taken ~key open_rendezvous =
-  let file, (opened : Eio.File.Stat.t) = open_rendezvous () in
+let open_keyed ~taken ~key open_lock_file =
+  let file, (opened : Eio.File.Stat.t) = open_lock_file () in
   let opened_key = (opened.dev, opened.ino) in
   if opened_key <> key then (
     (* Another fiber of this process may hold the file now named. *)
@@ -643,7 +646,7 @@ module Flock = struct
     fn ()
 end
 
-(* The record lock on the rendezvous's descriptor. A rendezvous with none has
+(* The record lock on the lock file's descriptor. A lock file with none has
    no record lock to take, which only a process-local backend allows. *)
 let take_record_lock ~taken ~patience ~on_wait ~name file path =
   match file_fd file with
@@ -729,7 +732,7 @@ let rec acquire ~sw ?lease ?(block : block = `Yes) ?patience
   let steps = ref [] in
   let taken give_back = steps := give_back :: !steps in
   let shared = lease = Some `Shared in
-  let open_rendezvous () =
+  let open_lock_file () =
     let file = open_lock_file ~sw ~name ~create path in
     (file, (Eio.File.stat file : Eio.File.Stat.t))
   in
@@ -741,7 +744,7 @@ let rec acquire ~sw ?lease ?(block : block = `Yes) ?patience
       | Some patience -> patience
       | None -> block_patience ~sw:budget_sw block
     in
-    let key, opened_first = key_of_name ~taken ~name path open_rendezvous in
+    let key, opened_first = key_of_name ~taken ~name path open_lock_file in
     let local = shared_mutex local_locks key in
     taken (fun () -> done_with_shared_mutex local_locks key local);
     let release_reader =
@@ -751,7 +754,7 @@ let rec acquire ~sw ?lease ?(block : block = `Yes) ?patience
     let file, (opened : Eio.File.Stat.t) =
       match opened_first with
       | Some opened -> opened
-      | None -> open_keyed ~taken ~key open_rendezvous
+      | None -> open_keyed ~taken ~key open_lock_file
     in
     if not shared then begin
       set_held_file local (Some (file :> Eio.File.ro_ty Eio.Resource.t));
@@ -869,10 +872,10 @@ let probe_file ~name file (opened : Eio.File.Stat.t) =
           held_by_a_fiber ()
         else None
   in
-  let record = read_record file in
+  let contents = read_record file in
   match holder with
-  | None -> `Free record
-  | Some _ -> `Held { path = name; holder; record }
+  | None -> `Free contents
+  | Some _ -> `Held { path = name; holder; contents }
 
 (* The probe of the file the name holds once opened. A lock file that went
    after the open, as a ticket its holder removes, is absent, as it would be
@@ -930,8 +933,11 @@ let rec probe_at ~attempts path =
                 in
                 Some
                   (`Held
-                     { path = name; holder; record = read_held_record file fd }))
-        )
+                     {
+                       path = name;
+                       holder;
+                       contents = read_held_record file fd;
+                     })))
   in
   match from_the_holder with
   | Some answer -> answer
@@ -1102,11 +1108,11 @@ module Lease = struct
 end
 
 (* A backend-free component takes its critical section as an
-   [Eio_fs_sync.Lock.t]; this is that section over a rendezvous of this
+   [Eio_fs_sync.Lock.t]; this is that section over a lock file of this
    filesystem's. Everything [with_lock] raises before the body begins becomes
    [Eio_fs_sync.Lock.Unavailable]; what the body raises travels out untouched. *)
 module Rendezvous = struct
-  (* The rendezvous is captured in the closure, keeping the section
+  (* The lock file is captured in the closure, keeping the section
      polymorphic in its result. *)
   type t = { enter : 'a. (unit -> 'a) -> 'a }
 

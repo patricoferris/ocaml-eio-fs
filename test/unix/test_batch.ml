@@ -429,7 +429,7 @@ let held_parent root =
   require "observed/open identity mismatch denied"
     (denied (fun () ->
          Batch.with_parent (wrapped / "observed/leaf") (fun _ -> called := true)));
-  require "deterministic parent-open rendezvous executed" !swapped;
+  require "deterministic parent-open swap executed" !swapped;
   require "mismatch never enters callback" (not !called);
   Alcotest.(check string)
     "observed original leaf identity preserved" observed_leaf

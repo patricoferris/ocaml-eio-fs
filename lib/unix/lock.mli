@@ -21,7 +21,7 @@ val lock_range :
   [ `Read | `Write | `Unlock ] ->
   file_offset:int ->
   length:int ->
-  unit
+  bool
 (** See {!Eio_fs_unix.lock_range}. *)
 
 val range_holder :
@@ -31,8 +31,7 @@ val range_holder :
   [ `Free | `Held of int option ]
 (** See {!Eio_fs_unix.range_holder}. *)
 
-val await_record_lock :
-  ?mode:[ `Shared | `Exclusive ] -> Unix.file_descr -> unit
+val await_record_lock : Unix.file_descr -> unit
 (** See {!Eio_fs_unix.await_record_lock}. *)
 
 type block = [ `Yes | `No | `Fibers | `For of float ]
@@ -41,7 +40,7 @@ type block = [ `Yes | `No | `Fibers | `For of float ]
 type create = [ `Never | `If_missing of Eio.File.Unix_perm.t ]
 (** See {!Eio_fs_unix.create}. *)
 
-type refusal = { path : string; holder : int option; record : string }
+type refusal = { path : string; holder : int option; contents : string }
 (** See {!Eio_fs_unix.refusal}. *)
 
 exception Lock_unavailable of refusal

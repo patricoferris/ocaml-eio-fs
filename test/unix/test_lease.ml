@@ -1,4 +1,4 @@
-(* Leases: BSD [flock] holds over a rendezvous file, inherited by a child
+(* Leases: BSD [flock] holds over a lock file, inherited by a child
    and released at the last close, taken for a switch or after readers. *)
 
 open Holder
@@ -349,7 +349,7 @@ let test_lease_gate_removed_under_a_waiter () =
 
 (* {1 Signatures}
 
-   [with_shared] is the reader operation, on the same rendezvous as
+   [with_shared] is the reader operation, on the same lock file as
    [with_exclusive]; [Lease.t], [fd] and [unlock] serve both modes. A take after
    readers needs its gate: without one it does not type. *)
 
@@ -507,7 +507,7 @@ let test_shared_lease () =
       probe "--try-eio-fs-lock" lock 3);
   Eio_fs_unix.Lease.with_shared ~block:(`For 0.5) lock (fun _ -> ());
   exclusive ();
-  require "Never refuses an absent reader rendezvous"
+  require "Never refuses an absent reader lock file"
     (match
        Eio_fs_unix.Lease.with_shared ~create:`Never (dir / "absent") (fun _ ->
            ())
@@ -521,7 +521,7 @@ let test_shared_lease () =
   List.iter
     (fun name ->
       require
-        ("shared reader refuses nonregular rendezvous: " ^ name)
+        ("shared reader refuses nonregular lock file: " ^ name)
         (match
            Eio_fs_unix.Lease.with_shared ~block:`No (dir / name) (fun _ -> ())
          with

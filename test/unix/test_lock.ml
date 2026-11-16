@@ -1,4 +1,4 @@
-(* Locks over a rendezvous file: [with_lock], probes, held locks, waits
+(* Locks over a lock file: [with_lock], probes, held locks, waits
    and their bounds, the lock file's checks, and sections. *)
 
 module Chaos = Eio_fs.Chaos.Private
@@ -236,7 +236,9 @@ let test_lock_range () =
   let fd = Unix.openfile (Eio.Path.native_exn lock) [ Unix.O_RDWR ] 0 in
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   ignore (Unix.lseek fd 7 Unix.SEEK_SET : int);
-  Eio_fs_unix.lock_range fd `Write ~file_offset:10 ~length:5;
+  Alcotest.(check bool)
+    "the lock is set" true
+    (Eio_fs_unix.lock_range fd `Write ~file_offset:10 ~length:5);
   Alcotest.(check int)
     "the lock leaves the offset" 7
     (Unix.lseek fd 0 Unix.SEEK_CUR);
@@ -253,7 +255,9 @@ let test_lock_range () =
   in
   Alcotest.check status "another process meets the lock" (`Exited 3)
     (try_lock ());
-  Eio_fs_unix.lock_range fd `Unlock ~file_offset:10 ~length:5;
+  Alcotest.(check bool)
+    "an unlock is always set" true
+    (Eio_fs_unix.lock_range fd `Unlock ~file_offset:10 ~length:5);
   Alcotest.check status "and is granted the file once it is let go" (`Exited 0)
     (try_lock ());
   Eio.Switch.run @@ fun sw ->
@@ -264,9 +268,9 @@ let test_lock_range () =
         "the holder is another process" true
         (pid <> Unix.getpid ())
   | `Held None | `Free -> Alcotest.fail "the holding process is not named");
-  match Eio_fs_unix.lock_range fd `Read ~file_offset:10 ~length:5 with
-  | () -> Alcotest.fail "a read lock was granted under another's write lock"
-  | exception Unix.Unix_error ((Unix.EAGAIN | Unix.EACCES), _, _) -> ()
+  Alcotest.(check bool)
+    "a read lock is refused under another's write lock" false
+    (Eio_fs_unix.lock_range fd `Read ~file_offset:10 ~length:5)
 
 (* A lease belongs to its open file description, so a lease of this process
    excludes another of its own: a blocking one is granted once nothing holds
@@ -349,7 +353,7 @@ let test_lock_serializes_fibers () =
 
    A name does not identify a file. Here one file is reached by two of them --
    a hard link, which is what a snapshot, a stale deployment, or a party who
-   writes the rendezvous directory leaves behind -- and canonicalising does not
+   writes the lock file's directory leaves behind -- and canonicalising does not
    merge them, [Unix.realpath] resolving symbolic links and a hard link being
    none of those. Two keys are two mutexes; the operating system grants the
    second acquisition; and both callers run their critical section over one
@@ -383,17 +387,17 @@ let test_lock_excludes_another_name_for_the_locked_file () =
    [/], through the directories a party other than the caller writes, where the
    open that follows it resolves every component beneath the capability the
    path carries. Where the two disagree, realpath answers first and answers for
-   the lock: a rendezvous under a parent link that points nowhere ends the
+   the lock: a lock file under a parent link that points nowhere ends the
    acquisition in [Unix.Unix_error (ENOENT, "realpath", ...)] before the lock's
    own resolution has said anything -- a failure of the key, and none of the
    answers this interface gives, which are Eio's own for a path it declines and
-   [Not_found] for a rendezvous that is not there. *)
+   [Not_found] for a lock file that is not there. *)
 let test_lock_answers_a_parent_link_that_leads_nowhere () =
   with_real_dir @@ fun dir ->
   Eio.Path.symlink ~link_to:"gone" (dir / "parent");
   match Eio_fs_unix.with_lock (dir / "parent" / "lock") (fun () -> ()) with
   | () ->
-      Alcotest.fail "a rendezvous under a link that points nowhere was locked"
+      Alcotest.fail "a lock file under a link that points nowhere was locked"
   | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> ()
 
 let test_lock_updates_contents_in_place () =
@@ -478,7 +482,7 @@ let test_lock_refusal_names_this_process_for_a_fiber () =
           printed self;
       Alcotest.(check (option int))
         "the holder the refusal carries" (Some self) refused.holder;
-      Alcotest.(check string) "the holder's record" record refused.record
+      Alcotest.(check string) "the holder's record" record refused.contents
 
 (* ---- asking from the holding process keeps the hold ----
 
@@ -486,7 +490,7 @@ let test_lock_refusal_names_this_process_for_a_fiber () =
    closes any descriptor for it (POSIX.1-2017 fcntl, "all locks associated with
    a file for a given process shall be removed when a file descriptor for that
    file is closed by that process"). A second acquisition from the holding
-   process opens the rendezvous to find its key, so the descriptor it closes on
+   process opens the lock file to find its key, so the descriptor it closes on
    the way out of a refusal is the holder's release. Only another process can
    tell: in this one the fiber mutex still answers. *)
 
@@ -616,7 +620,7 @@ let test_lock_asks_during_a_hold_keep_one_descriptor () =
         Alcotest.fail "a lock a fiber of this process holds probed free"
     | `Held refused ->
         Alcotest.(check string)
-          "the holder's record" "held for life\n" refused.record);
+          "the holder's record" "held for life\n" refused.contents);
     Alcotest.(check int)
       (Fmt.str "descriptors on the lock file after %d rounds of asks" round)
       1 (descriptors_on lock)
@@ -721,7 +725,7 @@ let test_probe_from_the_holder_keeps_its_hold () =
         "the holder the probe names"
         (Some (Unix.getpid ()))
         refused.holder;
-      Alcotest.(check string) "the holder's record" record refused.record);
+      Alcotest.(check string) "the holder's record" record refused.contents);
   if another_process_is_granted ~env lock then
     Alcotest.fail "another process was granted the lock after a probe"
 
@@ -816,7 +820,7 @@ let test_hold_lasts_as_long_as_its_switch () =
             "held by this process"
             (Some (Unix.getpid ()))
             refused.holder;
-          Alcotest.(check string) "the hold's record" record refused.record);
+          Alcotest.(check string) "the hold's record" record refused.contents);
   let granted = ref false in
   Eio_fs_unix.with_lock ~block:`No lock (fun () -> granted := true);
   Alcotest.(check bool) "the lock is free once the switch ends" true !granted
@@ -855,7 +859,7 @@ let held_record what lock ~record =
         (what ^ ": held by this process")
         (Some (Unix.getpid ()))
         r.holder;
-      Alcotest.(check string) (what ^ ": the record") record r.record
+      Alcotest.(check string) (what ^ ": the record") record r.contents
 
 let test_held_restates_its_record () =
   with_real_dir_env @@ fun env dir ->
@@ -929,7 +933,7 @@ let test_held_restate_takes_back_a_lock_a_stray_close_dropped () =
    cooperating writers: one that finds another inside wants its turn, because
    refusing it fails work the program itself asked for and could have waited
    out. Another process is an independent actor, and how long it holds the
-   rendezvous is not this program's to bound: a command-line tool would rather
+   lock file is not this program's to bound: a command-line tool would rather
    tell its operator which resource is busy than wait for a holder that may be
    wedged, with nothing printed and no deadline.
 
@@ -1098,7 +1102,7 @@ let test_lock_wait_behind_a_fiber_says_so () =
 (* A holder that dies does not cost the waiter its bound. The record lock is
    the kernel's, held on an open descriptor, so it goes when the last
    descriptor to the file closes -- which a killed process does as surely as an
-   exiting one. A waiter that read the rendezvous rather than asking the kernel
+   exiting one. A waiter that read the lock file rather than asking the kernel
    would sit out the whole bound behind a process that is gone. Here the bound
    is on a clock that never moves and the holder never lets go on its own, so
    the kill is all that can end the wait. *)
@@ -1133,14 +1137,14 @@ let test_lock_existing_does_not_create () =
   with_real_dir @@ fun dir ->
   let lock = dir / "absent" in
   (match Eio_fs_unix.with_lock ~create:`Never lock (fun () -> ()) with
-  | () -> Alcotest.fail "an absent rendezvous was locked"
+  | () -> Alcotest.fail "an absent lock file was locked"
   | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> ());
   Alcotest.(check bool)
-    "probing does not create the rendezvous" false (Eio.Path.is_file lock)
+    "probing does not create the lock file" false (Eio.Path.is_file lock)
 
 (* ---- the lock path is the lock's own file ----
 
-   A rendezvous lives in a directory another party writes, which is exactly
+   A lock file lives in a directory another party writes, which is exactly
    where an entry gets planted under the name a locker is about to use. If the
    lock follows what it finds there, the exclusive lock lands on the entry's
    target: two processes then hold two locks over one resource, both read the
@@ -1178,7 +1182,7 @@ let test_lock_refuses_a_symlink_at_the_lock_path () =
   (* The target's own path still locks, so the refusal took nothing with it. *)
   Eio_fs_unix.with_lock (dir / "target") (fun () -> ())
 
-(* A dangling link is the sharper case: creating the rendezvous through it
+(* A dangling link is the sharper case: creating the lock file through it
    creates a file wherever the link points, so the refusal has to come before
    the open, not after it. *)
 let test_lock_refuses_a_dangling_symlink_without_creating_its_target () =
@@ -1197,7 +1201,7 @@ let test_lock_refuses_a_dangling_symlink_without_creating_its_target () =
    An entry planted in that window is what the second resolution follows. It is
    a real window rather than a theoretical one: eio runs [stat] and [openat] on
    a system thread, so the fiber suspends at each and another fiber of the same
-   domain -- let alone another process sharing the rendezvous directory -- runs
+   domain -- let alone another process sharing the lock file's directory -- runs
    between them.
 
    A test cannot hook between two calls it does not make, so the directory
@@ -1295,26 +1299,26 @@ let test_lock_refuses_a_directory_or_a_fifo () =
   check_refusal "a FIFO" (dir / "as-a-fifo") (fun () ->
       Eio_fs_unix.with_lock (dir / "as-a-fifo") (fun () -> ()))
 
-(* An absent rendezvous is still created, as its own owner-only regular file:
+(* An absent lock file is still created, as its own owner-only regular file:
    refusing what is not a regular file must not refuse the ordinary first
    acquisition. *)
-let test_lock_creates_a_missing_rendezvous_as_a_regular_file () =
+let test_lock_creates_a_missing_lock_file_as_a_regular_file () =
   with_real_dir @@ fun dir ->
   let lock = dir / "lock" in
   Alcotest.(check bool)
-    "no rendezvous before the first acquisition" false (Eio.Path.is_file lock);
+    "no lock file before the first acquisition" false (Eio.Path.is_file lock);
   Eio_fs_unix.with_lock lock (fun () ->
       let held = Eio.Path.stat ~follow:false lock in
       Alcotest.(check bool)
-        "the rendezvous is a regular file while held" true
+        "the lock file is a regular file while held" true
         (held.kind = `Regular_file);
       Alcotest.(check int) "created owner-only" 0o600 held.perm);
   let after = Eio.Path.stat ~follow:false lock in
   Alcotest.(check bool)
-    "the rendezvous survives as a regular file" true
+    "the lock file survives as a regular file" true
     (after.kind = `Regular_file)
 
-(* ---- a rendezvous that carries no descriptor ----
+(* ---- a lock file that carries no descriptor ----
 
    The record lock is taken on a Unix descriptor, and a backend that is not the
    host filesystem hands out files carrying none. Two such backends exist here
@@ -1340,8 +1344,8 @@ let test_lock_creates_a_missing_rendezvous_as_a_regular_file () =
 
    So the missing descriptor is not the question. Whether the backend admits an
    opener outside this process is, and only the backend knows: one that admits
-   none says so, and its rendezvous is held under the mutex alone. Every other
-   rendezvous with no descriptor is refused -- loudly, as the barrier next door
+   none says so, and its lock file is held under the mutex alone. Every other
+   lock file with no descriptor is refused -- loudly, as the barrier next door
    refuses a backend that registers none -- rather than locked in name only,
    silence being what turns a missing exclusion into a bug nobody sees. *)
 
@@ -1349,7 +1353,7 @@ let test_lock_over_a_process_local_backend_serializes_fibers () =
   with_in_memory_fs @@ fun fs ->
   let lock = fs / "lock" in
   Alcotest.(check bool)
-    "no name outside this process reaches the rendezvous" true
+    "no name outside this process reaches the lock file" true
     (Option.is_none (Eio.Path.native lock));
   let entered, set_entered = Eio.Promise.create () in
   let first_inside = ref false in
@@ -1374,7 +1378,7 @@ let test_lock_over_a_process_local_backend_serializes_fibers () =
   Alcotest.(check bool)
     "same-process critical sections did not overlap" false !overlapped;
   Alcotest.(check bool)
-    "the rendezvous is the backend's own regular file" true
+    "the lock file is the backend's own regular file" true
     ((Eio.Path.stat ~follow:false lock).kind = `Regular_file)
 
 (* A bound is a wait's: an acquisition nobody holds against waits for nothing,
@@ -1410,7 +1414,7 @@ let test_lock_over_a_process_local_backend_refuses_a_symlink () =
    them by or a descriptor to inherit, so the exclusion they admit is the one
    the base declares, and the wrapper's business is to say so rather than to
    answer for a base it did not look at. A wrapper that declares nothing turns
-   a rendezvous this interface holds under the mutex into one it refuses, which
+   a lock file this interface holds under the mutex into one it refuses, which
    is the whole of a fault-injected store's locking gone. *)
 let test_lock_over_a_wrapped_process_local_backend_serializes_fibers () =
   with_in_memory_fs @@ fun fs ->
@@ -1420,7 +1424,7 @@ let test_lock_over_a_wrapped_process_local_backend_serializes_fibers () =
     "the wrapper forwards what its base declares about outside openers" true
     (Eio_fs_sync.is_process_local (fst lock));
   Alcotest.(check bool)
-    "no name outside this process reaches the rendezvous" true
+    "no name outside this process reaches the lock file" true
     (Option.is_none (Eio.Path.native lock));
   let entered, set_entered = Eio.Promise.create () in
   let first_inside = ref false in
@@ -1446,7 +1450,7 @@ let test_lock_over_a_wrapped_process_local_backend_serializes_fibers () =
 
 (* ---- the lock is granted in the order callers entered ----
 
-   An acquisition suspends before it takes anything: the rendezvous is opened
+   An acquisition suspends before it takes anything: the lock file is opened
    first, the key the fiber mutex is found by being the opened file's own
    device and inode, and a backend runs that open off the calling fiber. So the
    order two fibers reach the mutex in is the order their opens came back in,
@@ -1557,7 +1561,7 @@ let test_lock_is_granted_in_the_order_fibers_entered () =
 
    Another process holds the record lock on that same host file throughout, so
    a non-blocking acquisition through the wrapper has one answer, and it names
-   the rendezvous. Being granted the lock would mean the wrapper handed out an
+   the lock file. Being granted the lock would mean the wrapper handed out an
    exclusion the operating system never gave; being refused for want of a
    descriptor would mean no crash-modelled store can lock at all. *)
 let test_lock_through_a_crash_wrapper_takes_the_host_lock () =
@@ -1574,7 +1578,7 @@ let test_lock_through_a_crash_wrapper_takes_the_host_lock () =
   match Eio_fs_unix.with_lock ~block:`No (wrapped / "lock") (fun () -> ()) with
   | () ->
       Alcotest.fail
-        "a wrapped rendezvous was locked while another process held its file"
+        "a wrapped lock file was locked while another process held its file"
   | exception Eio_fs_unix.Lock_unavailable { path; _ } ->
       Alcotest.(check string)
         "the refusal names the host file the lock is held on"
@@ -1583,7 +1587,7 @@ let test_lock_through_a_crash_wrapper_takes_the_host_lock () =
 
 (* What a lock writes is a write like any other: [~contents] goes through the
    wrapper's own file, so the crash model sees it and the policy decides
-   whether it survives the cut. The rendezvous' own entry is committed in both
+   whether it survives the cut. The lock file's own entry is committed in both
    runs below, so what differs is only the policy's answer about an un-synced
    write. *)
 let crash_after_a_lock_published_its_contents ~policy =
@@ -1592,7 +1596,7 @@ let crash_after_a_lock_published_its_contents ~policy =
   let wrapped = Crash.wrap ctl dir in
   Eio_fs_unix.with_lock ~contents:"held\n" (wrapped / "lock") (fun () -> ());
   Alcotest.(check string)
-    "the live rendezvous carries what the holder published" "held\n"
+    "the live lock file carries what the holder published" "held\n"
     (Eio.Path.load (dir / "lock"));
   Crash.sync_metadata ctl;
   Eio.Path.load (Crash.post_crash ctl / "lock")
@@ -1601,7 +1605,7 @@ let crash_after_a_lock_published_its_contents ~policy =
    once, so the commit keeps the length but not the bytes. *)
 let test_lock_contents_are_lost_by_an_unsynced_crash () =
   Alcotest.(check string)
-    "the rendezvous keeps its committed entry and length, not the un-synced \
+    "the lock file keeps its committed entry and length, not the un-synced \
      bytes"
     (String.make 5 '\000')
     (crash_after_a_lock_published_its_contents ~policy:Crash.Drop_unsynced)
@@ -1621,7 +1625,7 @@ let test_lock_contents_survive_a_policy_that_keeps_them () =
    today passes them through tomorrow, and the case has to stay the case.
 
    Every operation is the host directory's own, the native name included, so
-   the rendezvous is a real host file; only the files handed back are re-boxed
+   the lock file is a real host file; only the files handed back are re-boxed
    behind the read and write operations alone, which is what an adapter written
    without a thought for descriptors produces. *)
 
@@ -1704,11 +1708,11 @@ let hide_descriptors ((base, path) : Eio.Fs.dir_ty Eio.Path.t) :
       : Eio.Fs.dir_ty Eio.Resource.t),
     path )
 
-(* The rendezvous is a host file another process is holding the record lock on
+(* The lock file is a host file another process is holding the record lock on
    right here, so the mutex in this process excludes nobody, and a caller let
    into its critical section would be the second writer of a resource one
    process already holds. It is refused instead, and the refusal names both the
-   interface that made it and the rendezvous it was asked for, so a wiring
+   interface that made it and the lock file it was asked for, so a wiring
    error reads as one. *)
 let test_lock_refuses_a_wrapper_that_hides_a_host_descriptor () =
   with_real_dir_env @@ fun env dir ->
@@ -1721,26 +1725,26 @@ let test_lock_refuses_a_wrapper_that_hides_a_host_descriptor () =
   (match Eio_fs_unix.with_lock (hidden / "lock") (fun () -> ran := true) with
   | () ->
       Alcotest.fail
-        "a rendezvous with no descriptor was locked while another process held \
+        "a lock file with no descriptor was locked while another process held \
          it"
   | exception Invalid_argument message ->
       Alcotest.(check bool)
         "the refusal names the interface that refused" true
         (mentions ~needle:"Eio_fs_unix.with_lock" message);
       Alcotest.(check bool)
-        "the refusal names the rendezvous" true
+        "the refusal names the lock file" true
         (mentions ~needle:(Eio.Path.native_exn (dir / "lock")) message));
   Alcotest.(check bool)
     "the critical section did not run over the held file" false !ran;
   Alcotest.check status "the holder let go when told" (`Exited 0) (release ())
 
-(* ---- the rendezvous as a section a backend-free component runs inside ----
+(* ---- the lock file as a section a backend-free component runs inside ----
 
    [lock_section] hands the lock over as an [Eio_fs_sync.Lock.t], which is the
    argument a component takes when what exclusion its files admit is the
    deployment's to say. What it owes that component is the lock's exclusion
    unchanged, and a refusal in a vocabulary the component can name. *)
-let test_section_excludes_fibers_over_the_rendezvous () =
+let test_section_excludes_fibers_over_the_lock_file () =
   with_real_dir @@ fun dir ->
   let section = Eio_fs_unix.lock_section ~block:`Fibers (dir / "lock") in
   let inside = ref 0 and most = ref 0 in
@@ -1761,7 +1765,7 @@ let test_section_excludes_fibers_over_the_rendezvous () =
     (Eio_fs_sync.Lock.use section (fun () -> "answer"))
 
 (* A hold another process took is what a component cannot see and cannot name.
-   It reaches the component as [Unavailable], carrying the rendezvous and its
+   It reaches the component as [Unavailable], carrying the lock file and its
    holder, so an interface whose type promises a result has something to put in
    it. *)
 let test_section_refusal_reaches_the_component_as_unavailable () =
@@ -1776,7 +1780,7 @@ let test_section_refusal_reaches_the_component_as_unavailable () =
       Alcotest.fail "another process's hold was waited out rather than answered"
   | exception Eio_fs_sync.Lock.Unavailable what ->
       Alcotest.(check bool)
-        "the refusal names the rendezvous" true
+        "the refusal names the lock file" true
         (mentions ~needle:(Eio.Path.native_exn lock) what);
       Alcotest.(check bool)
         "and names the process that holds it" true
@@ -1792,10 +1796,10 @@ let test_section_refuses_a_name_that_is_not_the_lock_file () =
   Eio.Path.mkdir ~perm:0o755 (dir / "lock");
   let section = Eio_fs_unix.lock_section (dir / "lock") in
   match Eio_fs_sync.Lock.use section (fun () -> ()) with
-  | () -> Alcotest.fail "a directory was locked as a rendezvous"
+  | () -> Alcotest.fail "a directory was locked as a lock file"
   | exception Eio_fs_sync.Lock.Unavailable what ->
       Alcotest.(check bool)
-        "the refusal names the rendezvous" true
+        "the refusal names the lock file" true
         (mentions ~needle:(Eio.Path.native_exn (dir / "lock")) what);
       Alcotest.(check bool)
         "and says it is not the lock's own file" true
@@ -1820,7 +1824,7 @@ let test_section_lets_the_body_s_own_raise_out () =
     "and the section is still there" 7
     (Eio_fs_sync.Lock.use section (fun () -> 7))
 
-(* A rendezvous carrying no descriptor over a backend that does not declare
+(* A lock file carrying no descriptor over a backend that does not declare
    itself process-local offers no exclusion between processes at all, and
    [with_lock] refuses it with [Invalid_argument]. That refusal is an
    acquisition's, so it reaches the component as [Unavailable] like any other:
@@ -1832,7 +1836,7 @@ let test_section_refuses_a_wrapper_that_hides_a_host_descriptor () =
   let section = Eio_fs_unix.lock_section (hidden / "lock") in
   let ran = ref false in
   (match Eio_fs_sync.Lock.use section (fun () -> ran := true) with
-  | () -> Alcotest.fail "a rendezvous with no descriptor was locked"
+  | () -> Alcotest.fail "a lock file with no descriptor was locked"
   | exception Eio_fs_sync.Lock.Unavailable what ->
       Alcotest.(check bool)
         "the refusal names the interface that refused" true
@@ -1957,8 +1961,8 @@ let suite =
         test_lock_creates_nothing_through_a_link_planted_after_the_check;
       Alcotest.test_case "lock refuses a directory or a FIFO" `Quick
         test_lock_refuses_a_directory_or_a_fifo;
-      Alcotest.test_case "missing rendezvous is created as a regular file"
-        `Quick test_lock_creates_a_missing_rendezvous_as_a_regular_file;
+      Alcotest.test_case "missing lock file is created as a regular file" `Quick
+        test_lock_creates_a_missing_lock_file_as_a_regular_file;
       Alcotest.test_case "lock serializes fibers over a process-local backend"
         `Quick test_lock_over_a_process_local_backend_serializes_fibers;
       Alcotest.test_case "a process-local backend still refuses a symlink"
@@ -1978,8 +1982,8 @@ let suite =
         `Quick test_lock_contents_survive_a_policy_that_keeps_them;
       Alcotest.test_case "lock refuses a wrapper that hides a host descriptor"
         `Quick test_lock_refuses_a_wrapper_that_hides_a_host_descriptor;
-      Alcotest.test_case "a lock section excludes fibers over the rendezvous"
-        `Quick test_section_excludes_fibers_over_the_rendezvous;
+      Alcotest.test_case "a lock section excludes fibers over the lock file"
+        `Quick test_section_excludes_fibers_over_the_lock_file;
       Alcotest.test_case "a lock section's refusal is Unavailable" `Quick
         test_section_refusal_reaches_the_component_as_unavailable;
       Alcotest.test_case

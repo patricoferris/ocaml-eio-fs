@@ -109,7 +109,7 @@ let owner_arg = "--shared-lease-outlives-its-owner"
    forks only before any domain is spawned, so this runs in a process of its
    own, run with [owner_arg]. *)
 let shared_lease_outlives_its_owner () =
-  let rendezvous_name = Filename.temp_file "shared-owner-death-spec" "" in
+  let lock_name = Filename.temp_file "shared-owner-death-spec" "" in
   let announced, announce = Unix.pipe ~cloexec:true () in
   let gate, release = Unix.pipe ~cloexec:true () in
   let finished, finish = Unix.pipe ~cloexec:true () in
@@ -130,7 +130,7 @@ let shared_lease_outlives_its_owner () =
     in_child @@ fun () ->
     Eio_main.run @@ fun env ->
     Eio_fs_unix.Lease.with_shared ~block:`No
-      Eio.Path.(Eio.Stdenv.fs env / rendezvous_name)
+      Eio.Path.(Eio.Stdenv.fs env / lock_name)
       (fun lease ->
         let raw =
           Eio_unix.Fd.use_exn "shared owner death spec"
@@ -164,14 +164,14 @@ let shared_lease_outlives_its_owner () =
       Unix.close announced;
       Unix.close finished;
       if not !reaped then ignore (reap owner);
-      Sys.remove rendezvous_name)
+      Sys.remove lock_name)
   @@ fun () ->
   byte announced 'R';
   let _, status = reap owner in
   reaped := true;
   require "the owner exited inside its callback" (exited status 0);
   Eio_main.run @@ fun env ->
-  let lock = Eio.Path.(Eio.Stdenv.fs env / rendezvous_name) in
+  let lock = Eio.Path.(Eio.Stdenv.fs env / lock_name) in
   require "owner death keeps the inherited shared reader"
     (refused (fun () ->
          Eio_fs_unix.Lease.with_exclusive ~block:`No lock (fun _ -> ())));

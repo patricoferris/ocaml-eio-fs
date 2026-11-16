@@ -295,17 +295,17 @@ val lock_range :
   [ `Read | `Write | `Unlock ] ->
   file_offset:int ->
   length:int ->
-  unit
+  bool
 (** [lock_range fd kind ~file_offset ~length] sets a POSIX record lock of [kind]
     on the [length] bytes of [fd]'s file from byte [file_offset], without
-    waiting (fcntl [F_SETLK]), placed from the start of the file. [fd]'s file
-    offset does not move, where {!Unix.lockf} places its range at the offset and
-    so has to be preceded by a seek. A lock this process holds there already is
-    replaced.
+    waiting (fcntl [F_SETLK]), placed from the start of the file; a [length] of
+    [0] runs to the end of the file, however far it grows. It is [true] iff the
+    lock is set, and [false] if another process holds a lock that conflicts;
+    [`Unlock] is always [true]. [fd]'s file offset does not move, where
+    {!Unix.lockf} places its range at the offset and so has to be preceded by a
+    seek. A lock this process holds there already is replaced.
 
-    @raise Unix.Unix_error
-      with [EAGAIN] or [EACCES] where another process holds a lock that
-      conflicts. *)
+    @raise Unix.Unix_error as [fcntl] does otherwise. *)
 
 val range_holder :
   Unix.file_descr ->
@@ -317,17 +317,17 @@ val range_holder :
     from byte [file_offset] (fcntl [F_GETLK]), in the shape {!probe} answers:
     [`Held (Some pid)] where process [pid] holds it, [`Held None] where the
     kernel names no process, and [`Free] where none is held. This process's own
-    locks never count. *)
+    locks never count.
 
-val await_record_lock :
-  ?mode:[ `Shared | `Exclusive ] -> Unix.file_descr -> unit
-(** [await_record_lock ~mode fd] takes the POSIX record lock over [fd], from its
-    offset to the end of the file as [lockf] does, by the kernel's blocking
-    request ([fcntl] [F_SETLKW]), and returns once the kernel grants it. [mode]
-    is [`Exclusive] (a write lock, the default) or [`Shared] (a read lock). The
-    request waits on a thread of its own and the calling fiber waits for its
-    answer, so the domain goes on running other fibers; a cancel withdraws the
-    request, and a lock granted in that instant is let go.
+    @raise Unix.Unix_error as [fcntl] does. *)
+
+val await_record_lock : Unix.file_descr -> unit
+(** [await_record_lock fd] takes the exclusive POSIX record lock, a write lock,
+    over [fd], from its offset to the end of the file as [lockf] does, by the
+    kernel's blocking request ([fcntl] [F_SETLKW]), and returns once the kernel
+    grants it. The request waits on a thread of its own and the calling fiber
+    waits for its answer, so the domain goes on running other fibers; a cancel
+    withdraws the request, and a lock granted in that instant is let go.
 
     It is the wait under {!with_lock}, for a caller that keeps its own
     descriptors: the record lock belongs to the process, and closing any
@@ -360,7 +360,7 @@ type refusal = {
           the record lock ([fcntl F_GETLK]). [None] when the holder let go
           before it could be asked, and for a {!Lease}, whose [flock] the kernel
           names no holder of. *)
-  record : string;
+  contents : string;
       (** The lock file's first 4096 bytes when the lock was refused: what the
           holder wrote through [contents], or [""]. It is read without the lock,
           so it is a diagnostic; {!field-holder} is the answer. *)
@@ -374,8 +374,8 @@ exception Lock_unavailable of refusal
 val pp_refusal : refusal Fmt.t
 (** [pp_refusal] formats a refusal as ["<path> is held by process <pid>"] for
     another process, ["<path> is held by another fiber of this process: <line>"]
-    for a fiber of this one, [<line>] the first line its record carries, or
-    ["<path> is held"] when its holder is [None]. *)
+    for a fiber of this one, [<line>] the first line of its {!field-contents},
+    or ["<path> is held"] when its holder is [None]. *)
 
 type Eio.Exn.Backend.t +=
   | Not_a_lock_file of string
@@ -396,7 +396,7 @@ val with_lock :
     or raises.
 
     [create] (defaults to [`If_missing 0o600], owner-only) says what an absent
-    rendezvous does. [contents], when present, replaces the lock file's contents
+    lock file does. [contents], when present, replaces the lock file's contents
     through the locked handle. [block] (defaults to [`Yes]) says what a hold
     another caller already has does. Locks are coordinated between fibers by
     device and inode, and between processes by the POSIX record lock. It also
@@ -422,20 +422,20 @@ val with_lock :
 
     @raise Lock_unavailable as described above.
     @raise Eio.Io
-      with {!Eio.Fs.Not_found} when the rendezvous cannot be opened where it is
+      with {!Eio.Fs.Not_found} when the lock file cannot be opened where it is
       named.
     @raise Eio.Io
       with {!Eio.Fs.Permission_denied} carrying {!Not_a_lock_file} when [path]
       is not the lock's own regular file.
     @raise Eio.Io as [lockf] or [flock] fails otherwise.
     @raise Stdlib.Invalid_argument
-      if the opened rendezvous carries no Unix descriptor and its backend is not
+      if the opened lock file carries no Unix descriptor and its backend is not
       {!Eio_fs_sync.Process_local}. *)
 
 val probe : _ Eio.Path.t -> [ `Free of string | `Held of refusal ]
 (** [probe path] is the lock over [path] as an acquisition would find it now,
     taken without acquiring it: [`Held r] names its holder as a refusal does,
-    and [`Free record] carries the lock file's first 4096 bytes, what its last
+    and [`Free contents] carries the lock file's first 4096 bytes, what its last
     holder left there. The file is opened for reading only, and a descriptor on
     a lock this process holds is never closed while it is held, so a probe from
     the holding process keeps the hold.
@@ -572,7 +572,7 @@ module Lease : sig
       inherited it.
 
       [create] (defaults to [`If_missing 0o600], owner-only) says what an absent
-      rendezvous does. [contents], when present, replaces the rendezvous
+      lock file does. [contents], when present, replaces the lock file's
       contents while the lease is held. [block] (defaults to [`Yes]) says what a
       hold another caller already has does.
 
@@ -613,7 +613,7 @@ module Lease : sig
 
       @raise Lock_unavailable when a hold is refused or exceeds its bound.
       @raise Eio.Io
-        with {!Eio.Fs.Not_found} when the rendezvous is absent and [create] is
+        with {!Eio.Fs.Not_found} when the lock file is absent and [create] is
         [`Never].
       @raise Eio.Io
         with {!Eio.Fs.Permission_denied} carrying {!Not_a_lock_file} when the
@@ -633,7 +633,7 @@ module Lease : sig
       file description. Readers may overlap, including fibers of this process.
       An exclusive lease or {!with_lock} excludes these readers. The creation,
       wait, cancellation and path checks are those of {!with_exclusive}; readers
-      take no gate and do not replace the rendezvous contents.
+      take no gate and do not replace the lock file's contents.
 
       Returning closes the callback's descriptor without unlocking. An inherited
       descriptor keeps the hold until its last copy closes. {!unlock} releases
@@ -649,9 +649,9 @@ val lock_section :
   ?contents:string ->
   _ Eio.Path.t ->
   Eio_fs_sync.Lock.t
-(** [lock_section path] is {!with_lock} over the rendezvous [path] as the
+(** [lock_section path] is {!with_lock} over the lock file [path] as the
     critical section a backend-free component takes from its deployment. Every
-    way {!with_lock} can refuse the rendezvous is raised as
+    way {!with_lock} can refuse the lock file is raised as
     {!Eio_fs_sync.Lock.Unavailable}; what the section's body raises travels out
     untouched.
 
@@ -870,19 +870,19 @@ end
 
 (** {1:inline Calls on the calling thread} *)
 
-val inline_fs :
-  < fs : Eio.Fs.dir_ty Eio.Path.t ; .. > -> Eio.Fs.dir_ty Eio.Path.t
-(** [inline_fs env] is [env]'s unconfined root, [Eio.Stdenv.fs env], whose
-    [stat], [open_in], [open_out], [read_dir] and [with_dir_entries] make their
-    system calls on the calling thread, where eio_posix hands each to a system
-    thread and back: a hand-off costs ten to forty microseconds of CPU, the call
-    a few. A file it opens is the root's own kind of file, and every other
-    operation, a directory opened from it included, is the root's. An error is
-    the root's in what it says: the operation, the path, the kind of error and
-    its errno; the system call it names is the one made here, which may not be
-    the backend's. The calls block the calling domain while they run, which on a
-    local disk is microseconds; a filesystem whose calls can block for longer,
-    such as a network mount, is better reached through [env]'s own root. *)
+val inline_fs : Eio.Fs.dir_ty Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
+(** [inline_fs fs] is the unconfined root [fs], such as [Eio.Stdenv.fs env],
+    whose [stat], [open_in], [open_out], [read_dir] and [with_dir_entries] make
+    their system calls on the calling thread, where eio_posix hands each to a
+    system thread and back: a hand-off costs ten to forty microseconds of CPU,
+    the call a few. A file it opens is the root's own kind of file, and every
+    other operation, a directory opened from it included, is the root's. An
+    error is the root's in what it says: the operation, the path, the kind of
+    error and its errno; the system call it names is the one made here, which
+    may not be the backend's. The calls block the calling domain while they run,
+    which on a local disk is microseconds; a filesystem whose calls can block
+    for longer, such as a network mount, is better reached through [fs] itself.
+*)
 
 (**/**)
 

@@ -43,7 +43,8 @@ let unit_r = Alcotest.(result unit string)
 let with_tree fn =
   Eio_main.run @@ fun env ->
   let base = Filename.temp_dir "eio-fs-inline" "" in
-  let fs = Eio.Stdenv.fs env and inline = Eio_fs_unix.inline_fs env in
+  let fs = Eio.Stdenv.fs env in
+  let inline = Eio_fs_unix.inline_fs fs in
   Fun.protect
     ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true Eio.Path.(fs / base))
     (fun () ->

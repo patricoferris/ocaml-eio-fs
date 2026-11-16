@@ -398,8 +398,7 @@ let inline_open ~write ~append ~follow ~create path =
         (inline_perm create))
 
 module Inline = struct
-  let fs (env : < fs : Eio.Fs.dir_ty Eio.Path.t ; .. >) =
-    let Eio.Resource.T (bv, bops), root = env#fs in
+  let fs ((Eio.Resource.T (bv, bops), root) : Eio.Fs.dir_ty Eio.Path.t) =
     let module B = (val Eio.Resource.get bops Eio.Fs.Pi.Dir) in
     (* The path the unconfined root resolves from the working directory, as
        its own calls resolve it. *)
