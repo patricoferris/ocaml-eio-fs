@@ -157,6 +157,55 @@ let test_closed_handle_write_refused () =
     "the file holding the number is untouched" ""
     (Eio.Path.load (env#fs / "b"))
 
+(* fsync(2) on a closed descriptor is EBADF, which eio_posix raises as
+   [Invalid_argument], as every other use of one. *)
+let test_closed_handle_sync_refused () =
+  with_env @@ fun env ->
+  with_reused_number env (fun a _ ->
+      match Eio.File.sync a with
+      | () -> Alcotest.fail "a sync through a closed handle succeeded"
+      | exception Invalid_argument _ -> ())
+
+(* The write side of a handle opened for reading, which its handler binds as
+   eio_posix's does. *)
+let write_side (type t) (v : t) (ops : t Eio.Resource.binding list) =
+  match
+    List.find_map
+      (fun (Eio.Resource.H (pi, impl) : t Eio.Resource.binding) ->
+        match pi with
+        | Eio.File.Pi.Write ->
+            Some (impl : (module Eio.File.Pi.WRITE with type t = t))
+        | _ -> None)
+      ops
+  with
+  | Some (module W) ->
+      [
+        ("write", fun () -> ignore (W.single_write v [ Cstruct.of_string "x" ]));
+        ( "pwrite",
+          fun () ->
+            ignore
+              (W.pwrite v ~file_offset:Optint.Int63.zero
+                 [ Cstruct.of_string "x" ]) );
+        ("truncate", fun () -> W.truncate v Optint.Int63.zero);
+      ]
+  | None -> Alcotest.fail "a handle opened for reading binds no write side"
+
+(* write(2) on a descriptor opened for reading is EBADF and ftruncate(2)
+   EINVAL, which eio_posix raises as [Eio.Io]: nothing reaches the file. *)
+let test_read_only_handle_write_refused () =
+  with_env @@ fun env ->
+  Eio.Path.save ~create:(`Exclusive 0o644) (env#fs / "f") "kept";
+  Eio.Switch.run (fun sw ->
+      let (Eio.Resource.T (v, ops)) = Eio.Path.open_in ~sw (env#fs / "f") in
+      List.iter
+        (fun (what, fn) ->
+          match fn () with
+          | () ->
+              Alcotest.failf "a %s through a read-only handle succeeded" what
+          | exception Eio.Io _ -> ())
+        (write_side v (Eio.Resource.bindings ops)));
+  Alcotest.(check string) "the file" "kept" (Eio.Path.load (env#fs / "f"))
+
 (* {2 Descriptors that are not regular files}
 
    Opening a directory as a flow is a supported operation: eio-fs.sync reaches a
@@ -1464,6 +1513,10 @@ let suite =
         test_stale_close_spares_reused_fd;
       Alcotest.test_case "closed handle write refused" `Quick
         test_closed_handle_write_refused;
+      Alcotest.test_case "closed handle sync refused" `Quick
+        test_closed_handle_sync_refused;
+      Alcotest.test_case "read-only handle write refused" `Quick
+        test_read_only_handle_write_refused;
       Alcotest.test_case "read directory fd" `Quick test_read_directory_fd;
       Alcotest.test_case "write directory fd" `Quick test_write_directory_fd;
       Alcotest.test_case "create under regular file" `Quick
