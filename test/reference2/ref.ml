@@ -698,7 +698,7 @@ let run_op t op =
 (* {1 Crash states} *)
 
 let entries t = List.sort (fun a b -> compare a.seq b.seq) t.journal
-let find_ent t s = List.find (fun e -> e.seq = s) t.journal
+let entry t s = List.find (fun e -> e.seq = s) t.journal
 
 module IS = Set.Make (Int)
 
@@ -733,7 +733,7 @@ let rec close t s =
   let s' =
     IS.fold
       (fun x acc ->
-        List.fold_left (fun acc y -> IS.add y acc) acc (needs t (find_ent t x)))
+        List.fold_left (fun acc y -> IS.add y acc) acc (needs t (entry t x)))
       s s
   in
   if IS.equal s s' then s else close t s'
@@ -742,7 +742,7 @@ let dir_durable t s d =
   Hashtbl.mem t.initial d
   || IS.exists
        (fun x ->
-         match (find_ent t x).ek with Add { node; _ } -> node = d | _ -> false)
+         match (entry t x).ek with Add { node; _ } -> node = d | _ -> false)
        s
 
 (* Whether an entry a sync or a barrier on [bdir] reached holds in [s]: a
@@ -758,7 +758,7 @@ let holds t s ~bdir e =
 (* The entries committed with the uncommitted prefix [kept] surviving. *)
 let committed_with t kept =
   let forced_attr, forced =
-    List.partition (fun x -> (find_ent t x).attr_node <> None) t.forced
+    List.partition (fun x -> (entry t x).attr_node <> None) t.forced
   in
   let reached =
     List.map (fun x -> (None, x)) forced_attr
@@ -789,7 +789,7 @@ let committed_with t kept =
       clears;
     List.iter
       (fun (bdir, x) ->
-        if (not (IS.mem x !s)) && holds t !s ~bdir (find_ent t x) then begin
+        if (not (IS.mem x !s)) && holds t !s ~bdir (entry t x) then begin
           s := close t (IS.add x !s);
           changed := true
         end)
@@ -900,6 +900,8 @@ let pp_desc ppf = function
   | L tg -> Fmt.pf ppf "link -> %s" tg
 
 type image = (string * entry_desc) list
+
+let equal_image (a : image) b = a = b
 
 let pp_image ppf (i : image) =
   Fmt.pf ppf "@[<v>%a@]" Fmt.(list (pair ~sep:(any ": ") string pp_desc)) i

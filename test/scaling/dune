@@ -11,7 +11,7 @@
 (executable
  (name by_hand)
  (modules by_hand)
- (libraries eio eio.mock eio_fs))
+ (libraries eio eio.mock eio_fs fmt))
 
 (rule
  (alias scaling)

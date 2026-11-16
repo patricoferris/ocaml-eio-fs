@@ -141,10 +141,9 @@ let check_workload ~init wl =
     (match Refm.check ~policy:ref_policy r img with
     | None -> ()
     | Some why ->
-        found :=
-          Outside
-            (Fmt.str "%a, %a: %S: %s" pp_wl wl pp_injection injection img why)
-          :: !found);
+        Fmt.kstr
+          (fun s -> found := Outside s :: !found)
+          "%a, %a: %S: %s" pp_wl wl pp_injection injection img why);
     img
   in
   List.iter
@@ -160,7 +159,7 @@ let check_workload ~init wl =
   let rec go seed quiet =
     if quiet >= quiet_seeds then ()
     else if seed >= max_seeds then
-      found := Unsaturated (Fmt.str "%a" pp_wl wl) :: !found
+      Fmt.kstr (fun s -> found := Unsaturated s :: !found) "%a" pp_wl wl
     else
       let injection =
         match seed mod 3 with 0 -> Above | 1 -> Beneath | _ -> Stacked

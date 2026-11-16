@@ -324,11 +324,10 @@ let check_workload ~init ops =
       Hashtbl.add seen (reorder, img) ();
       List.iter
         (fun (v : Oracle.viol) ->
-          found :=
-            Violation
-              (Fmt.str "%s: %a under %s: %s@.    image: %a" v.inv pp_wl ops pol
-                 v.detail pp_image img)
-            :: !found)
+          Fmt.kstr
+            (fun s -> found := Violation s :: !found)
+            "%s: %a under %s: %s@.    image: %a" v.inv pp_wl ops pol v.detail
+            pp_image img)
         (Oracle.check ~reorder h img)
     end
   in
@@ -365,10 +364,9 @@ let check_workload ~init ops =
     let rec go seed quiet =
       if quiet >= quiet_seeds then ()
       else if seed >= max_seeds then
-        found :=
-          Unsaturated
-            (Fmt.str "%a: no saturation in %d seeds" pp_wl ops max_seeds)
-          :: !found
+        Fmt.kstr
+          (fun s -> found := Unsaturated s :: !found)
+          "%a: no saturation in %d seeds" pp_wl ops max_seeds
       else
         let img = run ~init ~policy:(C.Reorder_unsynced seed) ops in
         if Hashtbl.mem images img then go (seed + 1) (quiet + 1)

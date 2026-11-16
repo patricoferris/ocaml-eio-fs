@@ -325,7 +325,7 @@ let check ?(reorder = false) h (img : image) =
               (fun k evl ->
                 List.iter
                   (function
-                    | Data (y, lo, hi) when y = x ->
+                    | Data (y, lo, hi) when Int64.equal y x ->
                         hdata := (k, lo, hi) :: !hdata
                     | _ -> ())
                   evl)
@@ -443,9 +443,10 @@ let check ?(reorder = false) h (img : image) =
             (fun i evl ->
               List.iter
                 (function
-                  | Data (y, lo, hi) when y = x ->
+                  | Data (y, lo, hi) when Int64.equal y x ->
                       datas := (i, lo, hi) :: !datas
-                  | Fsync_ev (y, ok) when y = x -> syncs := (i, ok) :: !syncs
+                  | Fsync_ev (y, ok) when Int64.equal y x ->
+                      syncs := (i, ok) :: !syncs
                   | _ -> ())
                 evl)
             h.evs;
@@ -568,7 +569,11 @@ let check ?(reorder = false) h (img : image) =
             done;
             !k > n
             ||
-            match List.find_opt (fun (y, i, _) -> y = x && i = !k) h.clears with
+            match
+              List.find_opt
+                (fun (y, i, _) -> Int64.equal y x && i = !k)
+                h.clears
+            with
             | None -> true
             | Some (_, _, r) -> Refm.IS.mem l (lengths r)
           in
@@ -622,9 +627,9 @@ let check ?(reorder = false) h (img : image) =
             for j = !m + 1 to n do
               List.iter
                 (function
-                  | Fsync_ev (y, true) when y = x -> cov := true
+                  | Fsync_ev (y, true) when Int64.equal y x -> cov := true
                   | Meta -> cov := true
-                  | Barrier y when y = x -> cov := true
+                  | Barrier y when Int64.equal y x -> cov := true
                   | _ -> ())
                 h.evs.(j)
             done;

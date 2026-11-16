@@ -13,16 +13,16 @@ let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
 type policy =
-  | P_drop
-  | P_reorder of int * int
+  | Drop
+  | Reorder of int * int
   (* bs, seed *)
-  | P_survive of int * IS.t
+  | Survive of int * IS.t
 (* k, data idx *)
 
 let pp_policy ppf = function
-  | P_drop -> Fmt.string ppf "Drop"
-  | P_reorder (bs, s) -> Fmt.pf ppf "Reorder(bs=%d,seed=%d)" bs s
-  | P_survive (k, m) ->
+  | Drop -> Fmt.string ppf "Drop"
+  | Reorder (bs, s) -> Fmt.pf ppf "Reorder(bs=%d,seed=%d)" bs s
+  | Survive (k, m) ->
       Fmt.pf ppf "Survive(k=%d,data=%a)" k
         Fmt.(list ~sep:comma int)
         (IS.elements m)
@@ -122,9 +122,9 @@ let run_eio ?(probe = []) ~user ~init ~ops ~policy () =
   setup base init;
   let pol, bs =
     match policy with
-    | P_drop -> (Crash.Drop_unsynced, 4096)
-    | P_reorder (bs, seed) -> (Crash.Reorder_unsynced seed, bs)
-    | P_survive (k, data) ->
+    | Drop -> (Crash.Drop_unsynced, 4096)
+    | Reorder (bs, seed) -> (Crash.Reorder_unsynced seed, bs)
+    | Survive (k, data) ->
         let tbl = Hashtbl.create 8 in
         let mi = ref 0 and di = ref 0 in
         List.iter
@@ -280,7 +280,9 @@ let gen rs ~(user : user) =
       | 13 -> Symlink (pick [| "f"; "g"; "../f"; "a/f" |], j (pickl alld) "l")
       | 14 ->
           let p = any () in
-          let isdir = try is_dir t (resolve t p) with _ -> false in
+          let isdir =
+            try is_dir t (resolve t p) with Fail _ | Not_found -> false
+          in
           Chmod
             ( p,
               if isdir then pick [| 0o755; 0o700; 0o2775; 0o1777 |]
@@ -351,7 +353,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
     findings := { cls; policy; detail } :: !findings
   in
   let t, rres = run_ref ~user ~init ~ops () in
-  let probe = run_eio ~user ~init ~ops ~policy:P_drop () in
+  let probe = run_eio ~user ~init ~ops ~policy:Drop () in
   if probe.results <> rres then begin
     add "live-mismatch" "-"
       (Fmt.str "ref %a eio %a"
@@ -379,7 +381,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
            (List.map (fun e -> e.tag) mu));
     (* Drop *)
     let exp = survive_state t ~k:0 ~subset:IS.empty in
-    if probe.image <> exp then
+    if not (equal_image probe.image exp) then
       add
         ("drop:"
         ^ classify t probe.image ~data:(fun _ id c ->
@@ -397,19 +399,19 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
             let im = iset_of_mask m in
             let r =
               run_eio ~probe:probe.unsynced ~user ~init ~ops
-                ~policy:(P_survive (k, im))
+                ~policy:(Survive (k, im))
                 ()
             in
             observed := r.image :: !observed;
             let subset = IS.map (fun i -> dseqs.(i)) im in
             let exp = survive_state t ~k ~subset in
-            if r.image <> exp then
+            if not (equal_image r.image exp) then
               add
                 ("survive:"
                 ^ classify t r.image ~data:(fun s id c ->
                     survive_member ?cut:(lost_cut t s) ~kept:(kept_mark t s) t
                       id c))
-                (Fmt.str "%a" pp_policy (P_survive (k, im)))
+                (Fmt.str "%a" pp_policy (Survive (k, im)))
                 (Fmt.str "eio:@.%a@.ref:@.%a" pp_image r.image pp_image exp))
           (subsets_cap rs (List.length md) survive_cap)
       done
@@ -421,7 +423,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
             let im = iset_of_mask m in
             let r =
               run_eio ~probe:probe.unsynced ~user ~init ~ops
-                ~policy:(P_survive (k, im))
+                ~policy:(Survive (k, im))
                 ()
             in
             observed := r.image :: !observed;
@@ -431,7 +433,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
             if not (member t ~data r.image) then
               add
                 ("survive-u:" ^ classify t r.image ~data)
-                (Fmt.str "%a" pp_policy (P_survive (k, im)))
+                (Fmt.str "%a" pp_policy (Survive (k, im)))
                 (Fmt.str "eio:@.%a" pp_image r.image))
           (subsets_cap rs (List.length ud) survive_cap)
       done
@@ -443,7 +445,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
         let choices = meta_choices t in
         let seen_len = Hashtbl.create 8 and seen_blk = Hashtbl.create 8 in
         for seed = 0 to seeds - 1 do
-          let r = run_eio ~user ~init ~ops ~policy:(P_reorder (bs, seed)) () in
+          let r = run_eio ~user ~init ~ops ~policy:(Reorder (bs, seed)) () in
           observed := r.image :: !observed;
           let data s id c =
             reorder_member ?cut:(lost_cut t s) ~kept:(kept_mark t s) t ~bs id c
@@ -451,7 +453,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
           if not (member t ~data r.image) then
             add
               ("reorder:" ^ classify t r.image ~data)
-              (Fmt.str "%a" pp_policy (P_reorder (bs, seed)))
+              (Fmt.str "%a" pp_policy (Reorder (bs, seed)))
               (Fmt.str "eio:@.%a" pp_image r.image)
           else
             (* record data coverage under the first matching k *)
@@ -534,7 +536,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
                     (Fmt.str "missing-len:bs%d" bs)
                     "-"
                     (Fmt.str "inode %d (%s) length %d never seen; lens=%a" id
-                       (try path_of t id with _ -> "?")
+                       (try path_of t id with Fail _ | Not_found -> "?")
                        l
                        Fmt.(list ~sep:comma int)
                        lens))
@@ -566,7 +568,7 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
                       (Fmt.str "missing-blk:bs%d" bs)
                       "-"
                       (Fmt.str "inode %d (%s) block %d version %S never seen" id
-                         (try path_of t id with _ -> "?")
+                         (try path_of t id with Fail _ | Not_found -> "?")
                          i v)
                   else ignore hit)
                 (cands i)

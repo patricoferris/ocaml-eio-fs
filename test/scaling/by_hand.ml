@@ -16,7 +16,6 @@ let () =
   done;
   let dt = Sys.time () -. t0 in
   if dt > 10. then begin
-    Printf.eprintf
-      "80k creates and stats in one directory took %.1fs, over 10s\n" dt;
+    Fmt.epr "80k creates and stats in one directory took %.1fs, over 10s@." dt;
     exit 1
   end

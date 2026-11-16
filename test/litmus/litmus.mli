@@ -44,6 +44,9 @@ val pp : t Fmt.t
 
 type entry = Absent | File of string | Dir | Link of string
 
+val equal_entry : entry -> entry -> bool
+(** [equal_entry a b] is [true] iff [a] and [b] are the same entry. *)
+
 type outcome = { marked : bool; entries : (string * entry) list }
 (** The type for post-crash states: [marked] iff the crash came after the body's
     {!Mark}. *)

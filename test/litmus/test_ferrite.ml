@@ -18,7 +18,7 @@ let chrome =
     observe = [ "0"; "1" ];
   }
 
-let create_rename ~fsync =
+let fresh_rename ~fsync =
   {
     name = (if fsync then "create-rename (fsync)" else "create-rename");
     setup = [];
@@ -58,12 +58,12 @@ let rosette =
     (chrome, Ferrite.Seqfs, 3, false);
     (chrome, ext4, 7, true);
     (chrome, Ferrite.ext4 ~nodelalloc:true (), 4, false);
-    (create_rename ~fsync:false, Seqfs, 4, false);
-    (create_rename ~fsync:true, Seqfs, 4, false);
-    (create_rename ~fsync:false, Advfs, 3, true);
-    (create_rename ~fsync:true, Advfs, 4, false);
-    (create_rename ~fsync:false, ext4, 5, true);
-    (create_rename ~fsync:true, ext4, 4, false);
+    (fresh_rename ~fsync:false, Seqfs, 4, false);
+    (fresh_rename ~fsync:true, Seqfs, 4, false);
+    (fresh_rename ~fsync:false, Advfs, 3, true);
+    (fresh_rename ~fsync:true, Advfs, 4, false);
+    (fresh_rename ~fsync:false, ext4, 5, true);
+    (fresh_rename ~fsync:true, ext4, 4, false);
     (replace ~fsync:false, Seqfs, 4, false);
     (replace ~fsync:true, Seqfs, 4, false);
     (replace ~fsync:false, Advfs, 3, true);
@@ -199,7 +199,8 @@ let cases =
         | File s -> s.[0] = '1' && s.[n_overwrite - 1] = '0'
         | _ -> false);
     case two_file (fun o ->
-        content "f" o = File "0" && content "g" o = File "1");
+        equal_entry (content "f" o) (File "0")
+        && equal_entry (content "g" o) (File "1"));
     case implied_dir_fsync
       (fun o -> o.marked && content "file" o = Absent)
       ~extra:
@@ -212,7 +213,8 @@ let cases =
         ];
     case arvr
       (fun o ->
-        content "file" o <> File "old" && content "file" o <> File "new")
+        (not (equal_entry (content "file" o) (File "old")))
+        && not (equal_entry (content "file" o) (File "new")))
       ~paper:[ ("ext4", true); ("xfs", true); ("btrfs", false) ]
       ~extra:
         [
@@ -220,7 +222,9 @@ let cases =
           f [ ("file", "old"); ("file.tmp", zeros 3) ];
         ];
     case acvr
-      (fun o -> content "file" o <> Absent && content "file" o <> File "data")
+      (fun o ->
+        (not (equal_entry (content "file" o) Absent))
+        && not (equal_entry (content "file" o) (File "data")))
       ~paper:[ ("ext4", true); ("xfs", true); ("btrfs", true) ]
       ~extra:
         [
@@ -228,15 +232,14 @@ let cases =
           o [ ("file", Some (zeros 4)); ("file.tmp", None) ];
         ];
     case
-      (create_rename ~fsync:false)
+      (fresh_rename ~fsync:false)
       (fun o -> not (List.mem (content "1" o) [ Absent; File "11" ]))
       ~extra:
         [
           o [ ("0", None); ("1", Some (zeros 2)) ];
           o [ ("0", Some (zeros 2)); ("1", None) ];
         ];
-    case
-      (create_rename ~fsync:true)
+    case (fresh_rename ~fsync:true)
       (fun o -> not (List.mem (content "1" o) [ Absent; File "11" ]))
       ~extra:[ o [ ("0", Some (zeros 2)); ("1", None) ] ];
     case (replace ~fsync:false)

@@ -105,7 +105,7 @@ let test_crash_barriers_beside_a_pinned_entry () =
   let w =
     words (fun () ->
         for i = 1 to 8000 do
-          let f = fs / "D" / Printf.sprintf "f%d" (i mod 64) in
+          let f = fs / "D" / Fmt.str "f%d" (i mod 64) in
           Eio.Path.save ~create:(`Or_truncate 0o644) f "abc";
           Eio.Path.with_open_out ~create:`Never f Eio.File.sync;
           Eio_fs_sync.sync_dir (fs / "D");
@@ -130,8 +130,8 @@ let test_crash_alternating_barriers () =
   let w =
     words (fun () ->
         for i = 1 to 2000 do
-          let x = fs / "X" / Printf.sprintf "x%d" (i mod 64) in
-          let d = fs / "D" / Printf.sprintf "d%d" (i mod 64) in
+          let x = fs / "X" / Fmt.str "x%d" (i mod 64) in
+          let d = fs / "D" / Fmt.str "d%d" (i mod 64) in
           Eio.Path.save ~create:(`Or_truncate 0o644) x "abc";
           Eio.Path.save ~create:(`Or_truncate 0o644) d "abc";
           Eio_fs_sync.sync_dir (fs / "D");

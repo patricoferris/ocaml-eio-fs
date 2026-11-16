@@ -74,14 +74,14 @@ let split p =
   match List.rev (segs p) with [] -> assert false | n :: r -> (List.rev r, n)
 
 (* walk to the directory [comps], checking search on each dir entered *)
-let rec get_dir who d = function
+let rec walk who d = function
   | [] ->
       if not (dcan who d 1) then err "eacces-search";
       d
   | c :: rest -> (
       if not (dcan who d 1) then err "eacces-search";
       match SM.find_opt c d.ents with
-      | Some (D d') -> get_dir who d' rest
+      | Some (D d') -> walk who d' rest
       | Some (F _) -> err "enotdir"
       | Some (L _) -> raise Skip
       | None -> err "enoent")
@@ -133,7 +133,7 @@ let trunc_data s n =
 (* open a file for read-write; returns its id *)
 let m_open m who p ~create =
   let comps, name = split p in
-  let pdir = get_dir who m.root comps in
+  let pdir = walk who m.root comps in
   (match (create, SM.find_opt name pdir.ents) with
   | `Excl _, Some _ -> err "eexist"
   | _ -> ());
@@ -191,7 +191,7 @@ let m_sync m id =
 
 let lookup m who p =
   let comps, name = split p in
-  let pdir = get_dir who m.root comps in
+  let pdir = walk who m.root comps in
   (comps, name, pdir, SM.find_opt name pdir.ents)
 
 let m_unlink m who p =
@@ -256,8 +256,8 @@ let is_prefix a b =
 
 let m_rename m who src dst =
   let scomps, sname = split src and dcomps, dname = split dst in
-  let spdir = get_dir who m.root scomps in
-  let dpdir = get_dir who m.root dcomps in
+  let spdir = walk who m.root scomps in
+  let dpdir = walk who m.root dcomps in
   let snode =
     match SM.find_opt sname spdir.ents with None -> err "enoent" | Some n -> n
   in
@@ -282,7 +282,7 @@ let m_rename m who src dst =
     (* remove src then add dst on the updated tree *)
     m.root <-
       set_dir m.root scomps { spdir with ents = SM.remove sname spdir.ents };
-    let dpdir = get_dir Root m.root dcomps in
+    let dpdir = walk Root m.root dcomps in
     m.root <-
       set_dir m.root dcomps { dpdir with ents = SM.add dname snode dpdir.ents };
     record_meta m
@@ -317,38 +317,42 @@ let m_commit m =
 (* ---------- rendering ---------- *)
 let render_model root (fdata : int -> string) (fmeta : int -> int * int) =
   let b = Buffer.create 256 in
+  let ppf = Fmt.with_buffer b in
   let rec go path d =
-    Printf.bprintf b "%s/ d %o %d\n" path d.dperm d.duid;
+    Fmt.pf ppf "%s/ d %o %d\n" path d.dperm d.duid;
     SM.iter
       (fun n e ->
         let p = path ^ "/" ^ n in
         match e with
         | D d -> go p d
-        | L t -> Printf.bprintf b "%s l %s\n" p t
+        | L t -> Fmt.pf ppf "%s l %s\n" p t
         | F id ->
             let perm, uid = fmeta id in
-            Printf.bprintf b "%s f %o %d %S\n" p perm uid (fdata id))
+            Fmt.pf ppf "%s f %o %d %S\n" p perm uid (fdata id))
       d.ents
   in
   go "" root;
+  Fmt.flush ppf ();
   Buffer.contents b
 
 let render_real dir =
   let b = Buffer.create 256 in
+  let ppf = Fmt.with_buffer b in
   let rec go path p =
     let s = Eio.Path.stat ~follow:false p in
     match s.kind with
     | `Directory ->
-        Printf.bprintf b "%s/ d %o %Ld\n" path s.perm s.uid;
+        Fmt.pf ppf "%s/ d %o %Ld\n" path s.perm s.uid;
         List.iter
           (fun n -> go (path ^ "/" ^ n) (p // n))
           (List.sort compare (Eio.Path.read_dir p))
-    | `Symbolic_link -> Printf.bprintf b "%s l %s\n" path (Eio.Path.read_link p)
+    | `Symbolic_link -> Fmt.pf ppf "%s l %s\n" path (Eio.Path.read_link p)
     | `Regular_file ->
-        Printf.bprintf b "%s f %o %Ld %S\n" path s.perm s.uid (Eio.Path.load p)
-    | _ -> Printf.bprintf b "%s ?\n" path
+        Fmt.pf ppf "%s f %o %Ld %S\n" path s.perm s.uid (Eio.Path.load p)
+    | _ -> Fmt.pf ppf "%s ?\n" path
   in
   go "" dir;
+  Fmt.flush ppf ();
   Buffer.contents b
 
 (* ---------- operations ---------- *)
@@ -506,7 +510,7 @@ let unsafe m op =
   let node_at p =
     try
       let comps, n = split p in
-      let d = get_dir Root m.root comps in
+      let d = walk Root m.root comps in
       SM.find_opt n d.ents
     with Err _ -> None
   in
@@ -611,10 +615,10 @@ let apply_change s = function
 exception Mismatch of string
 
 let fail_with trace msg =
-  raise
-    (Mismatch
-       (Fmt.str "%s@.trace:@.%a" msg Fmt.string
-          (String.concat "\n" (List.rev trace))))
+  Fmt.kstr
+    (fun s -> raise (Mismatch s))
+    "%s@.trace:@.%a" msg Fmt.string
+    (String.concat "\n" (List.rev trace))
 
 (* The files of a model tree, with their paths. *)
 let model_files root =

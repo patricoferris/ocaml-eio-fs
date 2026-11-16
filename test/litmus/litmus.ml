@@ -41,6 +41,13 @@ let pp ppf t =
   Fmt.pf ppf "%s: %a | %a" t.name ops t.setup ops t.body
 
 type entry = Absent | File of string | Dir | Link of string
+
+let equal_entry a b =
+  match (a, b) with
+  | Absent, Absent | Dir, Dir -> true
+  | File a, File b | Link a, Link b -> String.equal a b
+  | (Absent | File _ | Dir | Link _), _ -> false
+
 type outcome = { marked : bool; entries : (string * entry) list }
 
 (* Runs of four or more bytes print as [c{n}], NUL as [\0]. *)

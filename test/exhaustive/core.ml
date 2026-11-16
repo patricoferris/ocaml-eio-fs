@@ -271,7 +271,7 @@ let exec_all ~sched ~dry ~observe ~at ~init ~policy ops k =
       at i;
       (try exec ~sw ~w ~wu ~dry hs i op with
       | Anomaly _ as e -> raise e
-      | e -> raise (Invalid (i, Printexc.to_string e)));
+      | (Exit | Eio.Io _) as e -> raise (Invalid (i, Printexc.to_string e)));
       if op = Sync_meta then C.sync_metadata t;
       observe (i + 1) base)
     ops;

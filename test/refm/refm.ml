@@ -213,9 +213,8 @@ let check ~policy r img =
   let l = String.length img in
   let ls = lengths ~policy r in
   if not (IS.mem l ls) then
-    Some
-      (Fmt.str "length %d not in {%s}" l
-         (String.concat "," (List.map string_of_int (IS.elements ls))))
+    Fmt.kstr Option.some "length %d not in {%s}" l
+      (String.concat "," (List.map string_of_int (IS.elements ls)))
   else
     let mind =
       List.fold_left
@@ -248,14 +247,15 @@ let check ~policy r img =
             policy = Reorder && SS.exists (matches ~tol:false) r.cut.(b)
           in
           let show s = String.escaped s in
-          bad :=
-            Some
-              (Fmt.str "%sblock %d = %S; disk {%s} dirty {%s} partial {%s}"
-                 (if cut_ok then "CUT-PARTIAL " else "")
-                 b (String.sub got 0 n)
-                 (String.concat "," (List.map show (SS.elements r.disk.(b))))
-                 (String.concat "," (List.map show (SS.elements r.dirty.(b))))
-                 (String.concat "," (List.map show (SS.elements r.partial.(b)))))
+          let set s = String.concat "," (List.map show (SS.elements s)) in
+          Fmt.kstr
+            (fun s -> bad := Some s)
+            "%sblock %d = %S; disk {%s} dirty {%s} partial {%s}"
+            (if cut_ok then "CUT-PARTIAL " else "")
+            b (String.sub got 0 n)
+            (set r.disk.(b))
+            (set r.dirty.(b))
+            (set r.partial.(b))
       end
     done;
     !bad
