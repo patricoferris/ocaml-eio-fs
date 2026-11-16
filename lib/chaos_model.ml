@@ -1344,6 +1344,17 @@ module Crash = struct
      it with its directory, as it moves a tracked file. *)
   type place = { mutable proot : boxed; mutable prefix : string }
 
+  (* What a sync makes durable, as of the change [upto] in program order: a
+     file's data and attributes ([stat] is the file as the sync found it), the
+     attributes alone of a file the model does not track, or the entries of a
+     directory. *)
+  module Commit = struct
+    type t =
+      | File of { fs : fstate; upto : int; stat : Eio.File.Stat.t }
+      | Attrs of { ino : int64; upto : int }
+      | Dir of { ino : int64; upto : int }
+  end
+
   type t = {
     policy : policy;
     trigger : trigger;
@@ -1404,7 +1415,7 @@ module Crash = struct
            at its last close. *)
     file_inos : (int, int64) Hashtbl.t; (* the inode of each file, by id *)
     os : [ `Linux | `Macos ];
-    mutable queued : (unit -> unit) list;
+    mutable queued : Commit.t list;
         (* The commits of the plain syncs a full one has not drained yet,
            newest first: on macOS, fsync(2) stops in the drive's cache. *)
     pause : unit -> unit;
@@ -2550,18 +2561,15 @@ module Crash = struct
           m);
     settle ctl
 
-  let commit_dir ?upto ctl ~dir =
+  let dir_ino ctl dir =
     let owner, _ = root ctl in
-    match ino_at owner dir with
-    | Some ino -> commit_dir_ino ?upto ctl ino
-    | None -> ()
+    ino_at owner dir
 
   (* fsync(2) of a file commits its inode, attributes included: they hold
      once the image holds the file. It covers the changes made before
      [upto], as a barrier on a directory does. *)
   let commit_attrs ~upto ctl ~ino =
     if Hashtbl.length ctl.by_attrs > 0 then begin
-      let ino = ino () in
       (match Hashtbl.find_opt ctl.by_attrs ino with
       | None -> ()
       | Some m ->
@@ -3779,116 +3787,122 @@ module Crash = struct
      durable bytes, with the lost bytes in the blocks they dirty: a change
      lost to a failed barrier, or made around the wrapper, never becomes
      durable by itself. *)
+  (* The one place a sync's commit is made: a file's data up to [upto] and
+     its attributes, a file's attributes, or a directory's entries. *)
+  let commit_file ctl fs ~upto ~(stat : Eio.File.Stat.t) =
+    let young = split_young ctl fs ~upto in
+    if
+      fs.pending <> [] || fs.partial <> [] || Option.is_some fs.cache
+      || Option.is_some fs.evicted
+    then ctl.effects <- ctl.effects + 1;
+    let pending = List.rev_map (fun e -> (e.change, e.cached)) fs.pending in
+    (* A block written now is no longer one a failed sync may have
+       left. *)
+    (match fs.partial with
+    | [] -> ()
+    | partial ->
+        let cache = Option.value ~default:(bytes_of fs.durable) fs.cache in
+        let written =
+          dirty_blocks ~bs:ctl.block_size (Cstruct.length cache)
+            (List.filter_map
+               (fun (c, cached) -> if cached then None else Some c)
+               pending)
+        in
+        (* A shrink made durable now frees the blocks past it that a
+           failure captured before it, even on a block boundary, where
+           it dirties nothing. *)
+        let shrinks =
+          List.filter_map
+            (fun e ->
+              match e.change with
+              | Resize m -> Some (e.seq, m)
+              | Write _ -> None)
+            fs.pending
+        in
+        fs.partial <-
+          List.filter
+            (fun (b, at, _) ->
+              (not (List.mem b written))
+              && not
+                   (List.exists
+                      (fun (seq, m) -> seq > at && b * ctl.block_size >= m)
+                      shrinks))
+            partial);
+    (* The pages a shrink freed, as the disk held them: only those from
+       the lowest shrink on may be. *)
+    let held = fs.held and before = bytes_of fs.durable in
+    fs.held <- List.fold_left (fun h (c, _) -> hold h c) fs.held pending;
+    let from =
+      List.fold_left
+        (fun m -> function
+          | Resize n, _ -> min m ((n + page - 1) / page * page)
+          | Write _, _ -> m)
+        max_int pending
+    in
+    Extents.fold ~from
+      (fun x y () ->
+        for p = max (x / page) (from / page) to (y - 1) / page do
+          let off = p * page in
+          if
+            (not (held_at fs.held off (off + 1))) && off < Cstruct.length before
+          then
+            fs.freed <-
+              ( p,
+                copy_cs
+                  (Cstruct.sub before off
+                     (min page (Cstruct.length before - off))) )
+              :: List.remove_assoc p fs.freed
+        done)
+      held ();
+    (match (fs.cache, fs.evicted) with
+    | None, None -> List.iter (fun (c, _) -> apply fs.durable c) pending
+    | cache, evicted ->
+        let c, live =
+          replay_cached ~bs:ctl.block_size ~cache (bytes_of fs.durable) pending
+        in
+        (* Had the lost pages been evicted, a later write lands over the
+           bytes on disk. *)
+        let e =
+          replay_changes
+            (Option.value ~default:(bytes_of fs.durable) evicted)
+            (List.map fst pending)
+        in
+        fs.durable.buf <- c;
+        fs.durable.len <- Cstruct.length c;
+        fs.cache <- (if Cstruct.equal c live then None else Some live);
+        fs.evicted <- (if Cstruct.equal c e then None else Some e));
+    lose ctl fs;
+    keep_young ctl fs young;
+    fs.synced <- Some stat;
+    commit_attrs ~upto ctl ~ino:stat.ino;
+    bump ctl fs ~kind:`Sync ~offset:0 ~len:0
+
+  let apply_commit ctl = function
+    | Commit.File { fs; upto; stat } -> commit_file ctl fs ~upto ~stat
+    | Attrs { ino; upto } -> commit_attrs ~upto ctl ~ino
+    | Dir { ino; upto } -> commit_dir_ino ~upto ctl ino
+
   (* What a sync makes durable lands now, but on macOS only through a full
      sync, F_FULLFSYNC: fsync(2) reaches the drive's cache, which a cut
      loses. A full sync drains the plain ones before it, of any file: each
      commits the changes made before its call, which [fail_sync] keeps. *)
   let durable ctl ~full commit =
     match ctl.os with
-    | `Linux -> commit ()
+    | `Linux -> apply_commit ctl commit
     | `Macos when not full ->
         ctl.effects <- ctl.effects + 1;
         ctl.queued <- commit :: ctl.queued
     | `Macos ->
         let queued = List.rev ctl.queued in
         ctl.queued <- [];
-        List.iter (fun f -> f ()) queued;
-        commit ()
+        List.iter (apply_commit ctl) queued;
+        apply_commit ctl commit
 
   let barrier ~upto ?(full = false) ctl fs ~stat sync =
     match sync () with
     | () ->
-        let st = stat in
         if ctl.os = `Macos && not full then fs.flushed <- max fs.flushed upto;
-        durable ctl ~full @@ fun () ->
-        let young = split_young ctl fs ~upto in
-        if
-          fs.pending <> [] || fs.partial <> [] || Option.is_some fs.cache
-          || Option.is_some fs.evicted
-        then ctl.effects <- ctl.effects + 1;
-        let pending = List.rev_map (fun e -> (e.change, e.cached)) fs.pending in
-        (* A block written now is no longer one a failed sync may have
-           left. *)
-        (match fs.partial with
-        | [] -> ()
-        | partial ->
-            let cache = Option.value ~default:(bytes_of fs.durable) fs.cache in
-            let written =
-              dirty_blocks ~bs:ctl.block_size (Cstruct.length cache)
-                (List.filter_map
-                   (fun (c, cached) -> if cached then None else Some c)
-                   pending)
-            in
-            (* A shrink made durable now frees the blocks past it that a
-               failure captured before it, even on a block boundary, where
-               it dirties nothing. *)
-            let shrinks =
-              List.filter_map
-                (fun e ->
-                  match e.change with
-                  | Resize m -> Some (e.seq, m)
-                  | Write _ -> None)
-                fs.pending
-            in
-            fs.partial <-
-              List.filter
-                (fun (b, at, _) ->
-                  (not (List.mem b written))
-                  && not
-                       (List.exists
-                          (fun (seq, m) -> seq > at && b * ctl.block_size >= m)
-                          shrinks))
-                partial);
-        (* The pages a shrink freed, as the disk held them: only those from
-           the lowest shrink on may be. *)
-        let held = fs.held and before = bytes_of fs.durable in
-        fs.held <- List.fold_left (fun h (c, _) -> hold h c) fs.held pending;
-        let from =
-          List.fold_left
-            (fun m -> function
-              | Resize n, _ -> min m ((n + page - 1) / page * page)
-              | Write _, _ -> m)
-            max_int pending
-        in
-        Extents.fold ~from
-          (fun x y () ->
-            for p = max (x / page) (from / page) to (y - 1) / page do
-              let off = p * page in
-              if
-                (not (held_at fs.held off (off + 1)))
-                && off < Cstruct.length before
-              then
-                fs.freed <-
-                  ( p,
-                    copy_cs
-                      (Cstruct.sub before off
-                         (min page (Cstruct.length before - off))) )
-                  :: List.remove_assoc p fs.freed
-            done)
-          held ();
-        (match (fs.cache, fs.evicted) with
-        | None, None -> List.iter (fun (c, _) -> apply fs.durable c) pending
-        | cache, evicted ->
-            let c, live =
-              replay_cached ~bs:ctl.block_size ~cache (bytes_of fs.durable)
-                pending
-            in
-            (* Had the lost pages been evicted, a later write lands over the
-               bytes on disk. *)
-            let e =
-              replay_changes
-                (Option.value ~default:(bytes_of fs.durable) evicted)
-                (List.map fst pending)
-            in
-            fs.durable.buf <- c;
-            fs.durable.len <- Cstruct.length c;
-            fs.cache <- (if Cstruct.equal c live then None else Some live);
-            fs.evicted <- (if Cstruct.equal c e then None else Some e));
-        lose ctl fs;
-        keep_young ctl fs young;
-        fs.synced <- Some st;
-        commit_attrs ~upto ctl ~ino:(fun () -> st.Eio.File.Stat.ino);
-        bump ctl fs ~kind:`Sync ~offset:0 ~len:0
+        durable ctl ~full (Commit.File { fs; upto; stat })
     | exception (Eio.Io _ as e) ->
         fail_sync ~upto ctl fs;
         raise e
@@ -3947,9 +3961,7 @@ module Crash = struct
   let sync_ro ~full cf fs =
     let upto, stat = paused cf in
     match fs with
-    | None ->
-        durable cf.ctl ~full (fun () ->
-            commit_attrs ~upto cf.ctl ~ino:(fun () -> cf.cino))
+    | None -> durable cf.ctl ~full (Commit.Attrs { ino = cf.cino; upto })
     | Some fs ->
         barrier ~upto ~full cf.ctl fs ~stat (fun () ->
             sync_base ~full:false cf.cro)
@@ -3977,7 +3989,7 @@ module Crash = struct
       match dir with
       | Some dir ->
           let upto, _ = paused cf in
-          durable ctl ~full (fun () -> commit_dir_ino ~upto ctl dir)
+          durable ctl ~full (Commit.Dir { ino = dir; upto })
       | None -> sync_ro ~full cf fs
     in
     Eio.Resource.T
@@ -4507,11 +4519,12 @@ module Crash = struct
          that the caller cannot read. *)
       Eio_fs_sync.sync_dir (d.dbase, path);
       match (d.dino, path_segments path) with
-      | Some ino, [] ->
-          durable d.dctl ~full (fun () -> commit_dir_ino ~upto d.dctl ino)
+      | Some ino, [] -> durable d.dctl ~full (Commit.Dir { ino; upto })
       | _ ->
           let dir = resolve d (at d.dplace.prefix path) in
-          durable d.dctl ~full (fun () -> commit_dir ~upto d.dctl ~dir)
+          Option.iter
+            (fun ino -> durable d.dctl ~full (Commit.Dir { ino; upto }))
+            (dir_ino d.dctl dir)
 
     let native d path =
       let (Base_dir ((module B), bv)) = d.dboxed in
