@@ -1176,6 +1176,61 @@ let test_crash_hole_page_stale () =
          && sector 9 s = String.make 512 '7')
        images)
 
+(* A file the disk held before the wrap keeps its holes when the user the
+   wrapper runs as cannot search a directory on its path: [a] is closed
+   after [b] was opened, and a write through [b] into a hole may still show
+   stale data in the sector of its page it did not reach. *)
+let test_crash_hole_past_a_closed_directory () =
+  let image draw =
+    let ctl = Crash.v ~policy:(Choose draw) ~block_size:512 () in
+    Eio_mock.Backend.run @@ fun () ->
+    let root = Eio_fs.Fs.v () in
+    Eio.Path.mkdirs ~perm:0o755 (root / "home/a/b");
+    Eio.Path.with_open_out ~create:(`Exclusive 0o644) (root / "home/a/b/f")
+      (fun f ->
+        Eio.Flow.copy_string "pq" f;
+        Eio.File.truncate f (i63 8192));
+    List.iter
+      (fun p -> Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (root / p))
+      [ "home"; "home/a"; "home/a/b"; "home/a/b/f" ];
+    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice root / "home") in
+    Eio.Switch.run (fun sw ->
+        let b = Eio.Path.open_dir ~sw (fs / "a/b") in
+        Eio.Path.chmod ~follow:false ~perm:0o600 (fs / "a");
+        Eio.Path.with_open_out ~create:`Never (b / "f") (fun f ->
+            Eio.File.pwrite_all f ~file_offset:(i63 4096)
+              [ Cstruct.of_string (String.make 512 'A') ]));
+    ignore (Crash.post_crash ctl : Eio.Fs.dir_ty Eio.Path.t);
+    Eio.Path.load (root / "home/a/b/f")
+  in
+  let seen = Hashtbl.create 8 in
+  let rec go prefix =
+    let trail = ref [] and pos = ref 0 in
+    let draw n =
+      let c = if !pos < Array.length prefix then prefix.(!pos) else 0 in
+      incr pos;
+      trail := (c, n) :: !trail;
+      c
+    in
+    Hashtbl.replace seen (image draw) ();
+    let rec next = function
+      | [] -> None
+      | (c, n) :: rest when c + 1 < n ->
+          Some (Array.of_list (List.rev_map fst rest @ [ c + 1 ]))
+      | _ :: rest -> next rest
+    in
+    Option.iter go (next !trail)
+  in
+  go [||];
+  let stale = String.make 512 '7' in
+  let sector k s = String.sub s (512 * k) 512 in
+  Alcotest.(check bool)
+    "a sector of the hole's page the write did not reach is stale" true
+    (Hashtbl.fold
+       (fun s () found ->
+         found || (String.length s = 8192 && sector 9 s = stale))
+       seen false)
+
 (* The images [Choose] draws at random for [steps] over a durable [init],
    each a write or a truncation, with no sync. *)
 let sampled_images ~init steps =
@@ -1437,6 +1492,9 @@ let suite =
         test_crash_choose_as_ext4;
       Alcotest.test_case "crash: a hole's page may be stale where not written"
         `Quick test_crash_hole_page_stale;
+      Alcotest.test_case
+        "crash: a file met past a closed directory keeps its holes" `Quick
+        test_crash_hole_past_a_closed_directory;
       Alcotest.test_case "crash: no freed page reused before its truncation"
         `Quick test_crash_truncation_then_reuse;
       Alcotest.test_case "crash: a removal a snapshot folded frees its blocks"
