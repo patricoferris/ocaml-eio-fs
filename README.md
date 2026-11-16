@@ -94,6 +94,12 @@ temporary file, syncs it, renames it, then syncs the directory.
     if sync_dir then Eio_fs_sync.sync_dir dir;;
 val save : sync_dir:bool -> [> Eio.Fs.dir_ty ] Eio.Path.t -> string -> unit =
   <fun>
+```
+
+`Eio_fs_sync.save` does the same four steps, which the example writes out so
+that a test can leave the last one out.
+
+```ocaml
 # let test ~sync_dir () =
     Eio_fs.Chaos.Crash.check
       ~setup:(fun env -> save ~sync_dir:true env#fs "old")
@@ -230,10 +236,10 @@ assert (
   than on a system thread.
 - `eio-fs.path` does lexical operations on path strings.
 
-## What the tests model
+## What the filesystem models
 
 Where POSIX systems differ, the in-memory filesystem answers as Linux does.
-With `~os:`Macos`, it answers as macOS does on its default APFS volume: a name
+With ``~os:`Macos``, it answers as macOS does on its default APFS volume: a name
 matches whatever its case and Unicode normalisation, and the errors, modes and
 groups are those of macOS.
 `Eio_fs.Fs` lists the differences, and the tests check them against a trace of
@@ -292,4 +298,7 @@ them:
 ISC, see [LICENSE.md](LICENSE.md). The in-memory backend started as Patrick
 Ferris's [eio_mem](https://git.sirref.org/eio_mem), and
 `eio-fs.path` adapts its POSIX-only modification of
-[fpath](https://github.com/dbuenzli/fpath).
+[fpath](https://github.com/dbuenzli/fpath). The scheduler that runs a check is
+a copy of [Eio](https://github.com/ocaml-multicore/eio)'s mock backend, and
+the tests port the crash models of
+[Ferrite](https://github.com/uwplse/ferrite).

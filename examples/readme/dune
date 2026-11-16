@@ -8,6 +8,4 @@
 (library
  (name assets)
  (modules assets)
- (libraries hermetic eio-fs eio)
- (flags
-  (:standard -open Hermetic)))
+ (libraries eio-fs eio))
