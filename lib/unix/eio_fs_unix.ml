@@ -494,10 +494,12 @@ module Link = struct
   type publication = Created | Present
 
   let err_refused path reason =
-    Fmt.error
-      "cannot publish symbolic link %s: %s; repair or remove the conflicting \
-       entry before retrying"
-      path reason
+    Error
+      (`Invalid
+         (Fmt.str
+            "cannot publish symbolic link %s: %s; repair or remove the \
+             conflicting entry before retrying"
+            path reason))
 
   let components path =
     if Eio_fs_path.is_abs path then Error "expected a relative path"
@@ -569,9 +571,7 @@ module Link = struct
       | `Symbolic_link ->
           let held = at t.parent (fun dir -> At.read_link dir t.name) in
           if String.equal held target then Ok Present
-          else
-            err_refused t.path
-              (Fmt.str "symbolic link points at %S, expected %S" held target)
+          else Error (`Changed (Some held))
       | `Regular_file -> err_refused t.path "regular file already exists"
       | `Directory -> err_refused t.path "directory already exists"
       | _ -> err_refused t.path "foreign filesystem entry already exists"
@@ -605,7 +605,7 @@ module Link = struct
         "Eio_fs_unix.Link.read_regular: max_bytes is %d, must be between 0 and \
          max_int - 1"
         max_bytes;
-    let err_read fmt = Fmt.error fmt in
+    let err_read fmt = Fmt.kstr (fun msg -> Error (`Invalid msg)) fmt in
     let opened =
       match at t.parent (fun dir -> At.open_leaf dir t.name) with
       | fd -> Ok (Some fd)
@@ -631,8 +631,7 @@ module Link = struct
         let size = Optint.Int63.to_int64 stat.size in
         if stat.kind <> `Regular_file then
           err_read "%s is not a regular file" t.path
-        else if size < 0L || size > Int64.of_int max_bytes then
-          err_read "%s is too large to read" t.path
+        else if size < 0L || size > Int64.of_int max_bytes then Error `Too_large
         else
           match
             Eio_fs_internal.bounded_read ~max_bytes:(Int64.to_int size)
@@ -642,7 +641,7 @@ module Link = struct
           with
           | Ok bytes ->
               Ok (Some { contents = Cstruct.to_string bytes; perm = stat.perm })
-          | Error `Too_large -> err_read "%s changed size while read" t.path
+          | Error `Too_large -> Error `Too_large
           | Error (`Invalid reason) -> err_read "%s: %s" t.path reason)
 end
 

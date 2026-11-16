@@ -1,13 +1,12 @@
 (** POSIX filesystem calls that Eio and [Unix] do not bind.
 
     [Eio_fs_unix] is for a program that links unix anyway, beside the portable
-    machinery of {!Eio_fs_sync}. It holds the {{!barriers}barriers} at full
-    platform strength (on Darwin {!full_fsync} reaches the platter where [fsync]
-    stops at the drive's cache), a filesystem's {{!capacity}capacity},
-    {{!clones}copy-on-write clones}, {{!trees}tree removal} in batches,
-    {{!files}positioned reads and writes}, the {{!sparse}sparse map},
-    {{!rename}exclusive rename}, POSIX {{!record_locks}record locks},
-    {{!lock_files}lock files} and their leases,
+    machinery of {!Eio_fs_sync}. It holds the {{!barriers}barriers} that go
+    through the drive's cache (on Darwin {!full_fsync}, where [fsync] stops in
+    it), a filesystem's {{!capacity}capacity}, {{!clones}copy-on-write clones},
+    {{!trees}tree removal} in batches, {{!files}positioned reads and writes},
+    the {{!sparse}sparse map}, {{!rename}exclusive rename}, POSIX
+    {{!record_locks}record locks}, {{!lock_files}lock files} and their leases,
     {{!val-xattrs}extended attributes}, {{!links}links} and {{!batches}batches}
     confined beneath a directory, and a root whose calls run
     {{!inline}on the calling thread}.
@@ -578,17 +577,17 @@ module Lease : sig
 
       [gate], when given, is a lease on a file of its own that every exclusive
       take of [path] passes: the take holds it exclusively before it takes
-      [path], and for as long as this descriptor holds [path], until {!release},
-      the callback's return or [sw]'s end, so no take of [path] is made between
-      another's look at its holders and its take, as {!take_after_readers}
-      needs. A held gate is waited for or refused as [block] says of [path], and
-      the refusal is that of [path]'s holder when an exclusive one holds it,
-      else that of the take under way, whose [contents] (or nothing) the gate's
-      file holds. The file is created when absent, with [create]'s permissions
-      or [0o600]; its directory must exist. A take that finds [path] absent with
-      [create] [`Never] removes the gate it holds. A caller that removes [path]
-      holding it removes [gate] first, holding it too: a take that waited on a
-      removed gate takes the file its name holds then.
+      [path], and for as long as this descriptor holds [path], until {!release}
+      or the callback's return, so no take of [path] is made between another's
+      look at its holders and its take, as {!take_after_readers} needs. A held
+      gate is waited for or refused as [block] says of [path], and the refusal
+      is that of [path]'s holder when an exclusive one holds it, else that of
+      the take under way, whose [contents] (or nothing) the gate's file holds.
+      The file is created when absent, with [create]'s permissions or [0o600];
+      its directory must exist. A take that finds [path] absent with [create]
+      [`Never] removes the gate it holds. A caller that removes [path] holding
+      it removes [gate] first, holding it too: a take that waited on a removed
+      gate takes the file its name holds then.
 
       With [block] [`Yes] or [`For seconds], a lease another process holds is
       waited for by polling: the lease is tried without waiting, [on_wait ()] is
@@ -718,11 +717,7 @@ module Link : sig
     | Created  (** The link was made. *)
     | Present  (** A link holding exactly the target was already there. *)
 
-  val with_parent :
-    ?create:[ `Never | `If_missing of Eio.File.Unix_perm.t ] ->
-    _ Eio.Path.t ->
-    (t -> 'a) ->
-    'a
+  val with_parent : ?create:create -> _ Eio.Path.t -> (t -> 'a) -> 'a
   (** [with_parent ~create path fn] opens each parent component of [path]
       beneath its directory with [O_DIRECTORY | O_NOFOLLOW], then is [fn]
       applied to the held parent and final basename. [path]'s name must be
@@ -744,28 +739,35 @@ module Link : sig
       @raise Invalid_argument if [path]'s directory carries no Unix descriptor.
   *)
 
-  val publish : t -> target:string -> (publication, string) result
-  (** [publish parent ~target] atomically creates an absent symbolic link
-      holding [target] using [symlinkat], and is [Ok Created]. An existing link
-      holding exactly [target] is [Ok Present]; no filesystem immutability is
-      implied. Every other existing entry, an empty [target], one holding a NUL
-      byte and a failed call are [Error msg], and nothing is replaced; [msg]
-      names the original path and the action needed to retry. *)
+  val publish :
+    t ->
+    target:string ->
+    (publication, [ `Changed of string option | `Invalid of string ]) result
+  (** [publish parent ~target] is [Ok Created] once [symlinkat] has made a
+      symbolic link holding [target] where there was no entry, and [Ok Present]
+      if a link holding exactly [target] is there already. It is
+      [Error (`Changed (Some held))] if a link holding [held] is there, and
+      [Error (`Invalid msg)] for any other entry, for an empty [target] or one
+      holding a NUL byte, and for a failed call, [msg] naming the path and what
+      to do before a retry. Nothing is replaced. {!Eio_fs_sync.publish_link}
+      replaces an entry, on any backend, and syncs it. *)
 
   type regular = { contents : string; perm : Eio.File.Unix_perm.t }
   (** The type for a regular file read: its bytes and its permission bits, both
       from the one descriptor. *)
 
-  val read_regular : max_bytes:int -> t -> (regular option, string) result
+  val read_regular :
+    max_bytes:int -> t -> (regular option, Eio_fs.Nofollow.error) result
   (** [read_regular ~max_bytes parent] opens the final entry beneath the held
       parent with [O_NOFOLLOW | O_NONBLOCK | O_NOCTTY] and is [Ok (Some r)], [r]
       the bytes read from that descriptor and its permission bits by [fstat], or
-      [Ok None] if the entry is absent. It is [Error msg] for a symbolic link or
-      another non-regular entry (a FIFO is refused without waiting for a writer,
-      and a terminal never becomes the controlling one), a file of more than
-      [max_bytes] bytes or one that grows beyond its size at open, and a failed
-      open. The descriptor is closed before the result. The enclosing
-      {!val-with_parent} refuses symbolic links at every parent component.
+      [Ok None] if the entry is absent. It is [Error `Too_large] for a file of
+      more than [max_bytes] bytes or one that grows beyond its size at open, and
+      [Error (`Invalid msg)] for a symbolic link or another non-regular entry (a
+      FIFO is refused without waiting for a writer, and a terminal never becomes
+      the controlling one) and for a failed open, [msg] naming the path. The
+      descriptor is closed before the result. The enclosing {!val-with_parent}
+      refuses symbolic links at every parent component.
 
       {b Warning.} A hard link is the file it names, wherever its other names
       are: a regular file linked beneath the parent from outside the root is
@@ -797,18 +799,19 @@ end
     directories a run opens are held for the run only. *)
 module Batch : sig
   val with_parent : _ Eio.Path.t -> (Eio.Fs.dir_ty Eio.Path.t -> 'a) -> 'a
-  (** [with_parent path fn] calls [fn] with the final leaf of [path] beneath
-      borrowed non-symlink parent capabilities. The observed and opened
-      directory identities must agree. Renaming a held parent cannot redirect
-      the leaf. The callback's result or exception passes through unchanged.
-      Borrowed parents are released on either exit; the caller's root remains
-      usable. A final symbolic link remains the final leaf. The leaf must not be
-      used after [fn] returns.
+  (** [with_parent path fn] is [fn leaf], [leaf] the last component of [path] in
+      its parent, which is opened one component at a time from [path]'s
+      directory. Each parent must be a directory, and the one opened must be the
+      one its stat found just before, so a parent replaced meanwhile, by a
+      symbolic link or anything else, is refused. A parent renamed while it is
+      open still holds [leaf]. The parents are closed when [fn] returns or
+      raises, and [leaf] must not be used after that; [path]'s directory stays
+      open. A last component that is a symbolic link is not followed.
 
       @raise Eio.Io
-        with {!Eio.Fs.Permission_denied} carrying {!Unsafe_parent} for invalid
-        path components, a non-directory parent or an identity mismatch; with
-        {!Eio.Fs.Not_found} for a missing parent. *)
+        with {!Eio.Fs.Permission_denied} carrying {!Unsafe_parent} for a refused
+        name, a parent that is not a directory, or one replaced while it was
+        opened; with {!Eio.Fs.Not_found} for a missing parent. *)
 
   type t
   (** The type for a directory that batches run beneath. *)

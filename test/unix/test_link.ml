@@ -14,7 +14,11 @@ let with_dir fn =
     ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / name))
     (fun () -> Eio.Path.with_open_dir (fs / name) fn)
 
-let get = function Ok value -> value | Error message -> Alcotest.fail message
+let get = function
+  | Ok value -> value
+  | Error (`Invalid message) -> Alcotest.fail message
+  | Error (`Changed _) -> Alcotest.fail "a link to another target"
+  | Error `Too_large -> Alcotest.fail "too large"
 
 let exists path =
   match Eio.Path.stat ~follow:false path with
@@ -50,7 +54,8 @@ let mkdir = `If_missing 0o755
 let refusal ?kind root path result =
   match result with
   | Ok _ -> Alcotest.fail "unexpected publication"
-  | Error message ->
+  | Error (`Changed _) -> Alcotest.fail "refused as a link to another target"
+  | Error (`Invalid message) ->
       List.iter
         (fun expected ->
           Alcotest.(check bool) expected true (contains expected message))
@@ -107,8 +112,9 @@ let test_foreign_leaf () =
 let test_wrong_link () =
   with_dir @@ fun root ->
   Eio.Path.symlink ~link_to:"/other" (root / "library");
-  refusal ~kind:"symbolic link" root "library"
-    (publish root "library" "/selected");
+  (match publish root "library" "/selected" with
+  | Error (`Changed (Some "/other")) -> ()
+  | _ -> Alcotest.fail "a link to another target was not refused");
   Alcotest.(check string)
     "foreign link" "/other"
     (Eio.Path.read_link (root / "library"))
@@ -208,7 +214,8 @@ let read ?(max_bytes = 1024) root path =
 let read_refused ~kind root path =
   match read root path with
   | Ok _ -> Alcotest.failf "read %S" path
-  | Error message ->
+  | Error `Too_large -> Alcotest.failf "%S refused as too large" path
+  | Error (`Invalid message) ->
       Alcotest.(check bool) kind true (contains kind message);
       Alcotest.(check bool)
         "names the path" true
@@ -233,7 +240,8 @@ let test_read_symlink_leaf () =
   Eio.Path.symlink ~link_to:"target" (root / "library");
   match read root "library" with
   | Ok _ -> Alcotest.fail "read through a symbolic link"
-  | Error message ->
+  | Error `Too_large -> Alcotest.fail "a symbolic link refused as too large"
+  | Error (`Invalid message) ->
       Alcotest.(check bool)
         "names the path" true
         (contains (Eio_fs.Tree.name (root / "library")) message)
@@ -254,8 +262,8 @@ let test_read_too_large () =
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "library") "12345";
   match read ~max_bytes:4 root "library" with
   | Ok _ -> Alcotest.fail "read past the bound"
-  | Error message ->
-      Alcotest.(check bool) "too large" true (contains "too large" message);
+  | Error (`Invalid message) -> Alcotest.fail message
+  | Error `Too_large ->
       Alcotest.(check (option string))
         "at the bound" (Some "12345")
         (Option.map
