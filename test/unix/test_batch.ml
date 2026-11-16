@@ -230,7 +230,9 @@ let test_lstat_times_match_eio () =
       (Filename.quote_command "touch"
          [ "-d"; "2023-11-14T22:13:20.999999999"; file ])
   in
-  Alcotest.(check bool) "touch set the time" true (touched = Unix.WEXITED 0);
+  Alcotest.(check bool)
+    "touch set the time" true
+    (match touched with Unix.WEXITED 0 -> true | _ -> false);
   let eio = Eio.Path.stat ~follow:false Eio.Path.(fs / file) in
   Eio.Switch.run @@ fun sw ->
   match Batch.run (Batch.v ~sw Eio.Path.(fs / base)) [ Batch.Lstat "f" ] with

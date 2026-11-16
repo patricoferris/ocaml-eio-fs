@@ -167,7 +167,7 @@ let named_when_made () =
     List.filter_map
       (fun (u : Crash.unsynced) ->
         match u.kind with
-        | Data | Truncate -> Some (Fmt.str "%a" Crash.pp_unsynced u)
+        | Data | Truncate -> Fmt.kstr Option.some "%a" Crash.pp_unsynced u
         | _ -> None)
       (Crash.unsynced t)
   in

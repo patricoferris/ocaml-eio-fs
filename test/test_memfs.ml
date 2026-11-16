@@ -300,8 +300,7 @@ let test_shutdown_as_eio_posix () =
     | Some (module S) -> (
         match S.shutdown f `All with
         | () -> "ok"
-        | exception Eio.Io (Eio.Exn.X _, _) -> "Eio.Io"
-        | exception e -> Printexc.to_string e)
+        | exception Eio.Io (Eio.Exn.X _, _) -> "Eio.Io")
   in
   let outcome dir =
     Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "f") "x";

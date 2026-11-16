@@ -3523,13 +3523,17 @@ let test_crash_length_after_clear () =
       List.iter
         (fun policy ->
           let data, perm = run op policy in
-          if String.length data <> 2 && perm <> 0o777 then
+          if String.length data <> 2 && not (Int.equal perm 0o777) then
             Alcotest.failf "%S with mode %o" data perm)
         policies)
     [ `Grow; `Cut ];
   Alcotest.(check bool)
     "an overwrite without its clear" true
-    (List.exists (fun p -> run `Over p = ("aa", 0o4777)) policies)
+    (List.exists
+       (fun p ->
+         let data, perm = run `Over p in
+         String.equal data "aa" && Int.equal perm 0o4777)
+       policies)
 
 (* A fault wrapper between the controller and a user's view: the crash still
    rebuilds the tree with root's rights. *)

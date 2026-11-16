@@ -95,7 +95,7 @@ let drain env =
   P.with_open_out ~create:`Never P.(env#fs / "g") Eio_fs_unix.sync_file
 
 let chmod env = P.chmod ~follow:false ~perm:0o400 P.(env#fs / "f")
-let chmodded env = (P.stat ~follow:false P.(env#fs / "f")).perm = 0o400
+let chmodded env = Int.equal (P.stat ~follow:false P.(env#fs / "f")).perm 0o400
 
 let rewrite env =
   P.with_open_out ~create:`Never
@@ -103,9 +103,9 @@ let rewrite env =
     (fun f -> Eio.Flow.copy_string "DATA" f)
 
 let rewritten env = P.load P.(env#fs / "f") = "DATA"
-let make env = P.save ~create:(`Exclusive 0o644) P.(env#fs / "h") ""
+let touch env = P.save ~create:(`Exclusive 0o644) P.(env#fs / "h") ""
 
-let made env =
+let touched env =
   match P.kind ~follow:false P.(env#fs / "h") with
   | `Regular_file -> true
   | _ -> false
@@ -169,7 +169,7 @@ let suite =
       Alcotest.test_case "an entry made during a directory sync is not covered"
         `Quick
         (Expect.caught ~tier:"linear"
-           (overlap ~sync:dirsync ~change:make ~held:made));
+           (overlap ~sync:dirsync ~change:touch ~held:touched));
       Alcotest.test_case "an append during a sync does not move its times"
         `Quick (Expect.passes times);
       Alcotest.test_case "an append during a sync is not covered" `Quick

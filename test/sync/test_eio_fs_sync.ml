@@ -491,10 +491,12 @@ let test_barrier_is_used () =
       Eio_fs_sync.publish_generation ~barrier (fs / "g") (fun dir ->
           Eio.Path.save ~create:(`Exclusive 0o644) (dir / "f") "x"));
   issued "publish_link" ~files:0 ~dirs:2 (fun () ->
-      ignore
-        (Eio_fs_sync.publish_link ~barrier ~lock:Eio_fs_sync.Lock.none
-           ~expected:None ~link_to:"target" (fs / "k")
-          : (unit, _) result))
+      match
+        Eio_fs_sync.publish_link ~barrier ~lock:Eio_fs_sync.Lock.none
+          ~expected:None ~link_to:"target" (fs / "k")
+      with
+      | Ok () -> ()
+      | Error _ -> Alcotest.fail "publish_link refused a new link")
 
 (* -- Appending lines -- *)
 

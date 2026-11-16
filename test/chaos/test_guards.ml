@@ -1093,7 +1093,7 @@ let test_kept_going () =
                 Eio_fs_sync.sync_dir env#fs;
                 ack !n;
                 incr n
-              with _ -> ()
+              with Eio.Io _ | Eio.Cancel.Cancelled _ -> ()
             done)
           ~recover:(fun ~acked env ->
             if acked <> [] then ignore (P.load P.(env#fs / "f"))))

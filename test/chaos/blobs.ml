@@ -45,13 +45,13 @@ let setup env =
   P.mkdir ~perm:0o755 P.(env#fs / "blobs");
   P.save ~create:(`Exclusive 0o644) P.(env#fs / "index") ""
 
-let blobs =
+let contents =
   [ "alpha"; String.make 3000 'b'; "gamma, a third blob"; String.make 5000 'd' ]
 
 let test ?put_bug ?index_bug () =
   Eio_fs.Chaos.Crash.check ~setup
     (fun ~ack env ->
-      try List.iter (fun b -> ack (put ?bug:put_bug env#fs b)) blobs
+      try List.iter (fun b -> ack (put ?bug:put_bug env#fs b)) contents
       with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
       if not (P.is_directory P.(env#fs / "blobs")) then
@@ -74,7 +74,7 @@ let test ?put_bug ?index_bug () =
 let test_weak ?put_bug () =
   Eio_fs.Chaos.Crash.check ~setup
     (fun ~ack env ->
-      try List.iter (fun b -> ack (put ?bug:put_bug env#fs b)) blobs
+      try List.iter (fun b -> ack (put ?bug:put_bug env#fs b)) contents
       with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
       if not (P.is_directory P.(env#fs / "blobs")) then

@@ -1133,7 +1133,7 @@ let test_released_under_faults () =
     lifecycle
 
 let suite =
-  ( "law",
+  ( "chaos_law",
     [
       Alcotest.test_case "every binding has an entry" `Quick test_bindings;
       Alcotest.test_case "each handle after each lifecycle edge" `Quick

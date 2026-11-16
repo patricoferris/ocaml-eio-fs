@@ -99,4 +99,4 @@ let put t k v =
   t.n <- t.n + 1;
   if t.n mod !every = 0 then compact t
 
-let get t k = List.assoc_opt k t.mem
+let find t k = List.assoc_opt k t.mem

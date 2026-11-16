@@ -13,7 +13,7 @@ let check_first env =
   let db = Kv.open_ ~sw env#fs in
   List.iter
     (fun (k, v) ->
-      if Kv.get db k <> Some v then Fmt.failwith "%s lost by a recovery" k)
+      if Kv.find db k <> Some v then Fmt.failwith "%s lost by a recovery" k)
     first;
   db
 
@@ -42,7 +42,7 @@ let kv_reopen2 ?bug () =
       with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
       let db = check_first env in
-      if acked <> [] && Kv.get db "k9" <> Some "new" then failwith "k9 lost")
+      if acked <> [] && Kv.find db "k9" <> Some "new" then failwith "k9 lost")
 
 (* The same with no ack: recover checks what setup made. *)
 let kv_reopen3 ?bug () =

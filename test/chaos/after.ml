@@ -81,7 +81,7 @@ let recover_kv ?bug ~puts ~acked dir =
         List.assoc_opt k (List.rev acked)
         :: (match next with Some (k', v) when k' = k -> [ Some v ] | _ -> [])
       in
-      if not (List.mem (Kv.get db k) ok) then Fmt.failwith "%s lost" k)
+      if not (List.mem (Kv.find db k) ok) then Fmt.failwith "%s lost" k)
     keys
 
 let test_kv ?bug () =
