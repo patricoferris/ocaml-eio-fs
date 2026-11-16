@@ -1597,8 +1597,9 @@ module Flow = struct
     let pwrite t ~file_offset bufs = pwritev t ~file_offset bufs
     let seek t off cmd = seek_fd t off cmd
 
-    (* The in-memory store is already durable, so [sync] has nothing to flush. *)
-    let sync _ = ()
+    (* The in-memory store is already durable, so [sync] has nothing to
+       flush; a closed descriptor still refuses it. *)
+    let sync t = ignore (Fd.num t)
     let truncate t len = truncate_fd t len
     let close = close
   end
