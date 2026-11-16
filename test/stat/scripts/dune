@@ -1,0 +1,3 @@
+(executable
+ (name record)
+ (libraries stat_workload eio eio_posix fmt))

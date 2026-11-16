@@ -1,0 +1,12 @@
+(rule
+ (alias regen)
+ (mode promote)
+ (enabled_if
+  (= %{env:REGEN=0} 1))
+ (targets linux.csv)
+ (deps
+  ../scripts/record.exe
+  (source_tree ../scripts)
+  (source_tree ../workload))
+ (action
+  (run bash ../scripts/generate.sh linux.csv)))

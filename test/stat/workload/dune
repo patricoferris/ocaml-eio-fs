@@ -1,0 +1,3 @@
+(library
+ (name stat_workload)
+ (libraries eio fmt cstruct optint))
