@@ -135,8 +135,11 @@ The tests follow a few rules:
   timeout of an hour takes no time.
 
 A check is deterministic, reads no environment variable and prints nothing.
-For a scenario it does not try, `Eio_fs.Chaos.wrap f dir` asks `f` about each
-operation, and `Eio_fs.Chaos.Crash.v` builds a power cut by hand.
+The scenarios it samples, past those that follow the structure of the run, are
+drawn from a fixed seed: a nightly run may pass another with `~seed` to meet
+other faults, and the replay of a failure needs no seed. For a scenario it does
+not try, `Eio_fs.Chaos.wrap f dir` asks `f` about each operation, and
+`Eio_fs.Chaos.Crash.v` builds a power cut by hand.
 
 ## Testing as a user
 
@@ -242,8 +245,8 @@ against comes from and how to regenerate it.
 ### What a check can miss
 
 - A bug that needs two faults. Some pairs of faults lie past the default
-  budget of 20,000 runs. Raise `~budget` in a nightly run, as the
-  `CHAOS_BUDGET` example in `Eio_fs.Chaos` does.
+  budget of 20,000 runs. Raise `~budget`, or pass another `~seed`, in a nightly
+  run, as the `CHAOS_BUDGET` and `CHAOS_SEED` example in `Eio_fs.Chaos` does.
 
 ### How big a test can be
 

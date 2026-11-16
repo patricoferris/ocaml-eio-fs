@@ -785,9 +785,10 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
   in
   (trace, outcome)
 
-let check ?budget ?replay ?os ?(setup = ignore) run =
+let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let os = os_of os in
   let name = check_name in
+  let rng = Random.State.make [| seed |] in
   let budget = budget_of name budget in
   let replay = Option.map (parse_replay name) replay in
   let spaces = Hashtbl.create 16 in
@@ -854,7 +855,8 @@ let check ?budget ?replay ?os ?(setup = ignore) run =
                       ->
                         let r = fst (exec s) in
                         let changed, rest =
-                          Plan.check_seconds one ~first:disk ~after:(kept r)
+                          Plan.check_seconds ~rng one ~first:disk
+                            ~after:(kept r)
                         in
                         Option.map
                           (fun s -> (s, Sampled))
@@ -882,7 +884,7 @@ let check ?budget ?replay ?os ?(setup = ignore) run =
            check never passes on a partial one. Shrink the workload, or raise \
            ~budget."
           n budget;
-      let others, pick_others = Plan.check_others_spread ~keep:meets first in
+      let others, pick_others = Plan.check_others_sample ~keep:meets first in
       let share classes = Plan.sampled_share ~budget ~linear:n_share ~classes in
       (* The second faults each run allows, drawn as it ends, so no run's
          operations outlive it: the best of each, round by round. *)
@@ -894,14 +896,17 @@ let check ?budget ?replay ?os ?(setup = ignore) run =
           match s.faults with
           | [ one ] when not (Plan.is_evict one) ->
               Plan.Pairs.add best
-                (Plan.check_seconds ~limit:sh one ~first:disk ~after:(kept r))
+                (Plan.check_seconds ~limit:sh ~rng one ~first:disk
+                   ~after:(kept r))
           | _ -> ())
         linear;
       let pairs = Plan.Pairs.to_list best in
       let classes =
         List.filter
           (fun (n, _) -> n > 0)
-          [ (others, pick_others); (List.length pairs, fun n -> take n pairs) ]
+          [
+            (others, pick_others rng); (List.length pairs, fun n -> take n pairs);
+          ]
       in
       let share = share (List.length classes) in
       List.iter
@@ -1323,8 +1328,9 @@ module Crash = struct
             |> String.concat "\n            " );
     ]
 
-  let check ?budget ?replay ?os ?(setup = ignore) run ~recover =
+  let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run ~recover =
     let os = os_of os in
+    let rng = Random.State.make [| seed |] in
     let budget = budget_of name budget in
     let replay =
       Option.map (parse_replay ~well_formed:Plan.well_formed name) replay
@@ -1425,7 +1431,7 @@ module Crash = struct
                     match s.cfaults with
                     | [ one ] when s.state = Drop ->
                         let changed, rest =
-                          Plan.crash_seconds ~tears one ~first:disk
+                          Plan.crash_seconds ~rng ~tears one ~first:disk
                             ~after:(kept r.trace)
                         in
                         changed @ rest
@@ -1504,7 +1510,7 @@ module Crash = struct
         let evicted (s : Plan.crash) = List.exists Plan.is_evict s.cfaults in
         let evicts, faults = List.partition evicted faults in
         (* The second faults and the cuts during recover each fault allows,
-           spread as each run ends, so no run's operations outlive it: an
+           drawn as each run ends, so no run's operations outlive it: an
            even share of what the sampled tier can spend. *)
         let total =
           Plan.sampled_share ~budget
@@ -1523,10 +1529,10 @@ module Crash = struct
               (match s.cfaults with
               | [ one ] when s.state = Drop ->
                   Plan.Pairs.add best
-                    (Plan.crash_seconds ~limit:total ~tears one ~first:disk
+                    (Plan.crash_seconds ~limit:total ~rng ~tears one ~first:disk
                        ~after:(kept r.trace))
               | _ -> ());
-              Plan.spread quota
+              Plan.sample rng quota
                 (Plan.rcuts ~changed:(rchanged r) s ~recover:r.rtrace))
             faults
         in
@@ -1621,7 +1627,11 @@ module Crash = struct
         let classes =
           List.filter
             (fun (c, _) -> c <> [])
-            [ (others, Plan.spread); (pairs, take); (recovery, Plan.spread) ]
+            [
+              (others, Plan.sample rng);
+              (pairs, take);
+              (recovery, Plan.sample rng);
+            ]
         in
         let before = !runs in
         let share = total / 2 / max 1 (List.length classes) in

@@ -15,6 +15,9 @@ Initial release.
   recovery, and checks what a fresh process finds on the disk, as ext4 with
   `data=writeback` may leave it, or, with `~os:`Macos`, APFS, where `fsync`
   stops in the drive's cache and only `F_FULLFSYNC` reaches the disk.
+- Past the scenarios that follow the run's structure, a check samples one in
+  each group of neighbours, drawn from a fixed seed, so no periodic pattern in
+  the workload hides a fault from it. `?seed` draws others.
 - A failure names its scenario and shows the operations of the failing run;
   `~replay` runs that scenario alone. `Eio_fs.Chaos.wrap` and
   `Eio_fs.Chaos.Crash.v` build a scenario by hand.

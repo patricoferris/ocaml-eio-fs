@@ -194,12 +194,39 @@ let rest trace sel =
 
 (* {1 Sampling} *)
 
+(* [n] elements of [l], evenly spread: the tear points of a write, which the
+   linear tier tries whole and a replay finds again. *)
 let spread n l =
   let len = List.length l in
   if len <= n then l
   else
     let a = Array.of_list l in
     List.init n (fun i -> a.(i * len / n))
+
+let sample rng n l =
+  let len = List.length l in
+  if len <= n then l
+  else
+    let a = Array.of_list l in
+    List.init n (fun i ->
+        let lo = i * len / n and hi = (i + 1) * len / n in
+        a.(lo + Random.State.int rng (hi - lo)))
+
+let interleave rng l =
+  let rec merge a b =
+    match (a, b) with
+    | [], l | l, [] -> l
+    | x :: a, y :: b -> x :: y :: merge a b
+  in
+  let a = Array.of_list l in
+  let rec order lo hi =
+    if hi - lo <= 1 then Array.to_list (Array.sub a lo (hi - lo))
+    else
+      let mid = (lo + hi) / 2 in
+      let x = order lo mid and y = order mid hi in
+      if Random.State.bool rng then merge x y else merge y x
+  in
+  order 0 (Array.length a)
 
 let sampled_share ~budget ~linear ~classes =
   let spend = min (budget - linear) (max (budget / 40) (linear / 2)) in
@@ -271,24 +298,28 @@ let check_linear trace =
 
 let check_others trace = of_singles (rest trace (structural trace))
 
-(* Spread as [spread] spreads [check_others], but the scenarios are counted
-   first and built only once picked. *)
-let check_others_spread ~keep trace =
+(* Sampled as [sample] samples [check_others], but the scenarios are
+   counted first and built only once picked. *)
+let check_others_sample ~keep trace =
   let ops = rest trace (structural trace) in
   let at op = List.filter keep (of_singles [ op ]) in
   let total = List.fold_left (fun n op -> n + List.length (at op)) 0 ops in
-  let pick n =
+  let pick rng n =
     if total <= n then List.concat_map at ops
     else
-      let next i = i * total / n in
+      let next =
+        Array.init n (fun i ->
+            let lo = i * total / n and hi = (i + 1) * total / n in
+            lo + Random.State.int rng (hi - lo))
+      in
       let rec go i k acc = function
         | [] -> List.rev acc
         | op :: rest ->
             let c = Array.of_list (at op) in
             let m = Array.length c in
             let rec take i acc =
-              if i < n && next i < k + m then
-                take (i + 1) (c.(next i - k) :: acc)
+              if i < n && next.(i) < k + m then
+                take (i + 1) (c.(next.(i) - k) :: acc)
               else (i, acc)
             in
             let i, acc = take i acc in
@@ -352,33 +383,14 @@ let aimed ~first ~(after : trace) (op1 : Op.t) =
     (disk @ other, [])
   else ([], later)
 
-(* [l] in an order each prefix of which is spread evenly over it: by the
-   bits of each place reversed. *)
-let interleave l =
-  let a = Array.of_list l in
-  let n = Array.length a in
-  let rec bits b = if 1 lsl b >= n then b else bits (b + 1) in
-  let b = bits 0 in
-  let rev i =
-    let r = ref 0 in
-    for k = 0 to b - 1 do
-      if i land (1 lsl k) <> 0 then r := !r lor (1 lsl (b - 1 - k))
-    done;
-    !r
-  in
-  List.filter_map
-    (fun i ->
-      let j = rev i in
-      if j < n then Some a.(j) else None)
-    (List.init (1 lsl b) Fun.id)
-
 (* At most [limit] of the pairs [pairs] makes at [changed], in order, and
-   of those at [rest], evenly: each operation makes one pair or more, so
-   [limit] operations of each are enough. *)
-let aim limit pairs (changed, rest) =
+   of those at [rest], sampled, in an order each prefix of which is sampled
+   too: each operation makes one pair or more, so [limit] operations of
+   each are enough. *)
+let aim ~rng limit pairs (changed, rest) =
   let first l = List.filteri (fun i _ -> i < limit) l in
   ( first (pairs (first changed)),
-    interleave (spread limit (pairs (spread limit rest))) )
+    interleave rng (sample rng limit (pairs (sample rng limit rest))) )
 
 module Pairs = struct
   type 'a t = {
@@ -415,7 +427,7 @@ module Pairs = struct
   let to_list t = List.concat_map List.rev (Array.to_list t.ranks)
 end
 
-let check_seconds ?(limit = max_int) one ~first ~(after : trace) =
+let check_seconds ?(limit = max_int) ~rng one ~first ~(after : trace) =
   match index_of after (fst one) with
   | None -> ([], [])
   | Some (op1 : Op.t) ->
@@ -425,7 +437,7 @@ let check_seconds ?(limit = max_int) one ~first ~(after : trace) =
           (fun two -> { faults = [ one; two ]; lasting = None })
           (singles ops)
       in
-      aim limit pairs (changed, rest)
+      aim ~rng limit pairs (changed, rest)
 
 let faults_key = function
   | [] -> "none"
@@ -595,7 +607,7 @@ let rcuts ~changed s ~(recover : trace) =
       List.map (fun st -> { s with rcut = Some (j, st) }) [ Drop; Keep ])
     (cut_points ~changed recover (structural recover))
 
-let crash_seconds ?(limit = max_int) ~tears one ~first ~(after : trace) =
+let crash_seconds ?(limit = max_int) ~rng ~tears one ~first ~(after : trace) =
   match index_of after (fst one) with
   | None -> ([], [])
   | Some (op1 : Op.t) ->
@@ -605,7 +617,7 @@ let crash_seconds ?(limit = max_int) ~tears one ~first ~(after : trace) =
           (fun two -> both { base with cfaults = [ one; two ] })
           (durable_faults ~tears ops)
       in
-      aim limit pairs (changed, rest)
+      aim ~rng limit pairs (changed, rest)
 
 let next_choices trail =
   let rec go = function

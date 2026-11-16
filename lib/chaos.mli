@@ -25,7 +25,13 @@
       pairs of faults, and the other states a power cut may leave. A first fault
       that changes what the run writes gets its second faults first, on the
       operations that follow it, those that change the disk first: that is where
-      a retry or a recovery path lives. A larger budget tries more.
+      a retry or a recovery path lives. When it has fewer runs than scenarios of
+      a kind, it splits them, in order, into as many groups of neighbours as it
+      has runs, and runs one scenario of each group, drawn from a seed. Each
+      draw may land on any scenario of its group, so a pattern that repeats
+      along the scenarios, as the faults tried at each operation do, hides no
+      kind of fault from it, where taking every k-th scenario may meet only one.
+      A larger budget tries more.
 
     A check never passes on a partial linear tier. One that needs more runs than
     its budget fails and says so: shrink the workload or raise [~budget]. The
@@ -82,12 +88,19 @@
     random under a larger budget needs that budget again, which the refusal
     names. The report of a check run inside another is text in the outer one.
 
+    The sampled tier draws its scenarios from a seed, the same one on every
+    check unless [~seed] gives another, so a check meets the same faults each
+    time. A replay names its scenario, not the draw that found it, so it needs
+    no seed.
+
     A check reads no environment variable and prints nothing. A test that wants
-    a larger budget at night reads its own:
+    a larger budget at night, or other faults in the sampled tier, reads its
+    own:
     {[
     let check run =
-      let budget = Option.map int_of_string (Sys.getenv_opt "CHAOS_BUDGET") in
-      Eio_fs.Chaos.check ?budget run
+      let int name = Option.map int_of_string (Sys.getenv_opt name) in
+      Eio_fs.Chaos.check ?budget:(int "CHAOS_BUDGET") ?seed:(int "CHAOS_SEED")
+        run
     ]}
 
     {2 Runs}
@@ -134,14 +147,15 @@ type env =
 
 val check :
   ?budget:int ->
+  ?seed:int ->
   ?replay:string ->
   ?os:[< `Linux | `Macos ] ->
   ?setup:(env -> unit) ->
   (env -> unit) ->
   unit
-(** [check ~budget ~replay ~os ~setup run] calls [run] many times, each on a
-    fresh in-memory directory that holds what [setup] (defaults to nothing) made
-    there, with no fault. The first run has no fault either. The directory
+(** [check ~budget ~seed ~replay ~os ~setup run] calls [run] many times, each on
+    a fresh in-memory directory that holds what [setup] (defaults to nothing)
+    made there, with no fault. The first run has no fault either. The directory
     answers as [os] (defaults to [`Linux]) does, as {!Eio_fs.Fs.v} makes it.
 
     The linear tier tries each of these alone, at each structural operation:
@@ -172,8 +186,10 @@ val check :
     check, an injected [Eio.Io] included. So does a hang, a first run that makes
     no filesystem operation, and two first runs that make different ones.
 
-    [budget] (defaults to [20_000]) bounds the runs. [replay] runs only the
-    scenario a failure named.
+    [budget] (defaults to [20_000]) bounds the runs. [seed] (defaults to [0])
+    draws the scenarios of the sampled tier: another seed meets other faults.
+    [replay] runs only the scenario a failure named, whatever the seed that
+    found it.
 
     @raise Failure with a report of the first failing run.
     @raise Invalid_argument if [budget] is not positive. *)
@@ -219,15 +235,16 @@ val check :
 module Crash : sig
   val check :
     ?budget:int ->
+    ?seed:int ->
     ?replay:string ->
     ?os:[< `Linux | `Macos ] ->
     ?setup:(env -> unit) ->
     (ack:('a -> unit) -> env -> unit) ->
     recover:(acked:'a list -> env -> unit) ->
     unit
-  (** [check ~budget ~replay ~os ~setup run ~recover] cuts the power during
-      [run], and during [recover], and checks that [recover] accepts what each
-      cut leaves.
+  (** [check ~budget ~seed ~replay ~os ~setup run ~recover] cuts the power
+      during [run], and during [recover], and checks that [recover] accepts what
+      each cut leaves.
 
       [setup] (defaults to nothing) prepares the directory, and what it makes is
       durable. [run] calls [ack v] once its program has promised that [v] is
@@ -271,8 +288,10 @@ module Crash : sig
       accepts an empty directory may read a missing file as empty. A [recover]
       that ignores [acked] passes, and misses what a cut loses.
 
-      [budget] (defaults to [20_000]) bounds the runs. [replay] runs only the
-      scenario a failure named.
+      [budget] (defaults to [20_000]) bounds the runs. [seed] (defaults to [0])
+      draws the scenarios of the sampled tier: another seed meets other cuts and
+      faults. [replay] runs only the scenario a failure named, whatever the seed
+      that found it.
 
       @raise Failure with a report of the first failing run.
       @raise Invalid_argument if [budget] is not positive. *)

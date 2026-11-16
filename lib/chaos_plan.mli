@@ -69,9 +69,19 @@ val structural : trace -> trace
     length class, a length rounded down to a power of two; the syncs that follow
     them; and every other operation. *)
 
-val spread : int -> 'a list -> 'a list
-(** [spread n l] is [n] elements of [l], evenly spread, or [l] if it has [n] or
-    fewer. *)
+val sample : Random.State.t -> int -> 'a list -> 'a list
+(** [sample rng n l] is [l] if it has [n] or fewer elements. Otherwise it splits
+    [l] into [n] runs of consecutive elements whose lengths differ by one at
+    most, and is one element of each run, drawn with [rng], in the order of [l].
+    Unlike every [k]-th element, it meets each element of [l] for some state of
+    [rng], whatever the period of [l]. *)
+
+val interleave : Random.State.t -> 'a list -> 'a list
+(** [interleave rng l] is [l] in an order each prefix of which is spread over
+    it: when the length of [l] is a power of two, its first [m] elements, for
+    each power of two [m], hold one element of each of [m] runs of consecutive
+    elements of equal length. [rng] draws which, so any element may come first.
+*)
 
 val sampled_share : budget:int -> linear:int -> classes:int -> int
 (** [sampled_share ~budget ~linear ~classes] is the runs of the sampled tier for
@@ -109,11 +119,12 @@ val is_evict : pos * Fault.t -> bool
 val check_others : trace -> check list
 (** [check_others first] is the same at the other operations. *)
 
-val check_others_spread :
-  keep:(check -> bool) -> trace -> int * (int -> check list)
-(** [check_others_spread ~keep first] is the number of scenarios of
+val check_others_sample :
+  keep:(check -> bool) -> trace -> int * (Random.State.t -> int -> check list)
+(** [check_others_sample ~keep first] is the number of scenarios of
     [check_others first] for which [keep] holds, and a function that is [n] of
-    them, as {!spread} picks them, built only as they are picked. *)
+    them drawn with [rng], as {!sample} draws them, built only as they are
+    drawn. *)
 
 (** The operations sure to be structural as a run goes. *)
 module Sure : sig
@@ -146,17 +157,20 @@ end
 
 val check_seconds :
   ?limit:int ->
+  rng:Random.State.t ->
   pos * Fault.t ->
   first:Disk.t ->
   after:trace ->
   check list * check list
-(** [check_seconds ~limit f ~first ~after] is the pairs of faults whose first is
-    [f] and whose second lands after it in [after], the run [f] alone made, best
-    first, at most [limit] (defaults to all). If [f] changed what the run does
-    to the disk, past [f], from [first], the run with no fault, they are the
-    first list, which aims at the path [f] sent the run down: the operations
-    that change the disk, then the others, each nearest [f] first. Else they are
-    the second list, in an order each prefix of which is evenly spread. *)
+(** [check_seconds ~limit ~rng f ~first ~after] is the pairs of faults whose
+    first is [f] and whose second lands after it in [after], the run [f] alone
+    made, best first, at most [limit] (defaults to all). If [f] changed what the
+    run does to the disk, past [f], from [first], the run with no fault, they
+    are the first list, which aims at the path [f] sent the run down: the
+    operations that change the disk, then the others, each nearest [f] first.
+    Else they are the second list, drawn with [rng] as {!sample} draws them, in
+    the order {!interleave} gives. With no [limit], both lists are every pair,
+    whatever [rng]. *)
 
 (** The pairs of faults the sampled tier tries: those of each first fault, best
     first, round by round. *)
@@ -251,13 +265,14 @@ val rcuts : changed:(Op.t -> bool) -> crash -> recover:trace -> crash list
 
 val crash_seconds :
   ?limit:int ->
+  rng:Random.State.t ->
   tears:(Op.t -> int list) ->
   pos * Fault.t ->
   first:Disk.t ->
   after:trace ->
   crash list * crash list
-(** [crash_seconds ~limit ~tears f ~first ~after] is, likewise, the pairs of
-    faults whose first is [f] and whose second lands after it in [after]. *)
+(** [crash_seconds ~limit ~rng ~tears f ~first ~after] is, likewise, the pairs
+    of faults whose first is [f] and whose second lands after it in [after]. *)
 
 val next_choices : (int * int) list -> int list option
 (** [next_choices trail] is the draws of the next state a cut allows, after the

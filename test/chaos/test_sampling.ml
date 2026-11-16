@@ -4,7 +4,59 @@
    candidates, so taking every fourth one would only ever move a single
    byte, and never tear a write in the middle of the log. *)
 
-let check w () = Eio_fs.Chaos.check w
+let check ?seed w () = Eio_fs.Chaos.check ?seed w
+let replay_of m = Scanf.sscanf (Expect.field "replay" m) "~replay:%S" Fun.id
+
+(* A replay names its scenario, so one found under another seed runs again
+   with none, and with any other. *)
+let test_seed_replay () =
+  let w = Sampling.log ~bug:true ~n:254 in
+  let found = Expect.report (check ~seed:7 w) in
+  Alcotest.(check string) "tier" "sampled" (Expect.field "tier" found);
+  let replay = replay_of found in
+  List.iter
+    (fun seed ->
+      let again =
+        Expect.report (fun () -> Eio_fs.Chaos.check ?seed ~replay w)
+      in
+      Alcotest.(check string)
+        "faults"
+        (Expect.field "faults" found)
+        (Expect.field "faults" again);
+      Alcotest.(check string) "tier" "sampled" (Expect.field "tier" again))
+    [ None; Some 7; Some 8 ]
+
+(* The same for a power cut: the scenario of a failure the sampled tier
+   found under seed 7 runs again under any seed. *)
+let test_crash_seed_replay () =
+  let config ?seed ?replay () =
+    let save dir v =
+      let tmp = Eio.Path.(dir / "config.tmp") in
+      Eio.Path.with_open_out ~create:(`Or_truncate 0o644) tmp (fun f ->
+          Eio.Flow.copy_string v f;
+          Eio.File.sync f);
+      Eio.Path.rename tmp Eio.Path.(dir / "config")
+    in
+    Eio_fs.Chaos.Crash.check ?seed ?replay
+      ~setup:(fun env -> save env#fs "old")
+      (fun ~ack env ->
+        match save env#fs "new" with () -> ack () | exception Eio.Io _ -> ())
+      ~recover:(fun ~acked env ->
+        match (Eio.Path.load Eio.Path.(env#fs / "config"), acked) with
+        | "new", _ | "old", [] -> ()
+        | v, _ -> Fmt.failwith "config is %S" v)
+  in
+  let found = Expect.report (config ~seed:7) in
+  let replay = replay_of found in
+  List.iter
+    (fun seed ->
+      let again = Expect.report (config ?seed ~replay) in
+      List.iter
+        (fun f ->
+          Alcotest.(check string)
+            f (Expect.field f found) (Expect.field f again))
+        [ "cut"; "faults"; "tier"; "error" ])
+    [ None; Some 7; Some 8 ]
 
 let suite =
   ( "sampling",
@@ -16,4 +68,8 @@ let suite =
          period of its candidates"
         `Quick
         (Expect.caught ~tier:"sampled" (check (Sampling.log ~bug:true ~n:254)));
+      Alcotest.test_case "a failure found under seed 7 replays under any seed"
+        `Quick test_seed_replay;
+      Alcotest.test_case "a power cut found under seed 7 replays under any seed"
+        `Quick test_crash_seed_replay;
     ] )
