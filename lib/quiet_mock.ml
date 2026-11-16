@@ -3,7 +3,7 @@ open! Hermetic
 (* A silent copy of Eio_mock's scheduler and clock.
 
    Copied from eio 1.6, lib_eio/mock/backend.ml and lib_eio/mock/clock.ml,
-   trimmed to what Eio_fs.Chaos needs, with three changes:
+   trimmed to what Eio_fs.Chaos needs, with these changes:
    - moving the clock prints nothing. Eio_mock's clock calls [traceln] from
      the scheduler, where no fiber binding reaches, so a check built on it
      cannot keep stderr clean. A quiet mock clock belongs upstream; this copy
@@ -17,7 +17,12 @@ open! Hermetic
      charges [turn] of clock, as a program's CPU time passes between two,
      and a run stops at [max_turns] turns: as a busy loop if no fiber
      waited [min_wait] or more for a timer in the last [max_turns], and as
-     too long otherwise.
+     too long otherwise;
+   - [charge] takes a turn for work that does not suspend, so a loop of it
+     moves the clock and meets the limits;
+   - an effect [effects] answers, as [Eio_unix.run_in_systhread], runs at
+     once, in the scheduler, and its fiber resumes on its next turn;
+   - a deadlock names the fibers that wait.
 
    Hang detection and deterministic virtual time need a loop the check owns.
    eio-net carries the same copy. This one needs no eio.mock.
@@ -42,7 +47,7 @@ module Trace = Eio.Private.Trace
 module Lf_queue = Eio_utils.Lf_queue
 module Suspended = Eio_utils.Suspended
 
-exception Deadlock_detected
+exception Deadlock_detected of Trace.id list
 exception Time_limit
 exception Busy
 exception Too_long
@@ -135,13 +140,34 @@ type t = {
   mutable busy : bool;
   idle : unit -> bool;
   stop : unit -> bool;
+  waiting : (Trace.id, unit) Hashtbl.t;
 }
+
+type handler = { handle : 'a. 'a Effect.t -> (unit -> 'a) option }
 
 (* A turn costs about 0.1 us on eio_posix on Linux, and up to 20 us on a
    loaded Mac: 1 us, fixed. *)
 let turn = Mtime.Span.(1 * us)
 let max_turns = 10_000_000
 let min_wait = Mtime.Span.(1 * ms)
+
+(* A turn taken in a fiber: past the limits, the fiber waits for ever, and
+   the scheduler stops at its next turn. *)
+let charge t () =
+  t.turns <- t.turns + 1;
+  t.total <- t.total + 1;
+  let now =
+    Option.value
+      (Mtime.add_span (Mono.Impl.now t.clock) turn)
+      ~default:Mtime.max_stamp
+  in
+  let past = Mtime.compare now t.limit > 0 in
+  if t.total > max_turns || past then begin
+    if past then t.past_limit <- true else t.busy <- true;
+    Eio.Cancel.protect (fun () ->
+        Eio.Promise.await (fst (Eio.Promise.create ())))
+  end
+  else Mono.Impl.set_time t.clock now
 
 let rec schedule t : exit =
   match Lf_queue.pop t.run_q with
@@ -178,7 +204,10 @@ let rec schedule t : exit =
           t.past_limit <- true;
           `Exit_scheduler)
 
-let run ?(idle = fun () -> false) ?(stop = fun () -> false) ~limit main =
+let no_effects = { handle = (fun _ -> None) }
+
+let run ?(idle = fun () -> false) ?(stop = fun () -> false)
+    ?(effects = no_effects) ~limit main =
   let clock = { Mono.Impl.now = Mtime.of_uint64_ns 0L; q = Mono.Q.empty } in
   let wall : float Eio.Time.clock_ty Eio.Resource.t =
     Eio.Resource.T (clock, wall_handler)
@@ -197,6 +226,7 @@ let run ?(idle = fun () -> false) ?(stop = fun () -> false) ~limit main =
       busy = false;
       idle;
       stop;
+      waiting = Hashtbl.create 16;
     }
   in
   let rec fork ~new_fiber:fiber fn =
@@ -223,8 +253,11 @@ let run ?(idle = fun () -> false) ?(stop = fun () -> false) ~limit main =
                 Some
                   (fun k ->
                     let k = { Suspended.k; fiber } in
+                    let tid = Fiber_context.tid fiber in
+                    Hashtbl.replace t.waiting tid ();
                     f fiber (fun result ->
                         Lf_queue.push t.run_q (fun () ->
+                            Hashtbl.remove t.waiting tid;
                             Fiber_context.clear_cancel_fn fiber;
                             match result with
                             | Ok v -> Suspended.continue k v
@@ -239,7 +272,14 @@ let run ?(idle = fun () -> false) ?(stop = fun () -> false) ~limit main =
                     fork ~new_fiber f)
             | Eio.Private.Effects.Get_context ->
                 Some (fun k -> Effect.Deep.continue k fiber)
-            | _ -> None);
+            | e ->
+                Option.map
+                  (fun run k ->
+                    let v = run () in
+                    let k = { Suspended.k; fiber } in
+                    Lf_queue.push t.run_q (fun () -> Suspended.continue k v);
+                    schedule t)
+                  (effects.handle e));
       }
   in
   let new_fiber = Fiber_context.make_root () in
@@ -247,7 +287,7 @@ let run ?(idle = fun () -> false) ?(stop = fun () -> false) ~limit main =
   let (`Exit_scheduler : exit) =
     Domain_local_await.using ~prepare_for_await:Eio_utils.Dla.prepare_for_await
       ~while_running:(fun () ->
-        fork ~new_fiber (fun () -> result := Some (main wall mono)))
+        fork ~new_fiber (fun () -> result := Some (main wall mono (charge t))))
   in
   match !result with
   | Some x -> x
@@ -256,4 +296,8 @@ let run ?(idle = fun () -> false) ?(stop = fun () -> false) ~limit main =
       else if t.busy && t.turns >= max_turns then raise Busy
       else if t.busy then raise Too_long
       else if t.past_limit then raise Time_limit
-      else raise Deadlock_detected
+      else
+        raise
+          (Deadlock_detected
+             (List.sort compare
+                (Hashtbl.fold (fun tid () l -> tid :: l) t.waiting [])))

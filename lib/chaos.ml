@@ -174,11 +174,12 @@ let in_loop ?idle ?(halted = ref None) main =
   match
     Quiet_mock.run ?idle
       ~stop:(fun () -> Option.is_some !halted)
-      ~limit:3600. main
+      ~limit:3600.
+      (fun clock mono _charge -> main clock mono)
   with
   | v -> Ok v
   | exception Quiet_mock.Stopped -> Error (Option.get !halted)
-  | exception Quiet_mock.Deadlock_detected -> Error Deadlock
+  | exception Quiet_mock.Deadlock_detected _ -> Error Deadlock
   | exception Quiet_mock.Time_limit -> Error Time_limit
   | exception Quiet_mock.Busy -> Error Busy
   | exception Quiet_mock.Too_long -> Error Too_long
