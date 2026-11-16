@@ -9,8 +9,15 @@
   eio_fs
   eio-fs.sync
   eio_fs_internal
+  stat_workload
+  provenance
   unix
   alcotest
   fmt
   cstruct
-  optint))
+  optint)
+ (deps
+  (source_tree stat/traces)
+  stat/scripts/generate.sh
+  stat/scripts/record.ml
+  stat/workload/stat_workload.ml))

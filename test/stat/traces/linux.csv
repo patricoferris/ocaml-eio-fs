@@ -1,0 +1,58 @@
+# script: test/stat/scripts/generate.sh
+# script revision: d02e55d9b51f1a7cbca61fcc11301961ebf7c42e
+# recorded: 2026-11-16
+# script digest: 9cecdd47741abff560ed66cad3f27a8c
+# linux os: Linux 7.2.12-orbstack-00394-gbecdd6130068 aarch64
+# linux image: ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460
+# linux user: uid 1000, groups 1000
+# linux eio_posix: 1.6
+# tmpfs: tmpfs, rw,nosuid,nodev,relatime
+# ext4: ext4, rw,relatime, mke2fs 1.47.2 (1-Jan-2025), 4096-byte blocks
+workload|tmpfs|ext4
+times|create f d:mc|create f d:mc
+times|write 3 f:mc|write 3 f:mc
+times|write 0|write 0
+times|pwrite 1 f:mc|pwrite 1 f:mc
+times|truncate to the same size f:mc|truncate to the same size f:mc
+times|truncate 10 f:mc|truncate 10 f:mc
+times|fsync|fsync
+times|fstat|fstat
+times|read 1 f:a|read 1 f:a
+times|read 1 again|read 1 again
+times|pread at the end|pread at the end
+times|open to truncate f:mc|open to truncate f:mc
+times|open to truncate, empty f:mc|open to truncate, empty f:mc
+times|open to read|open to read
+times|open to write|open to write
+times|chmod to the same mode f:c|chmod to the same mode f:c
+times|chmod 600 f:c|chmod 600 f:c
+times|chown to the same owner f:c|chown to the same owner f:c
+times|chown nothing f:c|chown nothing f:c
+times|stat|stat
+times|mkdir sub d:mc nlink 2->3|mkdir sub d:mc nlink 2->3
+times|symlink l d:mc|symlink l d:mc
+times|readlink l l:a|readlink l l:a
+times|readlink l again|readlink l again
+times|read_dir d d:a|read_dir d d:a
+times|read_dir d again|read_dir d again
+times|rename f g d:mc|rename f g d:mc
+times|rename g f d:mc|rename g f d:mc
+times|rename d/sub e/sub d:mc nlink 3->2 e:mc nlink 2->3|rename d/sub e/sub d:mc nlink 3->2 e:mc nlink 2->3
+times|rename e/sub d/sub d:mc nlink 2->3 e:mc nlink 3->2|rename e/sub d/sub d:mc nlink 2->3 e:mc nlink 3->2
+times|rename d/sub d/sub|rename d/sub d/sub
+times|rmdir sub d:mc nlink 3->2|rmdir sub d:mc nlink 3->2
+times|unlink l d:mc|unlink l d:mc
+inode times|moved c|moved c
+inode times|replaced c nlink 1->0|replaced c nlink 1->0
+inode times|unlinked c nlink 1->0|unlinked c nlink 1->0
+counts|. nlink=3 blocks=0|. nlink=3 blocks=8
+counts|d nlink=4 blocks=0|d nlink=4 blocks=8
+counts|d/one nlink=1 blocks=8|d/one nlink=1 blocks=8
+counts|d/empty nlink=1 blocks=0|d/empty nlink=1 blocks=0
+counts|d/big nlink=1 blocks=16|d/big nlink=1 blocks=16
+counts|d/sparse nlink=1 blocks=8|d/sparse nlink=1 blocks=8
+counts|d/trunc nlink=1 blocks=0|d/trunc nlink=1 blocks=0
+counts|d/cut nlink=1 blocks=16|d/cut nlink=1 blocks=16
+counts|d/ln nlink=1 blocks=0|d/ln nlink=1 blocks=0
+counts|d/s1 nlink=2 blocks=0|d/s1 nlink=2 blocks=8
+counts|d/s2 nlink=2 blocks=0|d/s2 nlink=2 blocks=8
