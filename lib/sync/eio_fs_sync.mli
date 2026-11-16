@@ -151,9 +151,9 @@ val mkdirs :
 (** [mkdirs ~exists_ok ~barrier ~perm p] creates [p] and its missing ancestors
     with mode [perm] and issues [barrier]'s directory barrier (defaults to
     {!Barrier.portable}) on the parent of each, existing ones included, parent
-    first. With [exists_ok] (defaults to [false]) [p] may already be a
-    directory; an ancestor always may. Existing ones are included because a
-    writer whose barrier failed may have left them visible but not durable.
+    first: a writer whose barrier failed may have left an existing directory
+    visible but not durable. With [exists_ok] (defaults to [false]) [p] may
+    already be a directory; an ancestor always may.
 
     The root of [p]'s capability must already be durable: [mkdirs] issues no
     barrier outside it. Existing permissions are unchanged. A file is never
