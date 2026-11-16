@@ -249,25 +249,34 @@ let cases =
     case (replace ~fsync:true)
       (fun o -> not (List.mem (content "0" o) [ File "1"; File "11" ]))
       ~extra:[ f [ ("0", "1"); ("1", zeros 2) ] ];
+    (* The ported ext4 and its envelope let the extend of 0 reorder before
+       creat 1, which ext4 does not: it journals that length as it writes
+       the page back, in a transaction no earlier than creat 1's
+       (fs/ext4/inode.c, mpage_map_and_submit_extent), and jbd2 commits
+       transactions in order. Upstream states no ext4 outcome for this
+       test. *)
     case (two_appends ~fsync:false)
       (fun o -> not (allowed_two_appends o))
+      ~missing:[ o [ ("0", Some "11"); ("1", None) ] ]
+      ~not_produced:
+        [
+          o [ ("0", Some "11"); ("1", None) ];
+          o [ ("0", Some (zeros 2)); ("1", None) ];
+        ]
       ~extra:
         [
           f [ ("0", ""); ("1", zeros 1) ];
-          o [ ("0", Some (zeros 2)); ("1", None) ];
           f [ ("0", zeros 2); ("1", "") ];
           f [ ("0", zeros 2); ("1", zeros 1) ];
           f [ ("0", zeros 2); ("1", "1") ];
           f [ ("0", "11"); ("1", zeros 1) ];
         ];
+    (* The same before fsync 0; after it, its data is durable. *)
     case (two_appends ~fsync:true)
       (fun o -> not (allowed_two_appends o))
+      ~not_produced:[ o [ ("0", Some (zeros 2)); ("1", None) ] ]
       ~extra:
-        [
-          o [ ("0", Some (zeros 2)); ("1", None) ];
-          f [ ("0", zeros 2); ("1", "") ];
-          f [ ("0", "11"); ("1", zeros 1) ];
-        ];
+        [ f [ ("0", zeros 2); ("1", "") ]; f [ ("0", "11"); ("1", zeros 1) ] ];
     case chrome
       (fun o ->
         match content "0" o with

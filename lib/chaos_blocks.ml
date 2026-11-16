@@ -192,8 +192,9 @@ let writeback ?(over = []) ?(len_upto = max_int) ?(bytes = false)
   let sizes = Array.make (n + 1) (Cstruct.length durable) in
   let versions = Hashtbl.create 16 in
   let boundaries = ref [] in
-  (* The pages a pending write put bytes in. *)
-  let filled = Hashtbl.create 8 in
+  (* The pages a pending write put bytes in, and those a write that may set
+     the length did. *)
+  let filled = Hashtbl.create 8 and early = Hashtbl.create 8 in
   for k = 0 to n - 1 do
     let prev = sizes.(k) in
     (match changes.(k) with
@@ -213,7 +214,8 @@ let writeback ?(over = []) ?(len_upto = max_int) ?(bytes = false)
         end;
         if bytes && Cstruct.length data > 0 then
           for p = offset / page to (offset + Cstruct.length data - 1) / page do
-            Hashtbl.replace filled p ()
+            Hashtbl.replace filled p ();
+            if k < len_upto then Hashtbl.replace early p ()
           done
     | Resize m -> sizes.(k + 1) <- m);
     let lo, hi =
@@ -327,9 +329,18 @@ let writeback ?(over = []) ?(len_upto = max_int) ?(bytes = false)
     !limit
   in
   let chosen = Hashtbl.create 16 and stale_blocks = Hashtbl.create 4 in
+  (* ext4 allocates a page the disk does not hold as it writes it back, with
+     the length: one only later changes put bytes in holds none of them, nor
+     what a failed writeback wrote. *)
+  let unallocated b =
+    bytes
+    && (not (held_at held (b * bs) ((b + 1) * bs)))
+    && not (Hashtbl.mem early (b * bs / page))
+  in
+  let over = List.filter (fun (b, _) -> not (unallocated b)) over in
   List.iter
     (fun b ->
-      let limit = upto b in
+      let limit = if unallocated b then min len_upto (upto b) else upto b in
       let ks =
         List.filter (fun v -> v <= limit) (List.rev (Hashtbl.find versions b))
       in

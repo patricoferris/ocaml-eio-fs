@@ -1018,7 +1018,6 @@ module Crash = struct
     mutable mode : int;
         (* The file's mode as last seen, to tell when a write clears setuid
            or setgid. *)
-    mutable fino : int64; (* its inode, once a write cleared its mode *)
     mutable evicted : Cstruct.t option;
         (* The durable bytes had the pages a failed sync lost been evicted
            before a later write to them, where they differ. *)
@@ -1063,7 +1062,6 @@ module Crash = struct
       gen = 0;
       cache = None;
       mode = 0;
-      fino = -1L;
       evicted = None;
       partial = [];
       held =
@@ -2374,7 +2372,6 @@ module Crash = struct
      change of attributes, committed by the file's sync and by any later
      commit. *)
   let record_clear ctl fs (st : Eio.File.Stat.t) =
-    fs.fino <- st.ino;
     ctl.seq <- ctl.seq + 1;
     let segs =
       Option.value ~default:[] (tree_path ~root:(root_segs ctl) fs.rel)
@@ -2470,11 +2467,10 @@ module Crash = struct
       in
       let bytes = match ctl.policy with Choose _ -> true | _ -> false in
       let contents = Hashtbl.create 16 in
-      (* The earliest setuid clear the crash dropped, by inode: a length a
-         later change sets lands only with or after it, as ext4 journals both
-         in program order. An overwrite within the length may land without
-         it. *)
-      let clear_cut = Hashtbl.create 4 in
+      (* Where the cut first loses a journal entry: a length a change from
+         there on sets does not land, nor a block it allocates. An overwrite
+         within the length may land without it. *)
+      let lost = ref max_int in
       (* The files the image no longer holds, whose blocks are free, by
          path. *)
       let removed = ref [] and unsynced_removed = ref [] in
@@ -2620,7 +2616,7 @@ module Crash = struct
         | Some c -> c
         | None ->
             let mine = List.rev fs.pending in
-            let cut = Hashtbl.find_opt clear_cut fs.fino in
+            let cut = if !lost = max_int then None else Some !lost in
             let len_upto =
               match cut with
               | None -> max_int
@@ -2783,17 +2779,9 @@ module Crash = struct
         in
         build ()
       in
-      List.iter
-        (fun (e : metadata_entry) ->
-          match e.attrs_ino with
-          | Some ino when e.clear && not (Hashtbl.mem included e.seq) -> (
-              (* The write that cleared it was logged just before it. *)
-              let at = e.seq - 1 in
-              match Hashtbl.find_opt clear_cut ino with
-              | Some s when s <= at -> ()
-              | Some _ | None -> Hashtbl.replace clear_cut ino at)
-          | Some _ | None -> ())
-        journal;
+      lost :=
+        Chaos_journal.first_lost ctl.journal ~kept:(fun e ->
+            Hashtbl.mem included e.seq);
       let tree =
         match tree with
         | Dir d ->

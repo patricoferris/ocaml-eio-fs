@@ -85,6 +85,15 @@ val closure : 'a t -> 'a entry -> 'a entry list
 val clears_before : 'a t -> int -> 'a entry list
 (** [clears_before t seq] is the pending setuid clears before [seq]. *)
 
+val first_lost : 'a t -> kept:('a entry -> bool) -> int
+(** [first_lost t ~kept] is where a cut that keeps the committed entries of [t]
+    and those for which [kept] holds first loses one, in program order: the
+    {!field-seq} of the first entry it loses, or the place before it for a
+    setuid clear, where the write that made it is; [max_int] if it loses none.
+    No length a change from there on sets survives the cut: ext4 journals it as
+    it writes the pages back, in a transaction no earlier than any entry made
+    before the change, and jbd2 commits transactions in order. *)
+
 (** {1:commits Barriers and commits} *)
 
 val bar : ?upto:int -> 'a t -> int64 -> int

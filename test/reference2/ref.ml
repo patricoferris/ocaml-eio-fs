@@ -907,18 +907,17 @@ let pending_data t =
     t.fdata []
   |> List.sort compare
 
-(* The write before the earliest setuid clear of [id] the committed set [s]
-   leaves out: a length a change from there on sets lands only with the
-   clear, as ext4 journals both in program order. *)
-let clear_cut t s id =
+(* The earliest entry the committed set [s] leaves out, or the write
+   before it for a setuid clear: ext4 journals a length a change from there
+   on sets as it writes the pages back, in a transaction no earlier than
+   that entry's, so it lands only with it. *)
+let lost_cut t s =
   List.fold_left
     (fun acc e ->
-      match e.ek with
-      | Suid_clear { node } when node = id && not (IS.mem e.seq s) -> (
-          match acc with
-          | Some c when c <= e.seq - 1 -> acc
-          | _ -> Some (e.seq - 1))
-      | _ -> acc)
+      if IS.mem e.seq s then acc
+      else
+        let at = match e.ek with Suid_clear _ -> e.seq - 1 | _ -> e.seq in
+        match acc with Some c when c <= at -> acc | _ -> Some at)
     None t.journal
 
 (* [chs] without the changes from [cut] on that would set the length. *)
@@ -1013,7 +1012,7 @@ let image_with t s content : image =
    changes in [subset] kept. *)
 let survive_state t ~k ~subset =
   let s = survivors t k in
-  image_with t s (fun id -> content_survive ?cut:(clear_cut t s id) t id subset)
+  image_with t s (fun id -> content_survive ?cut:(lost_cut t s) t id subset)
 
 (* {2 Reorder_unsynced at block size [bs]} *)
 

@@ -201,26 +201,31 @@ val check :
     its entries. At a power cut, unsynced writes may be lost, as ext4 loses them
     with [data=writeback]. A file's length is one it had since its last sync, or
     the end of a 4096-byte page a write put bytes in, below a length it had
-    since. A 512-byte sector is written whole: it holds what the disk held,
-    zeros where it held nothing, or what it held after one of the writes to it,
-    so the writes to it land together. A truncation zeroes the rest of the
-    4096-byte page it cuts, sector by sector; at a length from before it, a page
-    it frees holds no later write, as ext4 reuses no block before the truncation
-    commits. A 4096-byte page the disk held nothing of, past the durable length
-    or in a hole, that a write put bytes in is written whole, as ext4 allocates
-    it: each of its sectors within the length may instead hold stale data. That
-    is what a freed block held: a page a synced truncation freed, or one of a
-    file the workload removed, its unsynced bytes included, as writeback may
-    have written them before the removal. ext4 may give a freed block to any
-    offset of any file: the check draws the page at the same place first, then
-    the others, up to eight distinct ones; and else the byte ['7']. Only a freed
-    block holds stale data: a file the cut lost and the workload never removed
-    frees none, and a removed file still open at the cut none either, as ext4
-    frees its blocks at its last close. Of the uncommitted directory changes, a
-    prefix survives. A failed sync loses the file's unsynced writes, as Linux
-    does, though some of their sectors may already be on disk; the page cache
-    may keep them or evict them. Before the cut, a read after a failed sync sees
-    them as kept, or, in a scenario of its own, as the disk holds them.
+    since. A length a write or a truncation set survives only with every
+    directory change made before it, and a 4096-byte page the disk held nothing
+    of holds bytes only with every directory change made before the first write
+    into it: ext4 journals the length, and allocates the page, as it writes the
+    pages back, after those changes. A 512-byte sector is written whole: it
+    holds what the disk held, zeros where it held nothing, or what it held after
+    one of the writes to it, so the writes to it land together. A truncation
+    zeroes the rest of the 4096-byte page it cuts, sector by sector; at a length
+    from before it, a page it frees holds no later write, as ext4 reuses no
+    block before the truncation commits. A 4096-byte page the disk held nothing
+    of, past the durable length or in a hole, that a write put bytes in is
+    written whole, as ext4 allocates it: each of its sectors within the length
+    may instead hold stale data. That is what a freed block held: a page a
+    synced truncation freed, or one of a file the workload removed, its unsynced
+    bytes included, as writeback may have written them before the removal. ext4
+    may give a freed block to any offset of any file: the check draws the page
+    at the same place first, then the others, up to eight distinct ones; and
+    else the byte ['7']. Only a freed block holds stale data: a file the cut
+    lost and the workload never removed frees none, and a removed file still
+    open at the cut none either, as ext4 frees its blocks at its last close. Of
+    the uncommitted directory changes, a prefix survives. A failed sync loses
+    the file's unsynced writes, as Linux does, though some of their sectors may
+    already be on disk; the page cache may keep them or evict them. Before the
+    cut, a read after a failed sync sees them as kept, or, in a scenario of its
+    own, as the disk holds them.
 
     {b macOS.} Under [~os:`Macos] the disk is APFS's, on a drive with a cache.
     {!Eio.File.sync} and the portable barriers of {!Eio_fs_sync} are fsync(2),
@@ -339,9 +344,10 @@ module Crash : sig
     | Survive of (unsynced -> bool)
         (** The writes for which the predicate holds survive, whole but for the
             sectors they overwrite, which hold every earlier overwrite of
-            theirs; a directory change survives if it holds for it and every
-            earlier one. [Survive (fun _ -> true)] is a process kill: the disk
-            keeps what the program saw. *)
+            theirs, and, if they change the length, only with every directory
+            change before them; a directory change survives if it holds for it
+            and every earlier one. [Survive (fun _ -> true)] is a process kill:
+            the disk keeps what the program saw. *)
 
   type t
   (** The type for power-cut controllers. *)

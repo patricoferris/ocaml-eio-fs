@@ -34,13 +34,19 @@ ported models give upstream's `(check equal? (length all-states) n)` and its
 configuration (section 3.5); where it saw a surprising state, eio-fs must
 produce it.
 
-Against the ext4 model, eio-fs produces every state it allows and, per test,
-exactly the extra states its `extra` list names. All but one have the shape
-ext4 `data=ordered` forbids and `data=writeback` allows: a file with the
-length a write gave it and zeros where that write's bytes go (the paper's
-Definition 7, rule 4; `chaos.mli` draws a length independently of the
-blocks). The other is in implied-directory-fsync: eio-fs's fsync does not
+Against the ext4 model, eio-fs produces every state it allows but one, and,
+per test, exactly the extra states its `extra` list names. All but one of
+these have the shape ext4 `data=ordered` forbids and `data=writeback` allows:
+a file with the length a write gave it and zeros where that write's bytes go
+(the paper's Definition 7, rule 4; `chaos.mli` draws a length independently
+of the blocks). The other is in implied-directory-fsync: eio-fs's fsync does not
 commit the file's creation, where ext4 commits it with the inode.
+
+The state eio-fs leaves out is in two-appends, which upstream runs on no
+ext4: the ported model and the envelope let the length a write gives file 0
+reach the disk before the earlier creat of file 1. ext4 journals that length as it writes
+the page back, in a transaction no earlier than the creat's, and jbd2
+commits transactions in order.
 
 ## Regenerate
 

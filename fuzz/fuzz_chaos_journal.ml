@@ -137,6 +137,41 @@ let check_indexes t all =
         (pending all))
     committed
 
+(* A place of program order no entry holds stands for a write. A length it
+   sets survives a cut iff the cut keeps every entry before it, and the
+   setuid clear it made, logged at the next place: ext4 journals the length
+   as it writes the pages back, after them. *)
+let check_lost t all ~kept =
+  let lost = first_lost t ~kept in
+  let last = List.fold_left (fun m e -> max m e.seq) 0 all in
+  for w = 0 to last + 1 do
+    if not (List.exists (fun e -> e.seq = w) all) then
+      let needs =
+        List.for_all
+          (fun e ->
+            e.committed || kept e
+            || not (e.seq < w || (e.clear && e.seq = w + 1)))
+          all
+      in
+      if w < lost <> needs then
+        failf "a length set at %d %s, the first lost at %d" w
+          (if needs then "is lost" else "survives")
+          lost
+  done
+
+(* Cuts that keep a prefix of the pending entries, as a drawn cut does, and
+   one that keeps every other entry. *)
+let check_cuts t all =
+  let p = pending all in
+  List.iteri
+    (fun n _ ->
+      let kept e =
+        List.exists (fun x -> x == e) (List.filteri (fun i _ -> i < n) p)
+      in
+      check_lost t all ~kept)
+    (() :: List.map ignore p);
+  check_lost t all ~kept:(fun e -> e.seq mod 2 = 0)
+
 let test_invariants a b =
   let ops = ops (a ^ b) in
   let t = v () in
@@ -213,12 +248,14 @@ let test_invariants a b =
       List.iter
         (fun e -> if not e.committed then failf "%d uncommitted" e.seq)
         was;
-      check_indexes t !all)
+      check_indexes t !all;
+      check_cuts t !all)
     ops
 
 let suite =
   ( "chaos_journal",
     [
-      test_case "the journal's indexes and commits hold their invariants"
+      test_case
+        "the journal's indexes, commits and lost places hold their invariants"
         [ bytes; bytes ] test_invariants;
     ] )

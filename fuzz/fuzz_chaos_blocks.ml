@@ -77,6 +77,35 @@ let test_prefix_blocks durable changes bs seed =
           changes
     done
 
+(* Only the first [k] changes may set the length: one they left, or a block
+   boundary below the longest. In bytes, on a new file, no page holds a
+   byte unless one of them is a write: ext4 allocates the page with the
+   length. *)
+let test_len_upto durable changes bs k seed =
+  let draw = draw_of_state (Random.State.make [| seed |]) in
+  let img =
+    writeback ~len_upto:k ~rng:draw ~bs ~cache:None
+      (Cstruct.of_string durable)
+      (pending changes)
+  in
+  let sizes =
+    List.init
+      (min k (List.length changes) + 1)
+      (fun j -> Cstruct.length (version durable changes j))
+  in
+  let longest = List.fold_left max 0 sizes and size = Cstruct.length img in
+  if not (List.mem size sizes || (size mod bs = 0 && size <= longest)) then
+    failf "length %d, not one of %a" size Fmt.(Dump.list int) sizes;
+  let img =
+    writeback ~len_upto:k ~bytes:true ~rng:draw ~bs:512 ~cache:None
+      Cstruct.empty (pending changes)
+  in
+  let written = function Write _ -> true | Resize _ -> false in
+  if
+    (not (List.exists written (List.filteri (fun i _ -> i < k) changes)))
+    && String.exists (fun c -> c <> '\000') (Cstruct.to_string img)
+  then failf "a page no write up to %d filled holds %a" k pp_cs img
+
 let block_size = range ~min:1 8
 
 let suite =
@@ -91,4 +120,7 @@ let suite =
       test_case "each block is one a prefix of the changes left"
         [ bytes; list change; block_size; int ]
         test_prefix_blocks;
+      test_case "a change past len_upto sets no length and fills no new page"
+        [ bytes; list change; block_size; range 6; int ]
+        test_len_upto;
     ] )

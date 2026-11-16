@@ -110,8 +110,10 @@ val writeback :
     [bytes], blocks are sectors, the length is one a change left or the end of a
     page a write put bytes in, and a sector of a page the disk does not hold
     ([held]) may hold stale data: one of [old p] for the page [p], or
-    {!val-stale}. [describe] is told the length and, run by run, where each
-    block's bytes come from. *)
+    {!val-stale}. Such a page holds no change past [len_upto], no stale data and
+    nothing of [over], unless one of the changes up to it put bytes in it.
+    [describe] is told the length and, run by run, where each block's bytes come
+    from. *)
 
 val sectors_together :
   cache:Cstruct.t option ->

@@ -155,6 +155,14 @@ let closure t e =
 let clears_before t seq =
   Ids.fold (fun s e acc -> if s < seq then e :: acc else acc) t.clears []
 
+(* A clear counts from the write that made it, logged just before it. *)
+let first_lost t ~kept =
+  Ids.fold
+    (fun s e acc ->
+      if e.committed || kept e then acc
+      else min acc (if e.clear then s - 1 else s))
+    t.entries max_int
+
 let bar ?(upto = max_int) t ino =
   match Hashtbl.find_opt t.by_dir ino with
   | None -> 0

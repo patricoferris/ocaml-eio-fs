@@ -370,7 +370,9 @@ module Crash : sig
             is never torn and never holds a later write without the earlier
             ones. Uncommitted directory operations survive as a prefix of
             program order whose length is drawn uniformly: metadata never
-            reorders. The [int] is the seed; the same seed and workload
+            reorders. A length a change left survives only with every directory
+            operation before that change, as ext4 journals it as it writes the
+            pages back. The [int] is the seed; the same seed and workload
             reproduce the same image. *)
     | Survive of (unsynced -> bool)
         (** Scripted: an un-synced write survives iff the predicate holds;
@@ -380,9 +382,11 @@ module Crash : sig
             that sector included. Otherwise writes are kept or dropped whole,
             whatever block they share. An uncommitted directory operation
             survives iff the predicate holds for it {e and} every earlier
-            uncommitted directory operation survived (the prefix rule). It pins
-            an exact scenario, for example keeping a generation pointer but
-            dropping the data block it references. *)
+            uncommitted directory operation survived (the prefix rule). A write
+            or a truncation that changes the length survives only with every
+            directory operation before it. It pins an exact scenario, for
+            example keeping a generation pointer but dropping the data block it
+            references. *)
     | Choose of (int -> int)
         (** As {!Reorder_unsynced}, with each draw [f n], in [\[0, n)], made by
             the function, so a caller can enumerate the states, and with lengths
@@ -394,8 +398,10 @@ module Crash : sig
             stale data, as ext4 may commit the page before its bytes land: a
             page a durable truncation freed or a removed file held, the one at
             the same place first, then the others, up to eight distinct ones,
-            and else every byte ['7']. With 512-byte blocks, a disk's sectors,
-            that is ext4 with [data=writeback]. *)
+            and else every byte ['7']. Such a page holds bytes, its own or
+            stale, only with every directory operation before the first write
+            into it, as ext4 allocates it with the length. With 512-byte blocks,
+            a disk's sectors, that is ext4 with [data=writeback]. *)
 
   (** The type for when a crash fires while the workload runs. *)
   type trigger =
