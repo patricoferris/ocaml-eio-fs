@@ -37,7 +37,6 @@ let rec as_memfs_dir : 'a. 'a Eio.Resource.t -> dir_fd option =
 module rec Dir : sig
   include Eio.Fs.Pi.DIR
 
-  (* TODO: drop when Eio 1.7, whose [Pi.DIR] has it, is released. *)
   val sync_dir : t -> Eio.Fs.path -> unit
   val v : label:string -> path:string -> dir_fd -> t
   val fd : t -> dir_fd
