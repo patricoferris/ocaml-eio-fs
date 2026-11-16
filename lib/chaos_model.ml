@@ -850,7 +850,7 @@ module Dir_impl = struct
 
   let pp ppf t =
     let (Base_dir ((module B), bv)) = t.boxed in
-    Fmt.pf ppf "chaos(%a)" B.pp bv
+    B.pp ppf bv
 
   (* Path syntax is a property of the backend, not of an instance, so the
      wrapper cannot take it from the base it boxes: it states the POSIX
@@ -3864,7 +3864,7 @@ module Crash = struct
 
     let pp ppf d =
       let (Base_dir ((module B), bv)) = d.dboxed in
-      Fmt.pf ppf "crash(%a)" B.pp bv
+      B.pp ppf bv
 
     include Eio_utils.Posix_path
   end
