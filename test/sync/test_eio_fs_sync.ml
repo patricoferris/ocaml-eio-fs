@@ -502,8 +502,8 @@ let test_barrier_is_used () =
           Eio.Path.save ~create:(`Exclusive 0o644) (dir / "f") "x"));
   issued "publish_link" ~files:0 ~dirs:2 (fun () ->
       match
-        Eio_fs_sync.publish_link ~barrier ~lock:Eio_fs_sync.Lock.none
-          ~expected:None ~target:"target" (fs / "k")
+        Eio_fs_sync.publish_link ~barrier ~expected:None ~target:"target"
+          (fs / "k")
       with
       | Ok () -> ()
       | Error _ -> Alcotest.fail "publish_link refused a new link")
@@ -917,8 +917,7 @@ let publish_long_name fs unit =
     "two pointers, one generation of one, two of the other" 5
     (List.length (Eio.Path.read_dir (fs / "tree")));
   (match
-     Eio_fs_sync.publish_link ~lock:Eio_fs_sync.Lock.none ~expected:None
-       ~target:"target"
+     Eio_fs_sync.publish_link ~expected:None ~target:"target"
        (fs / "link" / name)
    with
   | Ok () -> ()
@@ -961,8 +960,7 @@ let test_long_directories () =
     "a published generation" "g"
     (Eio.Path.load (dir / "tree" / "f"));
   (match
-     Eio_fs_sync.publish_link ~lock:Eio_fs_sync.Lock.none ~expected:None
-       ~target:"target" (dir / "link")
+     Eio_fs_sync.publish_link ~expected:None ~target:"target" (dir / "link")
    with
   | Ok () -> ()
   | Error _ -> Alcotest.fail "the link was refused");
@@ -1066,8 +1064,7 @@ module Links = struct
     Eio_fs.run @@ fun env -> test env#fs
 
   let publish fs ?(barrier = Eio_fs_sync.Barrier.none) expected target =
-    Eio_fs_sync.publish_link ~barrier ~lock:Eio_fs_sync.Lock.none ~expected
-      ~target (fs / "portal")
+    Eio_fs_sync.publish_link ~barrier ~expected ~target (fs / "portal")
 
   let test_raw () =
     fixture @@ fun fs ->
@@ -1220,26 +1217,6 @@ module Links = struct
       (Eio.Path.read_link (root / "portal"));
     Alcotest.(check (list string))
       "no native staging remains" [ "portal" ] (Eio.Path.read_dir root)
-
-  let test_lock () =
-    fixture @@ fun fs ->
-    let module Refuses = struct
-      type t = unit
-
-      let use () _ = raise (Eio_fs_sync.Lock.Unavailable "fixture lease held")
-    end in
-    let module Packed = Eio_fs_sync.Lock.Make (Refuses) in
-    (match
-       Eio_fs_sync.publish_link ~lock:(Packed.v ()) ~expected:None
-         ~target:"../new" (fs / "portal")
-     with
-    | _ -> Alcotest.fail "held caller lease ignored"
-    | exception Eio_fs_sync.Lock.Unavailable reason ->
-        Alcotest.(check string)
-          "exact lease refusal" "fixture lease held" reason);
-    Alcotest.(check bool)
-      "no link or staging published" true
-      (Eio.Path.read_dir fs = [])
 end
 
 let link_suite =
@@ -1259,6 +1236,4 @@ let link_suite =
         Links.test_crash;
       Alcotest.test_case "empty and NUL targets refuse" `Quick
         Links.test_unwritable_target;
-      Alcotest.test_case "caller lease refuses before writes" `Quick
-        Links.test_lock;
     ] )

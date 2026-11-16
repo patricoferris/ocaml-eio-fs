@@ -695,8 +695,7 @@ let stage_link ~barrier ~expected ~target path =
               Barrier.sync_parent barrier path);
           Ok ())
 
-let publish_link ?(barrier = Barrier.portable) ~lock ~expected ~target path =
-  Lock.use lock @@ fun () ->
+let publish_link ?(barrier = Barrier.portable) ~expected ~target path =
   if target = "" || String.contains target '\000' then
     Error (`Invalid "a symbolic link's target is empty or holds a NUL byte")
   else

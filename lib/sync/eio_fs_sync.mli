@@ -1,15 +1,17 @@
-(** The directory-durability barrier and the atomic publication built on it,
-    portable across backends.
+(** The barriers and the atomic publications built on them, portable across
+    backends.
 
-    {!sync_dir} issues the barrier a write-temporary-then-rename protocol needs;
-    a backend with its own semantics registers {!Dir_sync}, and a plain POSIX
-    directory is opened read-only and fsynced. {!sync_file} is the same for the
-    bytes an entry names: a backend registers {!File_sync}, otherwise the
-    barrier is {!Eio.File.sync}. {!publish} is the protocol itself, under a
-    mandatory byte ceiling ({!Limit_exceeded}), and issues the barriers a
-    {!Barrier.t} names: the portable ones above by default,
-    [Eio_fs_unix.barrier] for the platform's strongest, {!Barrier.none} for
-    none.
+    A barrier is a sync that returns once what it covers is durable, so that a
+    power cut after it loses none of it: a file barrier covers a file's data,
+    and a directory barrier the entries of a directory. {!sync_dir} issues the
+    barrier a write-temporary-then-rename protocol needs; a backend with its own
+    semantics registers {!Dir_sync}, and a plain POSIX directory is opened
+    read-only and fsynced. {!sync_file} is the same for the bytes an entry
+    names: a backend registers {!File_sync}, otherwise the barrier is
+    {!Eio.File.sync}. {!publish} is the protocol itself, under a mandatory byte
+    ceiling ({!Limit_exceeded}), and issues the barriers a {!Barrier.t} names:
+    the portable ones above by default, [Eio_fs_unix.barrier] for the platform's
+    strongest, {!Barrier.none} for none.
 
     {!Process_local} declares whether any opener of a backend's files can exist
     outside this process, and {!Lock} is the exclusion a caller supplies. This
@@ -37,12 +39,9 @@ val sync_dir : _ Eio.Path.t -> unit
 (** [sync_dir dir] makes [dir]'s entries durable: the barrier a commit protocol
     issues after renaming a file into place. A backend that registers
     {!Dir_sync} answers through it; otherwise [dir] is opened read-only and its
-    handle fsynced. [Eio_fs_unix.sync_dir] upgrades that to platter strength for
-    programs that link unix.
-
-    A backend that registers no barrier and whose directory handle has no sync
-    operation is a wiring error, which [sync_dir] reports rather than skip the
-    barrier.
+    handle fsynced. [Eio_fs_unix.sync_dir] also goes through the drive's cache,
+    for programs that link unix. On a backend that can sync no directory,
+    [sync_dir] raises rather than skip the barrier.
 
     @raise Invalid_argument
       if [dir]'s backend registers no {!Dir_sync} and its directory handle
@@ -67,8 +66,8 @@ val sync_file : _ Eio.File.rw -> unit
 (** [sync_file file] makes [file]'s data durable: the barrier a commit protocol
     issues over the bytes it wrote. A backend that registers {!File_sync}
     answers through it, whole and never alongside the file's own sync; otherwise
-    the barrier is {!Eio.File.sync}. [Eio_fs_unix.sync_file] upgrades that to
-    platter strength for programs that link unix.
+    the barrier is {!Eio.File.sync}. [Eio_fs_unix.sync_file] also goes through
+    the drive's cache, for programs that link unix.
 
     @raise Eio.Io as {!Eio.File.sync}, or as the registered barrier raises. *)
 
@@ -141,6 +140,8 @@ module Barrier : sig
   (** [sync_dir t dir] is [t]'s barrier over [dir]'s entries. *)
 end
 
+(** {1:dirs Directories} *)
+
 val mkdirs :
   ?exists_ok:bool ->
   ?barrier:Barrier.t ->
@@ -148,21 +149,18 @@ val mkdirs :
   _ Eio.Path.t ->
   unit
 (** [mkdirs ~exists_ok ~barrier ~perm p] creates [p] and its missing ancestors
-    with mode [perm], establishing the durability of every traversed directory
-    entry, parent first, with [barrier]'s directory barrier on the directory
-    that holds it (defaults to {!Barrier.portable}). With [exists_ok] (defaults
-    to [false]) [p] may already be a directory; an ancestor always may. Existing
-    ancestors are barriered too: they may be visible after a previous writer's
-    barrier failed. An accepted existing target is also barriered, so retry can
-    establish its durability.
+    with mode [perm] and issues [barrier]'s directory barrier (defaults to
+    {!Barrier.portable}) on the parent of each, existing ones included, parent
+    first. With [exists_ok] (defaults to [false]) [p] may already be a
+    directory; an ancestor always may. Existing ones are included because a
+    writer whose barrier failed may have left them visible but not durable.
 
-    The directory capability root must itself already be durable; this operation
-    never acquires or barriers its parent outside the capability. Existing
-    permissions are unchanged. A file is never accepted as a directory.
+    The root of [p]'s capability must already be durable: [mkdirs] issues no
+    barrier outside it. Existing permissions are unchanged. A file is never
+    accepted as a directory.
 
-    The number of directory barriers is linear in the traversed path depth. A
-    failure can leave created directories visible with uncertain durability; a
-    successful retry with [exists_ok] reissues the required barriers.
+    A failure can leave created directories visible but not durable; a retry
+    with [exists_ok] issues the barriers again.
 
     @raise Eio.Io
       with {!Eio.Fs.Already_exists} if [p] exists and [exists_ok] is [false], or
@@ -184,9 +182,8 @@ val fresh_name : string -> string
     at most 200 bytes; a longer one is cut at a character boundary and given a
     digest of the whole, so the result is a valid file name whenever [name] is.
     Of a relative path, only the last component is cut, so the result stays in
-    that path's directory. It is exported for a store whose target name is
-    unknown until its bytes are read. The name is not itself the exclusion: open
-    it with [`Exclusive]. *)
+    that path's directory. The name is not itself the exclusion: open it with
+    [`Exclusive]. *)
 
 module Rename = Rename
 (** Capability-dispatched exclusive rename and backend construction. *)
@@ -202,8 +199,8 @@ val publish :
   'b
 (** [publish ~barrier ~perm ~exclusive ~tmp ~max_bytes path write] publishes
     [path]'s contents atomically and durably, and is what [write] returns:
-    [write] streams into a temporary, which is barriered, moved to [path], and
-    whose directory is barriered. The sink [write] is given refuses, with
+    [write] streams into a temporary, which is synced, moved to [path], and
+    whose directory is synced. The sink [write] is given refuses, with
     {!Limit_exceeded}, a write that would take it past [max_bytes]: a finite
     ceiling is mandatory, so that streaming cannot turn an allocation failure
     into unbounded disk consumption.
@@ -296,8 +293,7 @@ val append_lines :
   string list ->
   unit
 (** [append_lines ~barrier ~perm path lines] appends each of [lines] to the file
-    at [path], each ended by LF, in one write, as a log of JSON Lines or any
-    other line-per-record file is appended to. A missing file is created with
+    at [path], each ended by LF, in one write. A missing file is created with
     mode [perm] (defaults to [0o644]). With [lines] empty, a missing file is not
     created and a file's only change is the LF that ends a torn last line.
 
@@ -307,14 +303,14 @@ val append_lines :
     refuses any malformed one, and no line appended after them is read as their
     continuation. A file that is empty or ends in LF is appended to as it is.
 
-    The file is barriered after the write with [barrier] (defaults to
+    The file is synced after the write with [barrier] (defaults to
     {!Barrier.portable}), then the directory holding it, on every call, one with
     nothing to write included: a barrier that failed on the call that created
     the file is issued again by the next one, [append_lines path []] being the
     retry that adds no line. A call with [lines] empty on a missing file issues
     no barrier, and with {!Barrier.none} opens nothing. Appends from two writers
-    are not ordered with each other: a caller with several takes a {!Lock}
-    around each.
+    are not ordered with each other: a caller with several wraps each call in
+    {!Lock.use}.
 
     @raise Invalid_argument if a line holds LF, before anything is written.
     @raise Eio.Io as the open, the write and the barriers raise. *)
@@ -337,7 +333,7 @@ val publish_generation :
     reclaims the ones older than that. A reader that needs its generation longer
     holds the {!Lock} the publishers of [path] take.
 
-    Every file and directory in the generation is barriered with [barrier]
+    Every file and directory in the generation is synced with [barrier]
     (defaults to {!Barrier.portable}) before the switch and [path]'s directory
     after it, so after a crash [path] resolves to the previous generation or the
     new one, never to neither; older generations are removed only once the
@@ -354,7 +350,8 @@ val publish_generation :
     [path]'s basename (cut as {!fresh_name} cuts a long one), [".gen."] and a
     fresh suffix ({!is_generation}); only generations of the same basename are
     reclaimed, never a tree a link made by hand names. One writer publishes a
-    given [path] at a time; the exclusion is the caller's ({!Lock}).
+    given [path] at a time: a caller with several wraps each call in
+    {!Lock.use}.
 
     On a failure of [populate], a sync or the switch, the staged generation is
     removed and [path] is unchanged. A barrier failure is reported after the
@@ -382,18 +379,16 @@ module Lock = Lock
 
 val publish_link :
   ?barrier:Barrier.t ->
-  lock:Lock.t ->
   expected:string option ->
   target:string ->
   _ Eio.Path.t ->
   (unit, [ `Changed of string option | `Invalid of string ]) result
-(** [publish_link ~barrier ~lock ~expected ~target path] replaces the entry at
-    [path] with a symbolic link holding exactly [target], under [lock]. The
-    entry must hold what [expected] says, read without following it: [None] is
-    no entry, [Some raw] a symbolic link whose target is the bytes [raw].
-    Anything else is [`Changed actual], and an entry that is not a symbolic link
-    is [`Invalid]; neither is replaced. A link that already holds [target] is
-    left as it is.
+(** [publish_link ~barrier ~expected ~target path] replaces the entry at [path]
+    with a symbolic link holding exactly [target]. The entry must hold what
+    [expected] says, read without following it: [None] is no entry, [Some raw] a
+    symbolic link whose target is the bytes [raw]. Anything else is
+    [`Changed actual], and an entry that is not a symbolic link is [`Invalid];
+    neither is replaced. A link that already holds [target] is left as it is.
 
     The link is made under a fresh sibling name ({!fresh_name}), the entry at
     [path] is read again, and the link is renamed over it; rename(2) keeps
@@ -401,15 +396,17 @@ val publish_link :
     bytes, written and compared as given and never resolved or normalised; an
     empty target or one holding a NUL byte is [`Invalid].
 
-    The parent directory is barriered with [barrier] (defaults to
+    The parent directory is synced with [barrier] (defaults to
     {!Barrier.portable}) before the rename and after it, so after a crash [path]
     holds the old entry or the new link. A barrier that fails after the rename
     raises, the new link visible with uncertain durability; a later call with
     the same [target] issues the barrier again. {!Barrier.none} keeps only the
     atomicity.
 
-    [lock] is the exclusion against other writers of [path], which a writer that
-    ignores it can still race between the last read and the rename.
+    One writer replaces a given [path] at a time: a caller with several wraps
+    each call in {!Lock.use}, and a writer outside it can still race between the
+    last read and the rename. [Eio_fs_unix.Link.publish] makes a link only where
+    there is none, beneath parents it opens without following links, and syncs
+    nothing.
 
-    @raise Lock.Unavailable when [lock] refuses, before anything is written.
     @raise Eio.Io as the filesystem operations and barriers raise. *)
