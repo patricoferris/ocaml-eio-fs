@@ -736,10 +736,10 @@ let apply_op ~dir_barriers fs ctl (m : Model.t) b0 b1 b2 b3 =
 
 (* Run [tape] against a fresh crash-wrapped tree; return the model and the
    recovered tree. *)
-let run_tape ?(dir_barriers = true) ~policy tape =
+let run_tape ?(dir_barriers = true) ?outside ~policy tape =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let ctl = Crash.v ~policy () in
+  let ctl = Crash.v ?outside ~policy () in
   let fs = Crash.wrap ctl env#fs in
   let m = Model.v () in
   let len = String.length tape in
@@ -751,17 +751,25 @@ let run_tape ?(dir_barriers = true) ~policy tape =
   let post = Crash.post_crash ctl in
   (m, snapshot post)
 
+(* The two ways a cut treats what reached the base other than through the
+   wrapper: with nothing else writing it, both leave the same tree. *)
+let outside_gen =
+  map [ bool ] (fun kept -> if kept then Crash.Kept else Crash.Dropped)
+
 (* {b Reference model.} Under [Drop_unsynced] the recovered tree is exactly
    the model's committed world. *)
-let test_crash_reference_model tape =
-  let m, actual = run_tape ~policy:Drop_unsynced tape in
+let test_crash_reference_model tape outside =
+  let m, actual = run_tape ~outside ~policy:Drop_unsynced tape in
   check_eq ~pp:pp_tree ~eq:(Model.SM.equal ( = )) actual (Model.expected m)
 
 (* {b Every change kept.} When the policy keeps every pending change, each
    write replayed where it landed and each directory operation in program
-   order, the recovered tree is the live one, whatever barriers ran. *)
-let test_crash_keep_all_model tape =
-  let m, actual = run_tape ~policy:(Crash.Survive (fun _ -> true)) tape in
+   order, the recovered tree is the live one, whatever barriers, on the
+   metadata or on one directory at a time, ran. *)
+let test_crash_keep_all_model tape outside =
+  let m, actual =
+    run_tape ~outside ~policy:(Crash.Survive (fun _ -> true)) tape
+  in
   check_eq ~pp:pp_tree ~eq:(Model.SM.equal ( = )) actual (Model.live m)
 
 (* {b Reorder determinism.} The same tape and seed recover the same tree, over
@@ -892,8 +900,10 @@ let suite =
           reopen_gen;
         ]
         test_crash_determinism;
-      test_case "crash reference model" [ bytes ] test_crash_reference_model;
-      test_case "crash keep-all model" [ bytes ] test_crash_keep_all_model;
+      test_case "crash reference model" [ bytes; outside_gen ]
+        test_crash_reference_model;
+      test_case "crash keep-all model" [ bytes; outside_gen ]
+        test_crash_keep_all_model;
       test_case "crash reorder model determinism" [ bytes; int ]
         test_crash_reorder_model_determinism;
       test_case "publish survives a crash whole or not at all" [ bytes; bytes ]

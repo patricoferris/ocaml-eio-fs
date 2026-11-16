@@ -622,7 +622,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
   let users = mode = `Nocrash || alice in
   let dirsync =
     match mode with
-    | `Full | `Barriers_drop | `Barriers_reorder _ -> true
+    | `Full _ | `Barriers_drop | `Barriers_reorder _ -> true
     | `Nocrash | `Drop | `Reorder _ -> false
   in
   (match env with None -> Eio_mock.Backend.run | Some _ -> fun f -> f ())
@@ -640,7 +640,8 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
     | `Drop -> Some (Crash.v ())
     | `Reorder (s, bs) ->
         Some (Crash.v ~policy:(Crash.Reorder_unsynced s) ~block_size:bs ())
-    | `Full -> Some (Crash.v ~policy:(Crash.Survive (fun _ -> true)) ())
+    | `Full outside ->
+        Some (Crash.v ~outside ~policy:(Crash.Survive (fun _ -> true)) ())
     | `Barriers_drop -> Some (Crash.v ())
     | `Barriers_reorder s ->
         Some (Crash.v ~policy:(Crash.Reorder_unsynced s) ())
@@ -906,7 +907,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
                          id bytes durable got)
               | _ -> ())
             image
-      | `Nocrash | `Reorder _ | `Full | `Barriers_reorder _ -> ());
+      | `Nocrash | `Reorder _ | `Full _ | `Barriers_reorder _ -> ());
       let perm_of perms id =
         try List.assoc id perms with Not_found -> 0o7777
       in
@@ -921,7 +922,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
           perms
       in
       match mode with
-      | `Full ->
+      | `Full _ ->
           if got <> live then
             fail_with !trace
               (Fmt.str
@@ -1063,10 +1064,15 @@ let modes =
       true,
       fun seed -> `Reorder (seed, 4096) );
     ("Reorder_unsynced, 1-byte blocks", false, fun seed -> `Reorder (seed, 1));
-    ("every change survives, with directory barriers", false, fun _ -> `Full);
+    ( "every change survives, with directory barriers",
+      false,
+      fun _ -> `Full Crash.Dropped );
     ( "every change survives, with directory barriers, as a user",
       true,
-      fun _ -> `Full );
+      fun _ -> `Full Crash.Dropped );
+    ( "every change survives, with directory barriers, the outside kept",
+      false,
+      fun _ -> `Full Crash.Kept );
     ("no crash, a user alone", true, fun _ -> `Nocrash);
     ("Drop_unsynced, with directory barriers", false, fun _ -> `Barriers_drop);
     ( "Drop_unsynced, with directory barriers, as a user",
