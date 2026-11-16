@@ -22,6 +22,8 @@ type op =
   | Bar of int * int option
   | Sync of int * int
   | Settle
+  | Pop
+  | Reset
 
 (* The inodes of the low six bits of [b]. *)
 let mask b = List.filter (fun i -> b land (1 lsl i) <> 0) [ 0; 1; 2; 3; 4; 5 ]
@@ -42,7 +44,8 @@ let attrs ?(clear = false) i =
   }
 
 (* Four bytes of a tape: a change of directory entries, a chmod, a setuid
-   clear, a barrier, a sync or a settle. Places in program order go up to
+   clear, a barrier, a sync, a settle, popping the committed entries or a
+   reset. Places in program order go up to
    [32], so barriers and syncs often stop short of the last entry. *)
 let op_of b0 b1 b2 b3 =
   match b0 mod 8 with
@@ -63,7 +66,7 @@ let op_of b0 b1 b2 b3 =
   | 4 -> Add (attrs ~clear:true (b1 mod 6))
   | 5 -> Bar (b1 mod 6, if b3 land 1 = 0 then None else Some (b2 mod 32))
   | 6 -> Sync (b1 mod 6, b2 mod 32)
-  | _ -> Settle
+  | _ -> ( match b1 mod 8 with 0 -> Pop | 1 -> Reset | _ -> Settle)
 
 let ops tape =
   List.init
@@ -141,11 +144,23 @@ let check_indexes t all =
    sets survives a cut iff the cut keeps every entry before it, and the
    setuid clear it made, logged at the next place: ext4 journals the length
    as it writes the pages back, after them. *)
-let check_lost t all ~kept =
+(* A truncation there survives iff the cut keeps an entry after it, or a
+   commit [floor] stands for reached it: ext4 journals it in the syscall's
+   own handle, which a later entry's transaction carries. *)
+let check_lost t all ~floor ~kept =
   let lost = first_lost t ~kept in
-  let last = List.fold_left (fun m e -> max m e.seq) 0 all in
+  let upto = last_kept t ~kept in
+  let last = List.fold_left (fun m e -> max m e.seq) floor all in
   for w = 0 to last + 1 do
-    if not (List.exists (fun e -> e.seq = w) all) then
+    if not (List.exists (fun e -> e.seq = w) all) then begin
+      let carried =
+        w <= floor
+        || List.exists (fun e -> (e.committed || kept e) && e.seq > w) all
+      in
+      if w <= upto <> carried then
+        failf "a truncation at %d %s, the last kept place %d" w
+          (if carried then "is lost" else "survives")
+          upto;
       let needs =
         List.for_all
           (fun e ->
@@ -157,25 +172,28 @@ let check_lost t all ~kept =
         failf "a length set at %d %s, the first lost at %d" w
           (if needs then "is lost" else "survives")
           lost
+    end
   done
 
 (* Cuts that keep a prefix of the pending entries, as a drawn cut does, and
    one that keeps every other entry. *)
-let check_cuts t all =
+let check_cuts t all ~floor =
   let p = pending all in
   List.iteri
     (fun n _ ->
       let kept e =
         List.exists (fun x -> x == e) (List.filteri (fun i _ -> i < n) p)
       in
-      check_lost t all ~kept)
+      check_lost t all ~floor ~kept)
     (() :: List.map ignore p);
-  check_lost t all ~kept:(fun e -> e.seq mod 2 = 0)
+  check_lost t all ~floor ~kept:(fun e -> e.seq mod 2 = 0)
 
 let test_invariants a b =
   let ops = ops (a ^ b) in
   let t = v () in
   let all = ref [] in
+  (* The last place a commit of entries no longer in [t] reached. *)
+  let floor = ref min_int in
   let held = Hashtbl.create 8 in
   Hashtbl.replace held 0L ();
   Hashtbl.replace held 1L ();
@@ -244,18 +262,42 @@ let test_invariants a b =
             (fun e ->
               if candidate e && reached e then
                 failf "%d is reached and left pending" e.seq)
-            !all);
+            !all
+      | Pop -> (
+          let rec go () =
+            match pop_committed t with
+            | None -> ()
+            | Some e ->
+                (match !all with
+                | e' :: rest when e' == e && e.committed ->
+                    all := rest;
+                    floor := max !floor e.seq
+                | _ -> failf "popped %d, not the first committed entry" e.seq);
+                go ()
+          in
+          go ();
+          match !all with
+          | e :: _ when e.committed -> failf "%d committed, not popped" e.seq
+          | _ -> ())
+      | Reset ->
+          reset ~upto:seq t;
+          List.iter
+            (fun e -> List.iter (fun n -> Hashtbl.replace held n ()) e.nodes)
+            !all;
+          all := [];
+          floor := max !floor seq);
       List.iter
         (fun e -> if not e.committed then failf "%d uncommitted" e.seq)
         was;
       check_indexes t !all;
-      check_cuts t !all)
+      check_cuts t !all ~floor:!floor)
     ops
 
 let suite =
   ( "chaos_journal",
     [
       test_case
-        "the journal's indexes, commits and lost places hold their invariants"
+        "the journal's indexes, commits, lost and kept places hold their \
+         invariants"
         [ bytes; bytes ] test_invariants;
     ] )

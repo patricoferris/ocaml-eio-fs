@@ -407,7 +407,8 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
               add
                 ("survive:"
                 ^ classify t r.image ~data:(fun s id c ->
-                    survive_member ?cut:(lost_cut t s) t id c))
+                    survive_member ?cut:(lost_cut t s) ~kept:(kept_mark t s) t
+                      id c))
                 (Fmt.str "%a" pp_policy (P_survive (k, im)))
                 (Fmt.str "eio:@.%a@.ref:@.%a" pp_image r.image pp_image exp))
           (subsets_cap rs (List.length md) survive_cap)
@@ -424,7 +425,9 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
                 ()
             in
             observed := r.image :: !observed;
-            let data s id c = survive_member ?cut:(lost_cut t s) t id c in
+            let data s id c =
+              survive_member ?cut:(lost_cut t s) ~kept:(kept_mark t s) t id c
+            in
             if not (member t ~data r.image) then
               add
                 ("survive-u:" ^ classify t r.image ~data)
@@ -442,7 +445,9 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
         for seed = 0 to seeds - 1 do
           let r = run_eio ~user ~init ~ops ~policy:(P_reorder (bs, seed)) () in
           observed := r.image :: !observed;
-          let data s id c = reorder_member ?cut:(lost_cut t s) t ~bs id c in
+          let data s id c =
+            reorder_member ?cut:(lost_cut t s) ~kept:(kept_mark t s) t ~bs id c
+          in
           if not (member t ~data r.image) then
             add
               ("reorder:" ^ classify t r.image ~data)
@@ -519,7 +524,9 @@ let check ?(seeds = 40) ?(survive_cap = 64) ~user ~init ~ops () =
         in
         List.iter
           (fun id ->
-            let lens, cands = reorder_cands t ~bs id in
+            let lens, cands =
+              reorder_cands ~kept:(kept_mark t (committed t)) t ~bs id
+            in
             List.iter
               (fun l ->
                 if not (Hashtbl.mem seen_len (id, l)) then

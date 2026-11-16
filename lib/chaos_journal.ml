@@ -51,6 +51,9 @@ type 'a t = {
   by_moved : (int64, 'a entry Ids.t) Hashtbl.t;
   mutable clears : 'a entry Ids.t;
   by_attrs : (int64, 'a entry Ids.t) Hashtbl.t;
+  mutable carried : int;
+      (* The last place a commit reached, the entries it took out of
+         [entries] included. *)
 }
 
 let v () =
@@ -63,9 +66,11 @@ let v () =
     by_moved = Hashtbl.create 16;
     clears = Ids.empty;
     by_attrs = Hashtbl.create 16;
+    carried = min_int;
   }
 
-let reset t =
+let reset ~upto t =
+  t.carried <- max t.carried upto;
   t.entries <- Ids.empty;
   t.pool <- Ids.empty;
   Hashtbl.reset t.by_dir;
@@ -118,6 +123,7 @@ let refresh t e =
 (* A committed entry leaves the indexes of pending ones. *)
 let mark_committed t e =
   e.committed <- true;
+  t.carried <- max t.carried e.seq;
   List.iter (fun d -> remove_from t.by_dir d e) e.dirs;
   List.iter (fun p -> remove_from t.by_parent p e) e.parents;
   List.iter (fun n -> remove_from t.by_moved n e) e.moved;
@@ -162,6 +168,11 @@ let first_lost t ~kept =
       if e.committed || kept e then acc
       else min acc (if e.clear then s - 1 else s))
     t.entries max_int
+
+let last_kept t ~kept =
+  Ids.fold
+    (fun s e acc -> if e.committed || kept e then max acc s else acc)
+    t.entries t.carried
 
 let bar ?(upto = max_int) t ino =
   match Hashtbl.find_opt t.by_dir ino with

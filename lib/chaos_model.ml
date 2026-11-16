@@ -2100,7 +2100,7 @@ module Crash = struct
         (locs_of ~root:(path_segments root_path) (locations ctl))
     in
     snap ctl st;
-    Chaos_journal.reset ctl.journal
+    Chaos_journal.reset ~upto:ctl.seq ctl.journal
 
   (* The proper prefixes of [segs], outermost first: the directories above
      the entry it names. *)
@@ -2468,6 +2468,9 @@ module Crash = struct
          there on sets does not land, nor a block it allocates. An overwrite
          within the length may land without it. *)
       let lost = ref max_int in
+      (* The last place the cut keeps: a truncation up to it lands, as ext4
+         journals it in the syscall's own handle. *)
+      let kept = ref min_int in
       (* The files the image no longer holds, whose blocks are free, by
          path. *)
       let removed = ref [] and unsynced_removed = ref [] in
@@ -2613,17 +2616,28 @@ module Crash = struct
         | Some c -> c
         | None ->
             let mine = List.rev fs.pending in
-            let cut = if !lost = max_int then None else Some !lost in
-            let len_upto =
-              match cut with
-              | None -> max_int
-              | Some c ->
-                  let rec count k = function
-                    | (e : entry) :: rest when e.seq < c -> count (k + 1) rest
-                    | _ -> k
-                  in
-                  count 0 mine
+            let truncated (e : entry) =
+              match e.change with
+              | Resize _ -> e.seq <= !kept
+              | Write _ -> false
             in
+            (* The changes up to the last truncation that lands set the
+               length, wherever the cut first loses an entry. *)
+            let from =
+              List.fold_left
+                (fun m (e : entry) -> if truncated e then e.seq else m)
+                min_int mine
+            in
+            let count c =
+              List.length (List.filter (fun (e : entry) -> e.seq < c) mine)
+            in
+            let cut =
+              if !lost = max_int then None else Some (max !lost (from + 1))
+            in
+            let len_upto =
+              match cut with None -> max_int | Some c -> count c
+            in
+            let len_from = if from = min_int then 0 else count (from + 1) in
             (* Under a scripted policy, a change past the cut that would set
                the length does not survive. *)
             let keep_length survivors =
@@ -2645,6 +2659,21 @@ module Crash = struct
                       survivors
                   in
                   List.rev kept
+            in
+            (* The changes for which [pred] holds and the truncations that
+               land. *)
+            let survive pred =
+              let kept =
+                List.filter (fun e -> pred e || truncated e) mine |> keep_length
+              in
+              List.map (fun e -> (e.change, e.cached)) kept
+              |> replay_cached ~bs:ctl.block_size ~cache:fs.cache
+                   (bytes_of fs.durable)
+              |> fst
+              |> sectors_together ~cache:fs.cache (bytes_of fs.durable)
+                   (List.map
+                      (fun e -> (e.change, e.cached, List.memq e kept))
+                      mine)
             in
             let c =
               match (ctl.policy, data_rng) with
@@ -2674,28 +2703,19 @@ module Crash = struct
                     (Option.is_some fs.cache || Option.is_some fs.evicted)
                     && rng.bool ()
                   then
-                    writeback ~over ~len_upto ~bytes ~held:fs.held ~old:(old fs)
-                      ~describe:(describe fs mine) ~rng ~bs:ctl.block_size
-                      ~cache:None
+                    writeback ~over ~len_upto ~len_from ~bytes ~held:fs.held
+                      ~old:(old fs) ~describe:(describe fs mine) ~rng
+                      ~bs:ctl.block_size ~cache:None
                       (Option.value ~default:(bytes_of fs.durable) fs.evicted)
                       (List.map (fun (c, _) -> (c, false)) changes)
                   else
-                    writeback ~over ~len_upto ~bytes ~held:fs.held ~old:(old fs)
-                      ~describe:(describe fs mine) ~rng ~bs:ctl.block_size
-                      ~cache:fs.cache (bytes_of fs.durable) changes
-              | Survive pred, _ ->
-                  let kept =
-                    List.filter (fun e -> pred (to_unsynced e)) mine
-                    |> keep_length
-                  in
-                  List.map (fun e -> (e.change, e.cached)) kept
-                  |> replay_cached ~bs:ctl.block_size ~cache:fs.cache
-                       (bytes_of fs.durable)
-                  |> fst
-                  |> sectors_together ~cache:fs.cache (bytes_of fs.durable)
-                       (List.map
-                          (fun e -> (e.change, e.cached, List.memq e kept))
-                          mine)
+                    writeback ~over ~len_upto ~len_from ~bytes ~held:fs.held
+                      ~old:(old fs) ~describe:(describe fs mine) ~rng
+                      ~bs:ctl.block_size ~cache:fs.cache (bytes_of fs.durable)
+                      changes
+              | Survive pred, _ -> survive (fun e -> pred (to_unsynced e))
+              | Drop_unsynced, _ when List.exists truncated mine ->
+                  survive (fun _ -> false)
               | _ -> copy_cs (bytes_of fs.durable)
             in
             Hashtbl.replace contents fs.id c;
@@ -2778,6 +2798,9 @@ module Crash = struct
       in
       lost :=
         Chaos_journal.first_lost ctl.journal ~kept:(fun e ->
+            Hashtbl.mem included e.seq);
+      kept :=
+        Chaos_journal.last_kept ctl.journal ~kept:(fun e ->
             Hashtbl.mem included e.seq);
       let tree =
         match tree with

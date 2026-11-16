@@ -209,6 +209,9 @@ module Model = struct
     mutable durable_data : string IM.t;
     mutable next_id : int;
     mutable seq : int;
+    mutable truncs : (int * int) list;
+        (* The truncations since each file's last sync, by id and place. *)
+    mutable carried : int; (* the place of the last metadata barrier *)
   }
 
   let v () =
@@ -220,6 +223,8 @@ module Model = struct
       durable_data = IM.empty;
       next_id = 0;
       seq = 0;
+      truncs = [];
+      carried = 0;
     }
 
   let under prefix p =
@@ -390,6 +395,7 @@ module Model = struct
 
   (* The metadata barrier: the durable world becomes the live one. *)
   let commit m =
+    m.carried <- m.seq;
     m.snapshot <- m.live;
     m.journal <- []
 
@@ -456,6 +462,17 @@ module Model = struct
     place m path
 
   let write m path s = m.live_data <- IM.add (file_id m path) s m.live_data
+
+  (* A truncation that empties the file [path], which ext4 journals in the
+     syscall's own handle. *)
+  let truncate m path =
+    let id = file_id m path in
+    if IM.find id m.live_data <> "" then begin
+      m.seq <- m.seq + 1;
+      m.truncs <- (id, m.seq) :: m.truncs;
+      m.live_data <- IM.add id "" m.live_data
+    end
+
   let contents m path = IM.find (file_id m path) m.live_data
 
   (* A file sync makes that file's contents durable and nothing else: the
@@ -463,6 +480,7 @@ module Model = struct
      only by the barrier below, as fsync(2) divides them. *)
   let sync m path =
     let id = file_id m path in
+    m.truncs <- List.filter (fun (i, _) -> i <> id) m.truncs;
     m.durable_data <- IM.add id (IM.find id m.live_data) m.durable_data
 
   let remove m path =
@@ -517,9 +535,21 @@ module Model = struct
       shapes
 
   (* The exact post-crash tree under [Drop_unsynced]: committed shapes over
-     per-file durable contents. *)
+     per-file durable contents, emptied by a truncation a later commit
+     carried. *)
   let expected m =
-    image (SM.filter (fun k _ -> not (in_limbo k)) (durable m)) m.durable_data
+    let carried t =
+      t <= m.carried
+      || List.exists (fun e -> e.committed && e.seq > t) m.journal
+    in
+    let data =
+      IM.mapi
+        (fun id d ->
+          if List.exists (fun (i, t) -> i = id && carried t) m.truncs then ""
+          else d)
+        m.durable_data
+    in
+    image (SM.filter (fun k _ -> not (in_limbo k)) (durable m)) data
 
   (* The exact post-crash tree when every change survives: the live one. *)
   let live m = image m.live m.live_data
@@ -617,6 +647,7 @@ let fresh_path (m : Model.t) pk nk =
 (* Rewrite the file [path] whole with unsynced [content]. *)
 let rewrite fs m path content =
   Eio.Path.save ~create:(`Or_truncate 0o644) (fs / path) content;
+  Model.truncate m path;
   Model.write m path content
 
 (* Append [more] to the file [path], unsynced: the write lands at the end. *)

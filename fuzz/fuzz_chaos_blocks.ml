@@ -77,27 +77,36 @@ let test_prefix_blocks durable changes bs seed =
           changes
     done
 
-(* Only the first [k] changes may set the length: one they left, or a block
-   boundary below the longest. In bytes, on a new file, no page holds a
-   byte unless one of them is a write: ext4 allocates the page with the
-   length. *)
-let test_len_upto durable changes bs k seed =
+(* Only the first [k] changes may set the length, and it holds the first
+   [j], whatever [k]: one a change from [j] on left, or a block boundary
+   between the shortest and the longest of those. In bytes, on a new file,
+   no page holds a byte unless one of the changes that may set the length
+   is a write: ext4 allocates the page with the length. *)
+let test_len_upto durable changes bs k j seed =
   let draw = draw_of_state (Random.State.make [| seed |]) in
   let img =
-    writeback ~len_upto:k ~rng:draw ~bs ~cache:None
+    writeback ~len_upto:k ~len_from:j ~rng:draw ~bs ~cache:None
       (Cstruct.of_string durable)
       (pending changes)
   in
+  let n = List.length changes in
+  let j = min j n in
+  let k = max j (min k n) in
   let sizes =
     List.init
-      (min k (List.length changes) + 1)
-      (fun j -> Cstruct.length (version durable changes j))
+      (k - j + 1)
+      (fun i -> Cstruct.length (version durable changes (j + i)))
   in
-  let longest = List.fold_left max 0 sizes and size = Cstruct.length img in
-  if not (List.mem size sizes || (size mod bs = 0 && size <= longest)) then
-    failf "length %d, not one of %a" size Fmt.(Dump.list int) sizes;
+  let longest = List.fold_left max 0 sizes
+  and shortest = List.fold_left min max_int sizes
+  and size = Cstruct.length img in
+  if
+    not
+      (List.mem size sizes
+      || (size mod bs = 0 && shortest < size && size <= longest))
+  then failf "length %d, not one of %a" size Fmt.(Dump.list int) sizes;
   let img =
-    writeback ~len_upto:k ~bytes:true ~rng:draw ~bs:512 ~cache:None
+    writeback ~len_upto:k ~len_from:j ~bytes:true ~rng:draw ~bs:512 ~cache:None
       Cstruct.empty (pending changes)
   in
   let written = function Write _ -> true | Resize _ -> false in
@@ -120,7 +129,9 @@ let suite =
       test_case "each block is one a prefix of the changes left"
         [ bytes; list change; block_size; int ]
         test_prefix_blocks;
-      test_case "a change past len_upto sets no length and fills no new page"
-        [ bytes; list change; block_size; range 6; int ]
+      test_case
+        "a change past len_upto sets no length and fills no new page, and the \
+         length holds those before len_from"
+        [ bytes; list change; block_size; range 6; range 6; int ]
         test_len_upto;
     ] )

@@ -38,6 +38,10 @@ type m = {
   (* durability *)
   durable : (int, string) Hashtbl.t;
   pending : (int, change list) Hashtbl.t; (* newest first *)
+  carried : (int, int) Hashtbl.t;
+  (* how many of each file's pending truncations a metadata commit
+         carried, as ext4 journals a truncation in the syscall's own
+         handle *)
   (* metadata states: (tree, perms of files) at last commit, then after each op *)
   mutable committed : dnode * (int * int) list;
   mutable meta_states : (dnode * (int * int) list) list;
@@ -182,7 +186,8 @@ let m_trunc m id n =
 let m_sync m id =
   Hashtbl.replace m.durable id (finfo m id).data;
   Hashtbl.replace m.fsynced id ((finfo m id).fperm, List.length m.meta_states);
-  Hashtbl.remove m.pending id
+  Hashtbl.remove m.pending id;
+  Hashtbl.remove m.carried id
 
 let lookup m who p =
   let comps, name = split p in
@@ -300,6 +305,11 @@ let m_chmod m who p perm =
   | Some (L _) -> assert false
 
 let m_commit m =
+  Hashtbl.iter
+    (fun id l ->
+      Hashtbl.replace m.carried id
+        (List.length (List.filter (function R _ -> true | W _ -> false) l)))
+    m.pending;
   m.committed <- (m.root, perms_snapshot m);
   m.meta_states <- [];
   Hashtbl.reset m.fsynced
@@ -587,6 +597,7 @@ let new_model () =
     next_id = 0;
     durable = Hashtbl.create 16;
     pending = Hashtbl.create 16;
+    carried = Hashtbl.create 16;
     committed = (root, []);
     meta_states = [];
     fsynced = Hashtbl.create 16;
@@ -686,11 +697,12 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
           m.next_id,
           Hashtbl.copy m.durable,
           Hashtbl.copy m.pending,
+          Hashtbl.copy m.carried,
           m.committed,
           m.meta_states )
       in
       let restore () =
-        let r, n, du, pe, c, ms = saved in
+        let r, n, du, pe, ca, c, ms = saved in
         m.root <- r;
         m.next_id <- n;
         Hashtbl.reset m.files;
@@ -701,6 +713,8 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
         Hashtbl.iter (Hashtbl.replace m.durable) du;
         Hashtbl.reset m.pending;
         Hashtbl.iter (Hashtbl.replace m.pending) pe;
+        Hashtbl.reset m.carried;
+        Hashtbl.iter (Hashtbl.replace m.carried) ca;
         m.committed <- c;
         m.meta_states <- ms
       in
@@ -892,7 +906,28 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
             | Some _ | None -> ())
         (model_files (fst m.committed));
       (* Under Drop_unsynced, a file holds its durable bytes under whatever
-         name the image gives it. *)
+         name the image gives it, with the pending truncations up to one a
+         commit carried: those [sync_metadata] carried at least, as a sync
+         or a barrier may carry later ones. *)
+      let truncated id =
+        let rs =
+          List.filter
+            (function R _ -> true | W _ -> false)
+            (List.rev
+               (Option.value ~default:[] (Hashtbl.find_opt m.pending id)))
+        in
+        let carried = Option.value ~default:0 (Hashtbl.find_opt m.carried id) in
+        let _, states =
+          List.fold_left
+            (fun (cur, acc) r ->
+              let cur = apply_change cur r in
+              (cur, cur :: acc))
+            (Hashtbl.find m.durable id, [ Hashtbl.find m.durable id ])
+            rs
+        in
+        List.filteri (fun i _ -> i >= carried) (List.rev states)
+      in
+      let held = Hashtbl.create 16 in
       (match mode with
       | `Drop | `Barriers_drop ->
           List.iter
@@ -901,7 +936,8 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
               | `File _, Some id ->
                   let bytes = Eio.Path.load (pc // p) in
                   let durable = Hashtbl.find m.durable id in
-                  if bytes <> durable then
+                  Hashtbl.replace held id bytes;
+                  if not (List.mem bytes (truncated id)) then
                     fail_with !trace
                       (Fmt.str "%s (file %d) holds %S, not its durable %S@.%s" p
                          id bytes durable got)
@@ -934,7 +970,10 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
           let perms = synced perms in
           let exp =
             render_model tree
-              (fun id -> Hashtbl.find m.durable id)
+              (fun id ->
+                match Hashtbl.find_opt held id with
+                | Some b -> b
+                | None -> Hashtbl.find m.durable id)
               (fun id -> (perm_of perms id, (finfo m id).fuid))
           in
           if exp <> got then

@@ -135,6 +135,7 @@ type t = {
   mutable clock : int;
   mutable journal : ent list; (* reversed *)
   mutable forced : int list; (* seqs committed by an unconditional barrier *)
+  mutable meta_upto : int; (* the place of the last [Sync_meta] *)
   mutable barriers : barrier list;
   initial : (int, unit) Hashtbl.t; (* nodes in the durable starting image *)
   fdata : (int, fdata) Hashtbl.t;
@@ -292,6 +293,7 @@ let v ?(bs = 4096) ~user init =
       clock = 0;
       journal = [];
       forced = [];
+      meta_upto = min_int;
       barriers = [];
       initial = Hashtbl.create 16;
       fdata = Hashtbl.create 16;
@@ -669,7 +671,9 @@ let run_op t op =
       let id = resolve t p in
       if not (is_dir t id) then fail "ENOTDIR";
       dir_barrier t id
-  | Sync_meta -> List.iter (fun e -> t.forced <- e.seq :: t.forced) t.journal
+  | Sync_meta ->
+      List.iter (fun e -> t.forced <- e.seq :: t.forced) t.journal;
+      t.meta_upto <- t.clock - 1
   | Hopen (h, p) ->
       let id = resolve t p in
       if is_dir t id then fail "EISDIR";
@@ -920,6 +924,24 @@ let lost_cut t s =
         match acc with Some c when c <= at -> acc | _ -> Some at)
     None t.journal
 
+(* The last place the committed set [s] keeps, a [Sync_meta] included: a
+   truncation up to it lands, as ext4 journals it in the syscall's own
+   handle, which a later entry's transaction carries. *)
+let kept_mark t s = IS.fold max s t.meta_upto
+
+(* Whether a change is a truncation up to [kept]; and the cut that keeps the
+   lengths of those of [f]. *)
+let truncated ~kept (seq, ch) =
+  match ch with T _ -> seq <= kept | W _ -> false
+
+let cut_after f ~kept cut =
+  let last =
+    List.fold_left
+      (fun m (seq, ch, _, _) -> if truncated ~kept (seq, ch) then seq else m)
+      min_int f.pend
+  in
+  Option.map (max (last + 1)) cut
+
 (* [chs] without the changes from [cut] on that would set the length. *)
 let keep_length ?cut durable chs =
   match cut with
@@ -985,12 +1007,15 @@ let sectors_together f kept img =
     over;
   Bytes.to_string b
 
-let content_survive ?cut t id subset =
+let content_survive ?cut ?(kept = min_int) t id subset =
   let f = fd t id in
+  let cut = cut_after f ~kept cut in
   let kept =
     keep_length ?cut f.durable
       (List.filter_map
-         (fun (s, ch, _, _) -> if IS.mem s subset then Some (s, ch) else None)
+         (fun (s, ch, _, _) ->
+           if IS.mem s subset || truncated ~kept (s, ch) then Some (s, ch)
+           else None)
          f.pend)
   in
   merged ~bs:t.bs ~durable:f.durable ~base_cache:f.base_cache ~cached:f.cached
@@ -1012,7 +1037,8 @@ let image_with t s content : image =
    changes in [subset] kept. *)
 let survive_state t ~k ~subset =
   let s = survivors t k in
-  image_with t s (fun id -> content_survive ?cut:(lost_cut t s) t id subset)
+  image_with t s (fun id ->
+      content_survive ?cut:(lost_cut t s) ~kept:(kept_mark t s) t id subset)
 
 (* {2 Reorder_unsynced at block size [bs]} *)
 
@@ -1024,8 +1050,14 @@ let block_bytes ~bs c i =
 (* Length candidates and per-block version candidates: as the page cache
    kept what a failed sync lost, or, [evicted], as it reloaded those pages
    from disk. *)
-let reorder_cands ?(evicted = false) ?cut t ~bs id =
+let reorder_cands ?(evicted = false) ?cut ?(kept = min_int) t ~bs id =
   let f = fd t id in
+  let cut = cut_after f ~kept cut in
+  let last =
+    List.fold_left
+      (fun m (seq, ch, _, _) -> if truncated ~kept (seq, ch) then seq else m)
+      min_int f.pend
+  in
   let durable = if evicted then f.evicted else f.durable in
   let lens = ref [ String.length durable ] in
   let blocks : (int, string list) Hashtbl.t = Hashtbl.create 8 in
@@ -1049,6 +1081,7 @@ let reorder_cands ?(evicted = false) ?cut t ~bs id =
       let cache = if evicted then after else cache in
       let ol = String.length !prev and nl = String.length after in
       let past = match cut with Some c -> seq >= c | None -> false in
+      if seq = last then lens := [];
       if not past then lens := nl :: !lens;
       (match ch with
       | W _ when nl > ol && not past ->
@@ -1069,8 +1102,8 @@ let reorder_cands ?(evicted = false) ?cut t ~bs id =
   ( List.sort_uniq compare !lens,
     fun i -> Option.value ~default:(base i) (Hashtbl.find_opt blocks i) )
 
-let reorder_member_in ~evicted ?cut t ~bs id s =
-  let lens, cands = reorder_cands ~evicted ?cut t ~bs id in
+let reorder_member_in ~evicted ?cut ?kept t ~bs id s =
+  let lens, cands = reorder_cands ~evicted ?cut ?kept t ~bs id in
   let len = String.length s in
   List.mem len lens
   &&
@@ -1088,13 +1121,15 @@ let reorder_member_in ~evicted ?cut t ~bs id s =
   done;
   !ok
 
-let reorder_member ?cut t ~bs id s =
-  reorder_member_in ~evicted:false ?cut t ~bs id s
-  || reorder_member_in ~evicted:true ?cut t ~bs id s
+let reorder_member ?cut ?kept t ~bs id s =
+  reorder_member_in ~evicted:false ?cut ?kept t ~bs id s
+  || reorder_member_in ~evicted:true ?cut ?kept t ~bs id s
 
 (* Survive membership: some subset of pending changes yields [s]. *)
-let survive_member ?cut t id s =
+let survive_member ?cut ?(kept = min_int) t id s =
   let f = fd t id in
+  let cut = cut_after f ~kept cut in
+  let forced = truncated ~kept in
   let rec go kept = function
     | [] ->
         let kept = keep_length ?cut f.durable (List.rev kept) in
@@ -1102,7 +1137,9 @@ let survive_member ?cut t id s =
           ~cached:f.cached kept
         |> sectors_together f (List.map fst kept)
         = s
-    | (seq, ch, _, _) :: rest -> go kept rest || go ((seq, ch) :: kept) rest
+    | (seq, ch, _, _) :: rest ->
+        ((not (forced (seq, ch))) && go kept rest)
+        || go ((seq, ch) :: kept) rest
   in
   go [] f.pend
 

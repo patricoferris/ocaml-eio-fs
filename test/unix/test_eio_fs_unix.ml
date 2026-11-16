@@ -2574,9 +2574,13 @@ let crash_after_a_lock_published_its_contents ~policy =
   Crash.sync_metadata ctl;
   Eio.Path.load (Crash.post_crash ctl / "lock")
 
+(* The lock truncates the file to what it wrote, which ext4 journals at
+   once, so the commit keeps the length but not the bytes. *)
 let test_lock_contents_are_lost_by_an_unsynced_crash () =
   Alcotest.(check string)
-    "the rendezvous keeps its committed entry and loses the un-synced write" ""
+    "the rendezvous keeps its committed entry and length, not the un-synced \
+     bytes"
+    (String.make 5 '\000')
     (crash_after_a_lock_published_its_contents ~policy:Crash.Drop_unsynced)
 
 let test_lock_contents_survive_a_policy_that_keeps_them () =

@@ -82,6 +82,7 @@ val max_stale : int
 val writeback :
   ?over:(int * Cstruct.t) list ->
   ?len_upto:int ->
+  ?len_from:int ->
   ?bytes:bool ->
   ?held:Extents.t ->
   ?old:(int -> (Cstruct.t * string) list) ->
@@ -106,10 +107,12 @@ val writeback :
     holds a later change without the earlier ones.
 
     [over] are blocks a failed writeback may have written, and their bytes;
-    [len_upto] the changes, counted in order, that may set the length. With
-    [bytes], blocks are sectors, the length is one a change left or the end of a
-    page a write put bytes in, and a sector of a page the disk does not hold
-    ([held]) may hold stale data: one of [old p] for the page [p], or
+    [len_upto] the changes, counted in order, that may set the length, and
+    [len_from] those the length holds, whatever [len_upto]: it is one a change
+    from there on left, or a boundary a write from there on grew the file
+    across. With [bytes], blocks are sectors, the length is one a change left or
+    the end of a page a write put bytes in, and a sector of a page the disk does
+    not hold ([held]) may hold stale data: one of [old p] for the page [p], or
     {!val-stale}. Such a page holds no change past [len_upto], no stale data and
     nothing of [over], unless one of the changes up to it put bytes in it.
     [describe] is told the length and, run by run, where each block's bytes come

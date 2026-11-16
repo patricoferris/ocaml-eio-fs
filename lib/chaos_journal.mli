@@ -49,8 +49,9 @@ type 'a t
 val v : unit -> 'a t
 (** [v ()] is an empty journal. *)
 
-val reset : 'a t -> unit
-(** [reset t] empties [t]. *)
+val reset : upto:int -> 'a t -> unit
+(** [reset ~upto t] empties [t], whose entries a commit of every change up to
+    [upto] made durable. *)
 
 val add : 'a t -> 'a entry -> unit
 (** [add t e] appends [e] to [t]. The {!field-seq} of [e] is above every entry's
@@ -93,6 +94,15 @@ val first_lost : 'a t -> kept:('a entry -> bool) -> int
     No length a change from there on sets survives the cut: ext4 journals it as
     it writes the pages back, in a transaction no earlier than any entry made
     before the change, and jbd2 commits transactions in order. *)
+
+val last_kept : 'a t -> kept:('a entry -> bool) -> int
+(** [last_kept t ~kept] is the last place in program order that a cut keeping
+    the committed entries of [t] and those for which [kept] holds keeps: the
+    {!field-seq} of the last entry it keeps, or the last place a commit reached,
+    entries {!pop_committed} or {!reset} removed included; [min_int] if there is
+    none. Every truncation up to it survives the cut: ext4 journals a truncation
+    in the syscall's own handle, which any later entry's transaction carries,
+    and jbd2 commits transactions in order. *)
 
 (** {1:commits Barriers and commits} *)
 

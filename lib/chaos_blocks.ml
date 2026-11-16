@@ -180,12 +180,14 @@ let max_stale = 8
    [old p] is what the freed blocks the page may have been given held, at
    page [p] of its file, and where each was; one of them is drawn. [describe] is told the length and, run by run, what each
    block holds. *)
-let writeback ?(over = []) ?(len_upto = max_int) ?(bytes = false)
-    ?(held = Extents.empty) ?(old = fun _ -> []) ?(describe = fun _ _ -> ())
-    ~rng ~bs ~cache durable changes =
+let writeback ?(over = []) ?(len_upto = max_int) ?(len_from = 0)
+    ?(bytes = false) ?(held = Extents.empty) ?(old = fun _ -> [])
+    ?(describe = fun _ _ -> ()) ~rng ~bs ~cache durable changes =
   let cached = Array.of_list (List.map snd changes) in
   let changes = Array.of_list (List.map fst changes) in
   let n = Array.length changes in
+  let len_from = min len_from n in
+  let len_upto = max len_upto len_from in
   (* Dirt is counted in the page cache, which a failed sync may have left
      apart from the durable bytes. *)
   let cprev = ref (Cstruct.length (Option.value ~default:durable cache)) in
@@ -201,7 +203,7 @@ let writeback ?(over = []) ?(len_upto = max_int) ?(bytes = false)
     | Write { offset; data } ->
         let size = max prev (offset + Cstruct.length data) in
         sizes.(k + 1) <- size;
-        if k < len_upto then begin
+        if k < len_upto && k >= len_from then begin
           let step = if bytes then page else bs in
           (* ext4 extends its on-disk size, up to the file's, as it writes
              back a page a write put bytes in, this one or an earlier one,
@@ -294,7 +296,9 @@ let writeback ?(over = []) ?(len_upto = max_int) ?(bytes = false)
           (shrinks.(k + 1) + match changes.(k) with Resize _ -> 1 | _ -> 0)
       done;
       let js =
-        List.init (min n len_upto + 1) Fun.id
+        List.init
+          (max 0 (min n len_upto - len_from + 1))
+          (fun i -> len_from + i)
         |> List.fold_left
              (fun acc j ->
                if

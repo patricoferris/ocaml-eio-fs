@@ -272,21 +272,22 @@ val wrap : Schedule.t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
     barrier commits whole transactions in order: a child's [chmod] can be lost
     behind a sibling entry the barrier committed, which ext4 would not do and
     POSIX allows. A setuid clear, by contrast, is carried by any barrier that
-    commits a later entry. A sync of a file also commits a [chmod] or [chown] of
-    it. A write or a truncation that clears setuid or setgid enters the journal
-    at once, at its place in program order, as ext4 journals the change in the
-    running transaction: a sync of the file commits it, as does
-    {!Crash.sync_metadata} and any barrier that commits a later entry, and at a
-    crash it survives with the prefix it is part of. A length the write, or a
-    later write or truncation of the file, sets lands only with or after the
-    clear, as ext4 journals both in program order; data that overwrites within
-    the length may land without it, as ext4 allows. A barrier on a directory
-    that is not itself durable yet holds from the moment it is, or from the
-    moment another directory the entry changes is: with [d/f] durable,
-    [mkdir e; rename d/f e/f; fsync_dir e] makes the rename durable when the
-    barrier returns, so a crash before [e] itself is durable loses the file from
-    both directories; so does [fsync_dir d] in place of [fsync_dir e]. ext4
-    would keep [e/f], as committing the rename commits the [mkdir]; eio-fs
+    commits a later entry, and so is the length a truncation sets, which ext4
+    journals in the syscall's own handle. A sync of a file also commits a
+    [chmod] or [chown] of it. A write or a truncation that clears setuid or
+    setgid enters the journal at once, at its place in program order, as ext4
+    journals the change in the running transaction: a sync of the file commits
+    it, as does {!Crash.sync_metadata} and any barrier that commits a later
+    entry, and at a crash it survives with the prefix it is part of. A length
+    the write, or a later write or truncation of the file, sets lands only with
+    or after the clear, as ext4 journals both in program order; data that
+    overwrites within the length may land without it, as ext4 allows. A barrier
+    on a directory that is not itself durable yet holds from the moment it is,
+    or from the moment another directory the entry changes is: with [d/f]
+    durable, [mkdir e; rename d/f e/f; fsync_dir e] makes the rename durable
+    when the barrier returns, so a crash before [e] itself is durable loses the
+    file from both directories; so does [fsync_dir d] in place of [fsync_dir e].
+    ext4 would keep [e/f], as committing the rename commits the [mkdir]; eio-fs
     deliberately weakens this, so that a missing barrier on [e]'s parent shows.
     The model knows files and directories by inode, as ext4 does: a barrier
     holds for its directory under whatever name it has later, and never for
@@ -347,10 +348,11 @@ module Crash : sig
   type policy =
     | Drop_unsynced
         (** The state at the last barriers: every un-synced write is lost and
-            every uncommitted directory operation is rolled back. It is one
-            crash state among many. It hides the bugs that need a later change
-            to land, such as a rename that reaches the disk before the data it
-            names; {!Reorder_unsynced} over many seeds finds those. *)
+            every uncommitted directory operation is rolled back, but for the
+            truncations made before a committed one. It is one crash state among
+            many. It hides the bugs that need a later change to land, such as a
+            rename that reaches the disk before the data it names;
+            {!Reorder_unsynced} over many seeds finds those. *)
     | Reorder_unsynced of int
         (** Seeded: writes go back to the disk in blocks, as a page cache writes
             them. A write dirties the blocks it covers and, past the end of the
@@ -372,8 +374,10 @@ module Crash : sig
             program order whose length is drawn uniformly: metadata never
             reorders. A length a change left survives only with every directory
             operation before that change, as ext4 journals it as it writes the
-            pages back. The [int] is the seed; the same seed and workload
-            reproduce the same image. *)
+            pages back, and a truncation survives with any directory operation
+            after it that survives, as ext4 journals it in the syscall's own
+            handle. The [int] is the seed; the same seed and workload reproduce
+            the same image. *)
     | Survive of (unsynced -> bool)
         (** Scripted: an un-synced write survives iff the predicate holds;
             survivors keep program order. A disk writes a 512-byte sector whole,
@@ -384,9 +388,10 @@ module Crash : sig
             survives iff the predicate holds for it {e and} every earlier
             uncommitted directory operation survived (the prefix rule). A write
             or a truncation that changes the length survives only with every
-            directory operation before it. It pins an exact scenario, for
-            example keeping a generation pointer but dropping the data block it
-            references. *)
+            directory operation before it, and a truncation survives, whatever
+            the predicate, with any directory operation after it that survives.
+            It pins an exact scenario, for example keeping a generation pointer
+            but dropping the data block it references. *)
     | Choose of (int -> int)
         (** As {!Reorder_unsynced}, with each draw [f n], in [\[0, n)], made by
             the function, so a caller can enumerate the states, and with lengths
