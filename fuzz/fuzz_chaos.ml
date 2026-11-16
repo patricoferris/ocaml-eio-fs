@@ -545,7 +545,8 @@ module Model = struct
     let data =
       IM.mapi
         (fun id d ->
-          if List.exists (fun (i, t) -> i = id && carried t) m.truncs then ""
+          if List.exists (fun (i, t) -> Int.equal i id && carried t) m.truncs
+          then ""
           else d)
         m.durable_data
     in

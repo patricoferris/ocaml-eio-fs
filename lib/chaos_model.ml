@@ -1881,7 +1881,7 @@ module Crash = struct
               in
               match Inos.find_opt ino st.inos with
               | Some [] -> st
-              | Some from when from = at -> st
+              | Some from when List.equal String.equal from at -> st
               | Some from ->
                   let at = if is_prefix from at then [ limbo ino ] else at in
                   move_node st ~from ~at
@@ -2584,20 +2584,21 @@ module Crash = struct
           | `Change k -> (
               match (List.nth mine k : entry).change with
               | Write { offset; data } ->
-                  Some
-                    (Fmt.str "%s as the write @%d+%d left it" at offset
-                       (Cstruct.length data))
+                  Fmt.kstr Option.some "%s as the write @%d+%d left it" at
+                    offset (Cstruct.length data)
               | Resize m when off >= m ->
-                  Some (Fmt.str "%s zeros, from the truncation to %d" at m)
+                  Fmt.kstr Option.some "%s zeros, from the truncation to %d" at
+                    m
               | Resize m when m < off + n ->
-                  Some
-                    (Fmt.str "%s as the truncation to %d left it, zeros from %d"
-                       at m m)
+                  Fmt.kstr Option.some
+                    "%s as the truncation to %d left it, zeros from %d" at m m
               | Resize m ->
-                  Some (Fmt.str "%s as the truncation to %d left it" at m))
+                  Fmt.kstr Option.some "%s as the truncation to %d left it" at m
+              )
           | `Over -> Some (at ^ " as a failed sync wrote it")
-          | `Stale None -> Some (Fmt.str "%s stale %C" at stale)
-          | `Stale (Some from) -> Some (Fmt.str "%s stale (what %s)" at from)
+          | `Stale None -> Fmt.kstr Option.some "%s stale %C" at stale
+          | `Stale (Some from) ->
+              Fmt.kstr Option.some "%s stale (what %s)" at from
         in
         let parts = List.filter_map run runs in
         let parts =
@@ -3389,7 +3390,7 @@ module Crash = struct
     let note_clear cf fs =
       if fs.mode land 0o6000 <> 0 then begin
         let st = Eio.File.stat cf.cro in
-        if st.perm <> fs.mode then begin
+        if not (Int.equal st.perm fs.mode) then begin
           fs.mode <- st.perm;
           record_clear cf.ctl fs st
         end
@@ -3670,7 +3671,8 @@ module Crash = struct
       let fs =
         match Hashtbl.find_opt d.dctl.files key with
         | Some fs ->
-            if fs.perm <> perm then d.dctl.effects <- d.dctl.effects + 1;
+            if not (Int.equal fs.perm perm) then
+              d.dctl.effects <- d.dctl.effects + 1;
             fs.perm <- perm;
             fs
         | None ->
@@ -3690,7 +3692,7 @@ module Crash = struct
       let mode =
         match found with Some st -> st.perm | None -> create_perm create
       in
-      if fs.mode <> mode then d.dctl.effects <- d.dctl.effects + 1;
+      if not (Int.equal fs.mode mode) then d.dctl.effects <- d.dctl.effects + 1;
       fs.mode <- mode;
       (* An unsynced truncation of pre-existing durable data is itself a change
          that a crash may lose. *)
