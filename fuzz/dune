@@ -3,10 +3,14 @@
 ; Quick check: dune build @fuzz
 ; With AFL: crow start --cpus=4
 
-; Extents is private to eio_fs: its source is compiled in here.
+; Extents and Chaos_blocks are private to eio_fs: their sources are compiled
+; in here.
 
 (copy_files#
  (files ../lib/extents.{ml,mli}))
+
+(copy_files#
+ (files ../lib/chaos_blocks.{ml,mli}))
 
 (executable
  (name fuzz)
