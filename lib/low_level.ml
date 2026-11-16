@@ -1427,7 +1427,9 @@ let check_writable op (t : Fd.t) =
    [Eio.Path.open_in] on a directory is legal and the portable directory
    barrier depends on it -- so the operations below refuse one with EISDIR, as
    read(2) and write(2) do. *)
-(* A write by a user other than root clears the file's privilege bits. *)
+(* A write by a user other than root clears the file's privilege bits. A
+   write of no bytes changes nothing, as Linux returns before the file
+   system sees it. *)
 let written (t : Fd.t) (f : File.t) =
   if t.user.uid = 0 then f else { f with stat = User.without_privileges f.stat }
 
@@ -1445,6 +1447,7 @@ let writev t bufs =
   let r = resource_of t in
   check_writable "writev" t;
   match !r with
+  | File _ when Cstruct.lenv bufs = 0 -> 0
   | File e ->
       (* The buffers are one contiguous run, written at the offset or, for an
          append descriptor, at the end. *)
@@ -1516,6 +1519,7 @@ let pwritev t ~file_offset bufs =
   let r = resource_of t in
   check_writable "pwrite" t;
   match !r with
+  | Resource.File _ when Cstruct.lenv bufs = 0 -> 0
   | Resource.File e ->
       let src = Cstruct.concat bufs in
       (* On an O_APPEND descriptor Linux appends, whatever the offset;
