@@ -1692,36 +1692,22 @@ module Crash = struct
              raise ~budget."
             n budget
         in
-        let lin = cuts @ faults in
-        if List.length lin > budget then over (List.length lin);
-        (* The cuts during recover come from the traces of the cuts, so the
-           tier's size is known once those ran; past the budget, only their
-           number is kept. *)
-        let nrcuts = ref 0 in
-        let rcuts =
-          List.concat_map
-            (fun s ->
-              let r = attempt s in
-              let l = Plan.rcuts ~changed:(rchanged r) s ~recover:r.rtrace in
-              nrcuts := !nrcuts + List.length l;
-              if List.length lin + !nrcuts > budget then [] else l)
-            cuts
-        in
-        let linear = List.length lin + !nrcuts in
+        let linear = List.length cuts + List.length faults in
+        if linear > budget then over linear;
         (* Evictions are linear runs the sampled tier does not grow with, and
-           no second fault or cut in recover follows them. *)
+           no second fault or cut in the restart follows them. *)
         let evicted (s : Plan.crash) = List.exists Plan.is_evict s.cfaults in
         let evicts, faults = List.partition evicted faults in
-        (* The second faults and the cuts during recover each fault allows,
-           drawn as each run ends, so no run's operations outlive it: an
-           even share of what the sampled tier can spend. *)
+        (* The second faults and the cuts during the restart each run of the
+           linear tier allows, drawn as it ends, so no run's operations
+           outlive it: an even share of what the sampled tier can spend. *)
         let total =
           Plan.sampled_share ~budget
             ~linear:(linear - List.length evicts)
             ~classes:1
         in
         let quota =
-          let k = List.length faults in
+          let k = List.length cuts + List.length faults in
           (total + k - 1) / max 1 k
         in
         let best = Plan.Pairs.v total in
@@ -1737,11 +1723,9 @@ module Crash = struct
               | _ -> ());
               Plan.sample rng quota
                 (Plan.rcuts ~changed:(rchanged r) s ~recover:r.rtrace))
-            faults
+            (cuts @ faults)
         in
         List.iter (fun s -> ignore (attempt s)) evicts;
-        if linear > budget then over linear;
-        List.iter (fun r -> ignore (attempt r)) rcuts;
         (* Sampled tier. *)
         let thunks = List.map (fun s () -> ignore (attempt s)) in
         let others = thunks (Plan.crash_others ~changed ~tears first_ops) in
