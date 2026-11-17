@@ -21,7 +21,7 @@ bug-reports: "https://github.com/samoht/ocaml-eio-fs/issues"
 depends: [
   "dune" {>= "3.21"}
   "hermetic" {>= "0.1.0"}
-  "ocaml" {>= "5.3"}
+  "ocaml" {>= "5.4"}
   "eio" {>= "1.7"}
   "fmt"
   "cstruct"

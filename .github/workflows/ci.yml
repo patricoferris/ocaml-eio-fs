@@ -15,7 +15,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
-        ocaml-compiler: ['5.3', '5.4', '5.5']
+        ocaml-compiler: ['5.4', '5.5']
     runs-on: ${{ matrix.os }}
     timeout-minutes: 60
     # Eio_main falls back from eio_linux to eio_posix when io_uring is
@@ -76,7 +76,7 @@ jobs:
 
       - uses: ocaml/setup-ocaml@v3
         with:
-          ocaml-compiler: '5.3'
+          ocaml-compiler: '5.4'
 
       # Eio 1.7 until ocaml/opam-repository#31253 merges.
       - name: Pin Eio 1.7

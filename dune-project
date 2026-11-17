@@ -27,7 +27,7 @@ lacks, and embeds a directory tree in a program. The in-memory backend is
 adapted from Patrick Ferris's eio_mem (https://git.sirref.org/eio_mem).")
  (depends
   (hermetic (>= 0.1.0))
-  (ocaml (>= 5.3))
+  (ocaml (>= 5.4))
   (eio (>= 1.7))
   fmt
   cstruct
