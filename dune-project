@@ -32,7 +32,7 @@ macOS does.")
   (ocaml (>= 5.4))
   (eio (>= 1.7))
   fmt
-  cstruct
+  (cstruct (>= 6.2.0))
   optint
   mtime
   psq
