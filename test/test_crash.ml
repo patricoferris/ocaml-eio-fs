@@ -1394,6 +1394,42 @@ let test_crash_kept_barrier_on_a_childs_directory () =
 let test_crash_kept_rename_over_a_childs_file_lost () =
   rename_over_a_childs_file ~barrier:false
 
+(* A file made through the wrapper, synced, and named by a barrier on its
+   directory is one the cut spares: on a disk it keeps its inode and its
+   modification time. *)
+let test_crash_cut_spares_a_new_file () =
+  Eio_main.run @@ fun env ->
+  let fs = Eio.Stdenv.fs env in
+  let dir = Filename.temp_file "eio-fs-crash" "" in
+  Sys.remove dir;
+  Eio.Path.mkdir ~perm:0o755 Eio.Path.(fs / dir);
+  Fun.protect ~finally:(fun () ->
+      Eio.Path.rmtree ~missing_ok:true Eio.Path.(fs / dir))
+  @@ fun () ->
+  let ctl = Eio_fs.Chaos.Crash.(v Drop_unsynced) in
+  let wrapped = Eio_fs.Chaos.Crash.wrap ctl Eio.Path.(fs / dir) in
+  Eio.Path.with_open_out ~create:(`Exclusive 0o644) (wrapped / "kept")
+    (fun file ->
+      Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
+      Eio.File.sync file);
+  Eio.Path.sync_dir wrapped;
+  let identity p =
+    let st = Eio.Path.stat ~follow:false p in
+    (st.ino, st.mtime)
+  in
+  let before = identity (wrapped / "kept") in
+  Eio.Path.save ~create:(`Exclusive 0o644) (wrapped / "lost") "junk";
+  let post = Eio_fs.Chaos.Crash.cut ctl in
+  Alcotest.(check bool)
+    "the unsynced file is gone" true
+    (absent (post / "lost"));
+  Alcotest.(check string)
+    "the spared file's bytes" "data"
+    (Eio.Path.load (post / "kept"));
+  Alcotest.(check (pair int64 (float 0.)))
+    "the spared file's inode and mtime" before
+    (identity (post / "kept"))
+
 (* A controller built through the public API keeps what a child writes by
    name beside its wrapper, while the wrapper's own unsynced rewrite is the
    policy's to drop. *)
@@ -1721,6 +1757,8 @@ let suite =
         test_crash_kept_rename_over_a_childs_file_lost;
       Alcotest.test_case "crash: a public controller keeps a child's entry"
         `Quick test_crash_public_controller_keeps_a_childs_entry;
+      Alcotest.test_case "a cut spares a new file's identity" `Quick
+        test_crash_cut_spares_a_new_file;
       Alcotest.test_case "crash: a snapshot reads a file being rewritten" `Quick
         test_crash_snapshot_reads_a_file_being_rewritten;
     ] )
