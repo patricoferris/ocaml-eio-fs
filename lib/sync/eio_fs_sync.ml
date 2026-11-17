@@ -400,7 +400,29 @@ let ends_torn path =
         [ last ];
       not (Char.equal (Cstruct.get_char last 0) '\n')
 
-let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644) path lines =
+(* The offset just past [file]'s last LF, [0] when it has none, read back from
+   the end one block at a time, whatever the file's size. *)
+let committed_end file =
+  let block = Cstruct.create 4096 in
+  let rec scan stop =
+    if stop = 0 then 0
+    else
+      let len = Int.min stop 4096 in
+      let start = stop - len in
+      Eio.File.pread_exact file
+        ~file_offset:(Optint.Int63.of_int start)
+        [ Cstruct.sub block 0 len ];
+      let rec find i =
+        if i < 0 then scan start
+        else if Char.equal (Cstruct.get_char block i) '\n' then start + i + 1
+        else find (i - 1)
+      in
+      find (len - 1)
+  in
+  scan (Optint.Int63.to_int (Eio.File.size file))
+
+let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644)
+    ?(tail = `Preserve) path lines =
   List.iter
     (fun l ->
       if String.contains l '\n' then
@@ -408,8 +430,11 @@ let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644) path lines =
           "Eio_fs_sync.append_lines: lines holds %S, a line with an LF in it" l)
     lines;
   let torn = ends_torn path in
+  let discard =
+    torn && match tail with `Discard -> true | `Preserve -> false
+  in
   let b = Buffer.create 256 in
-  if torn then Buffer.add_char b '\n';
+  if torn && not discard then Buffer.add_char b '\n';
   List.iter
     (fun l ->
       Buffer.add_string b l;
@@ -419,13 +444,15 @@ let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644) path lines =
   (* Every durable append barriers the file and its directory, an empty one
      included: when the barriers of the append that created the file failed,
      nothing else would make its entry durable. *)
-  if Barrier.issues barrier || data <> "" then begin
+  if Barrier.issues barrier || data <> "" || discard then begin
     let create = if data = "" then `Never else `If_missing perm in
     let opened =
       Eio.Switch.run @@ fun sw ->
       match Eio.Path.open_out ~sw ~append:true ~create path with
       | exception Eio.Io (Eio.Fs.E (Not_found _), _) when data = "" -> false
       | file ->
+          if discard then
+            Eio.File.truncate file (Optint.Int63.of_int (committed_end file));
           if data <> "" then Eio.Flow.copy_string data file;
           Barrier.sync_file barrier file;
           true

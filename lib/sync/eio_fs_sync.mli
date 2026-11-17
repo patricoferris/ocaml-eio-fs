@@ -276,28 +276,35 @@ val save :
 val append_lines :
   ?barrier:Barrier.t ->
   ?perm:Eio.File.Unix_perm.t ->
+  ?tail:[ `Preserve | `Discard ] ->
   _ Eio.Path.t ->
   string list ->
   unit
-(** [append_lines ~barrier ~perm path lines] appends each of [lines] to the file
-    at [path], each ended by LF, in one write. A missing file is created with
-    mode [perm] (defaults to [0o644]). With [lines] empty, a missing file is not
-    created and a file's only change is the LF that ends a torn last line.
+(** [append_lines ~barrier ~perm ~tail path lines] appends each of [lines] to
+    the file at [path], each ended by LF, in one write. A missing file is
+    created with mode [perm] (defaults to [0o644]). With [lines] empty, a
+    missing file is not created and a file's only change is to its torn last
+    line.
 
     A file whose last byte is not LF ends in a line torn by a crash part way
-    through an append. That line is ended first, so the first of [lines] starts
-    a line of its own: the torn bytes stay, as a line a reader refuses as it
-    refuses any malformed one, and no line appended after them is read as their
-    continuation. A file that is empty or ends in LF is appended to as it is.
+    through an append. With [tail] [`Preserve] (the default), that line is ended
+    first, so the first of [lines] starts a line of its own: the torn bytes
+    stay, as a line a reader refuses as it refuses any malformed one, and no
+    line appended after them is read as their continuation. With [`Discard], the
+    file is truncated just past its last LF, to empty when it has none, before
+    [lines] are appended: the policy of a journal whose LF commits a record.
+    Complete lines stay as they are, malformed ones included, and the tail is
+    found by reading the file back from its end, 4096 bytes at a time. A file
+    that is empty or ends in LF is appended to as it is.
 
     The file is synced after the write with [barrier] (defaults to
     {!Barrier.portable}), then the directory holding it, on every call, one with
     nothing to write included: a barrier that failed on the call that created
     the file is issued again by the next one, [append_lines path []] being the
     retry that adds no line. A call with [lines] empty on a missing file issues
-    no barrier, and with {!Barrier.none} opens nothing. Appends from two writers
-    are not ordered with each other: a caller with several wraps each call in
-    {!Lock.use}.
+    no barrier, and with {!Barrier.none} a call with nothing to write or discard
+    opens nothing. Appends from two writers are not ordered with each other: a
+    caller with several wraps each call in {!Lock.use}.
 
     @raise Invalid_argument if a line holds LF, before anything is written.
     @raise Eio.Io as the open, the write and the barriers raise. *)
