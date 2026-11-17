@@ -9,7 +9,9 @@
   chaos_plan
   chaos_blocks
   chaos_journal
-  chaos_law)
+  chaos_law
+  conformance
+  conformance_traces)
  (libraries
   hermetic
   eio
@@ -17,6 +19,7 @@
   eio-fs.path
   eio-fs.sync
   eio_fs_internal
+  eio_fs_kernel
   fmt
   cstruct
   optint
@@ -25,6 +28,17 @@
   domain-local-await
   uucp
   uunf))
+
+(rule
+ (target conformance_traces.ml)
+ (deps kernel/fs.csv)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "let csv = {fs_csv|")
+    (cat kernel/fs.csv)
+    (echo "|fs_csv}\n")))))
 
 (mdx
  (package eio-fs)

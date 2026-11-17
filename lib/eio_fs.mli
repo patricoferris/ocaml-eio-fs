@@ -263,6 +263,57 @@ end
 module Chaos = Chaos
 (** Filesystem faults and power cuts, for tests of Eio programs. *)
 
+(** Where a directory answers differently from Linux or macOS.
+
+    A scenario is a few operations through {!Eio.Path}, such as a write of [a]
+    then a stat of [A], or a rename over a non-empty directory. Linux, on a
+    tmpfs, and macOS, on its default case-insensitive APFS volume, answered each
+    operation of each scenario when this package was recorded, as a user other
+    than root, with the umask [0o022] and a supplementary group. A directory
+    that agrees with them passes; {!Fs.v} does, for the [os] it is given. *)
+module Conformance : sig
+  val scenarios : string list
+  (** [scenarios] is the name of each scenario, in the order {!check} runs them.
+  *)
+
+  val check :
+    ?os:[< `Linux | `Macos ] ->
+    ?only:string list ->
+    user:user ->
+    (unit -> _ Eio.Path.t) ->
+    unit
+  (** [check ~os ~only ~user f] runs each scenario named in [only] (defaults to
+      {!scenarios}) and compares each answer with the one [os] (defaults to
+      [`Linux]) gave. [f ()] is a fresh, empty directory whose operations run as
+      [user]; [check] calls it once per scenario and runs the scenario in a
+      directory of mode [0o755] it makes there, as the recording did. [user]
+      names the groups a scenario changes a file to and reads back.
+
+      An answer is an error's errno, such as [ENOENT] or [denied] for [EACCES]
+      and [EPERM], or what the operation returned: a file's kind and length, a
+      listing, a mode. Where Eio defines the answer and the kernel does not give
+      it, as for a path resolved one component at a time, the answer is the one
+      eio_posix gave on that kernel, and a report says why. A directory that
+      eio_posix confines does not pass: eio_posix resolves a trailing slash,
+      ["."] and [".."] itself, where the kernel answers otherwise.
+
+      @raise Failure
+        with a report of the first answer that differs: the scenario, the
+        operation, both answers, the operations up to it with the directory's
+        answers, and the [~only] argument that runs that scenario alone.
+      @raise Invalid_argument
+        if [user] is root, its umask is not [0o022], it has no group other than
+        its primary one, or [only] names a scenario {!scenarios} lacks. *)
+
+  (**/**)
+
+  val eio_posix_differs : [< `Linux | `Macos ] -> string list
+  (** [eio_posix_differs os] is the scenarios where the answers eio_posix gave
+      on [os] differ from those {!check} expects. *)
+
+  (**/**)
+end
+
 (** Trees and directories on any {!Eio} backend:
 
     - walks over the tree under a path, which measure it ({!val-usage}), visit

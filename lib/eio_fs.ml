@@ -388,6 +388,7 @@ module Crunch = struct
 end
 
 module Chaos = Chaos
+module Conformance = Conformance
 
 type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 
