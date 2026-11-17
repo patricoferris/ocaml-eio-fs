@@ -436,6 +436,12 @@ module Inline = struct
         (Eio_unix.File.import_rw ~sw ~close_unix:true fd
           :> Eio.File.rw_ty Eio.Resource.t)
 
+      (* A name in directory syntax is resolved by the root, which strips
+         its slash as the backend does. *)
+      let read_link _ path =
+        if String.ends_with ~suffix:"/" path then B.read_link bv path
+        else eio_unix_errors (fun () -> Unix.readlink (resolve path))
+
       (* The names but [.] and [..], as eio_posix lists them before
          Eio.Path.read_dir sorts them. *)
       let read_dir _ path =

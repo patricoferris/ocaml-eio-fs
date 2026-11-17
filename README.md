@@ -232,8 +232,8 @@ assert (
 - `eio-fs.sync` writes a file atomically and durably on any backend.
 - `eio-fs.unix` binds POSIX calls that Eio and `Unix` lack, such as advisory
   locks and extended attributes. It also has `Eio_fs_unix.inline_fs`, a root
-  whose stats, opens and directory listings run on the calling thread rather
-  than on a system thread.
+  whose stats, opens, link reads and directory listings run on the calling
+  thread rather than on a system thread.
 - `eio-fs.path` does lexical operations on path strings.
 
 ## What the filesystem models
