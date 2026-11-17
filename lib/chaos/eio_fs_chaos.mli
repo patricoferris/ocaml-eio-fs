@@ -101,16 +101,11 @@ val run :
     filesystem then holds, as a machine restarts a service. After a power cut,
     that is what the disk kept.
 
-    {b How the faults are picked.} [run] learns the operations of [app] from its
-    first run. It tries every fault above at every operation of that run, but
-    for the many reads and writes of one file, of which it takes the first
-    three, the last and one of each size. Then it spends a fortieth of [budget]
-    (defaults to [20_000]) on runs drawn at random from [seed] (defaults to
-    [0]): the other reads and writes, two faults in a run, the second on the
-    path the first one opened, a power cut during the restart, and the other
-    states a cut may leave, where only some of the unsynced writes reached the
-    disk. Another [seed] draws other runs. The errors and the power cuts each
-    have [budget] runs. {!section-exploration} says more.
+    {b How the faults are picked.} [run] tries every fault above at every
+    operation of its first run, but of the many reads and writes of one file it
+    takes the first three, the last and one of each size. Then it draws more
+    runs from [seed] (defaults to [0]) within [budget] (defaults to [20_000]),
+    as {!section-exploration} says.
 
     {!Fault.Swap_symlink} is not among the faults: it fails ordinary code that
     stats then opens a path in a directory no attacker can write.
@@ -138,10 +133,12 @@ val run :
 
     @raise Failure
       with a report of the first failing run: the fault, the operations of the
-      run, the error, and the line to paste that runs it alone, as
-      [Eio_fs_chaos.run ~replay:"fs/85d85f49/none|before:write:/f#1|drop" app].
-      [replay] reruns that one case, and its restart, whatever the [seed] that
-      found it.
+      run, the error, what the program printed, and the line to paste that runs
+      that case again, as
+      [Eio_fs_chaos.run ~replay:"fs/7a2e6ba7/none|end|drop" app]. [replay]
+      reruns that one case, and its restart, whatever the [seed] that found it.
+      To find it, a replay may first run [app] a few times, so the failing run
+      is the last one.
     @raise Invalid_argument
       if [budget] is not positive, or [replay] is not a replay string of eio-fs.
 *)
@@ -454,17 +451,18 @@ end
       simplest states: everything unsynced lost, and everything kept;
     - the sampled tier spends a fortieth of the budget, 500 runs by default, or
       half as much as the linear tier if that is more: the other positions,
-      pairs of faults, and the other states a power cut may leave. A first fault
-      that changes what the run writes gets its second faults first, on the
-      operations that follow it, those that change the disk first: that is where
-      a retry or a recovery path lives. When it has fewer runs than scenarios of
-      a kind, it splits them, in order, into as many groups of neighbours as it
-      has runs, and runs one scenario of each group, drawn from a seed. Each
-      draw may land on any scenario of its group, so a pattern that repeats
-      along the scenarios, as the faults tried at each operation do, hides no
-      kind of fault from it, where taking every k-th scenario may meet only one.
-      A larger budget tries more only once a fortieth of it passes half the
-      linear tier, so raising it a little may change nothing.
+      pairs of faults, power cuts during a restart, and the other states a power
+      cut may leave. A first fault that changes what the run writes gets its
+      second faults first, on the operations that follow it, those that change
+      the disk first: that is where a retry or a recovery path lives. When it
+      has fewer runs than scenarios of a kind, it splits them, in order, into as
+      many groups of neighbours as it has runs, and runs one scenario of each
+      group, drawn from a seed. Each draw may land on any scenario of its group,
+      so a pattern that repeats along the scenarios, as the faults tried at each
+      operation do, hides no kind of fault from it, where taking every k-th
+      scenario may meet only one. A larger budget tries more only once a
+      fortieth of it passes half the linear tier, so raising it a little may
+      change nothing.
 
     A check never passes on a partial linear tier. One that needs more runs than
     its budget fails and says so: shrink the program or raise [~budget]. The
@@ -526,8 +524,9 @@ end
       for a state drawn among those the cut allows, what each file holds: its
       length, and each run of sectors that holds a write, zeros or stale data,
       with where the stale data comes from;
+    - what the program printed, its last lines;
     - the [Eio_fs_chaos.run ~replay:"..." app] call that runs that scenario
-      alone.
+      again.
 
     A report's size is bounded by the program's structure, not by how long it
     spun:
@@ -541,8 +540,11 @@ end
 
     A replay:
 
-    - finds its scenario again by its operations when the program's first run
-      has changed, and its report says so;
+    - finds its scenario again by the kind and rank of the operations it names
+      when the program's first run has changed, and its report says so;
+    - runs the program a few times first when the scenario is a second fault or
+      a cut during a restart, as its runs say where those fall: the failing run
+      is the last one;
     - fails if the check no longer has that scenario, or if it names a state
       drawn at random of a cut that allows two states or fewer, which the check
       never draws;

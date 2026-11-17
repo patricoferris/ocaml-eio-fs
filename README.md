@@ -5,10 +5,11 @@ to test code under filesystem errors and power cuts.
 
 Each test gets a fresh filesystem of its own, used through the ordinary
 `Eio.Path` API, so the code under test does not change.
-`Eio_fs_chaos.run` runs a program again and again, each time with a
-different filesystem error or power cut, and restarts it on what the failure
-left. `Eio_fs_chaos.device` checks that an Eio filesystem answers as Linux or
-macOS does.
+`Eio_fs_chaos.run` is chaos engineering on one machine: it runs a program
+again and again, each time with a different filesystem error or power cut,
+and checks that it starts again on what the failure left
+([How it works](#how-it-works)). `Eio_fs_chaos.device` checks that an Eio
+filesystem answers as Linux or macOS does.
 
 ## Installation
 
@@ -34,13 +35,18 @@ file.
 
 Your program reads and writes files through `Eio.Path`. What does it do when
 the disk fails? `Eio_fs_chaos.run` takes the program as a function of its
-environment and runs it many times in memory, unchanged.
+environment and runs it many times in memory.
 
 ```ocaml
 # Eio_fs_chaos.run @@ fun env ->
-  Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#fs / "hello") "world";;
+  let fs = Eio.Stdenv.fs env in
+  Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(fs / "hello") "world";;
 - : unit = ()
 ```
+
+The `env` has the capabilities of `Eio.Stdenv`, each simulated
+([How it works](#how-it-works)), so a `main` written against `Eio.Stdenv`
+runs unchanged.
 
 The first run has no fault. Each later run starts from the same state and
 meets one fault:
@@ -49,15 +55,18 @@ meets one fault:
 - a write is torn, or the disk becomes full or read-only;
 - the power is cut, and the disk keeps only part of what was written.
 
-It tries every fault at every operation of the first run, then random pairs
-of faults drawn from `~seed`. After each of those runs, the check starts the
-program again with no fault, on what the filesystem then holds, as a machine
-restarts a service. After a power cut, that is what the disk kept.
+It tries each fault at each operation of the first run, except that of the
+many reads and writes of one file it takes the first three, the last and one
+of each size. Then it tries random pairs of faults drawn from `~seed`. After
+each of those runs, the check starts the program again with no fault, on
+what the filesystem then holds, as a machine restarts a service. After a
+power cut, that is what the disk kept.
 
 The check fails if a run hangs, if it raises anything other than `Eio.Io`,
 or if the restart does not end normally. An `Eio.Io` error that escapes a
 run with a fault is not a failure in itself: the disk did fail, so the
-restart decides.
+restart decides. A program that turns every `Eio.Io` into an exception of
+its own fails the check at the first fault.
 
 A restart cannot see lost data, because the program writes it again. For
 that, the program calls `Eio_fs_chaos.ack env file` once it has promised
@@ -84,24 +93,57 @@ val save : [> Eio.Fs.dir_ty ] Eio.Path.t -> string -> unit = <fun>
 ```
 
 The save above does not sync its directory, so a power cut loses the
-rename. A failure report gives the fault, the operations of the run and one
-line to paste, which runs that case alone.
-[`eio_fs_chaos.mli`](lib/chaos/eio_fs_chaos.mli) says how the faults are
-picked and what a program may and may not do.
+rename. A failure report gives the fault, the operations of the run, what
+the program printed, and one line to paste that runs that case again; to
+find it, a replay may run the program a few times first, and the failing run
+is the last.
+
+Faults fall only on the operations the first run makes, and that run starts
+on an empty filesystem. Code that runs only at a restart, such as the read
+of a configuration the first run wrote, meets faults only when `~setup`
+makes the first run reach it. This start-up reads its configuration with a
+single read, which may return fewer bytes:
+
+```ocaml
+# let start env =
+    let config = Eio.Path.(env#fs / "config") in
+    match
+      Eio.Path.with_open_in config (fun f ->
+          let buf = Cstruct.create 64 in
+          Cstruct.to_string ~len:(Eio.Flow.single_read f buf) buf)
+    with
+    | "debug" -> ()
+    | s -> failwith ("bad config: " ^ s)
+    | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> save env#fs "debug";;
+val start : < fs : [> Eio.Fs.dir_ty ] Eio.Path.t; .. > -> unit = <fun>
+# Eio_fs_chaos.run start;;
+- : unit = ()
+# match
+    Eio_fs_chaos.run ~setup:(fun env -> save env#fs "debug") start
+  with
+  | () -> "passed"
+  | exception Failure report -> List.hd (String.split_on_char '\n' report);;
+- : string = "Eio_fs_chaos.run: the program failed under a fault"
+```
+
+`~inspect` checks what only the test knows, such as the records a log must
+still hold, after each fault and before the restart.
 
 ## Testing a filesystem
 
 You have written an Eio filesystem: a backend, a wrapper, a cache. Does it
 answer as Linux does? `Eio_fs_chaos.device` takes a function that makes a
-fresh, empty directory and runs short scenarios in it, each recorded on a
-real Linux and a real macOS kernel.
+fresh, empty directory from the same simulated `env` and runs short
+scenarios in it, each recorded on a real Linux and a real macOS kernel.
 
 ```ocaml
 # Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs.Fs.v ());;
 - : unit = ()
 ```
 
-The scenarios cover the corners where filesystems disagree:
+A filesystem built on other capabilities, such as a wrapper over a
+directory, takes them from `env`. The scenarios cover the corners where
+filesystems disagree:
 
 - names that differ only by case or by Unicode form;
 - names and paths at their length limits;
@@ -111,16 +153,79 @@ The scenarios cover the corners where filesystems disagree:
 - the permission rules that an ordinary user meets.
 
 The check runs every scenario, then reports each one whose answer differs,
-as `case lookup: write a x; stat A: expected file 1, got ENOENT`,
-with a summary. Pass ``~os:`Macos`` to compare with macOS on its default
-APFS volume, where `a` and `A` are the same name. The permission scenarios run
-only with `~user`, the user the directory's operations run as, as root
-passes every permission check.
+as `case lookup: write a x; stat A: expected file 1, got ENOENT`, with a
+summary; [`eio_fs_chaos.mli`](lib/chaos/eio_fs_chaos.mli) lists the
+operations. Pass ``~os:`Macos`` to compare with macOS on its default APFS
+volume, where `a` and `A` are the same name.
+
+The permission scenarios run only with `~user`, as root passes every
+permission check. `~user` says which user the directory's operations run as;
+it does not change that user. The in-memory filesystem needs
+`Eio_fs.Fs.v ~user` to match.
+
+eio_posix itself differs from the kernel on 12 of the 86 scenarios on Linux
+and 20 on macOS, as it resolves a trailing slash, `.` and `..` itself. A
+filesystem that wraps eio_posix differs there too, and the report marks
+those lines with `(eio_posix differs here too)`.
+
+## How it works
+
+**Chaos engineering, on one machine.** Chaos engineering runs a system,
+injects the failures the real world produces, and tries to disprove a
+hypothesis about its steady state. `run` does this in one process,
+deterministically:
+
+- **steady state:** the program returns, and when it is restarted on what a
+  failure left, it starts and works again, with every file it acknowledged
+  intact;
+- **failures:** each failure the real kernel can produce at each call the
+  program made, and a power cut;
+- **result:** either the hypothesis held for every failure tried, or the
+  first counter-example and one line that replays it.
+
+**What is simulated.** The program receives each device as an Eio
+capability, through `env`. The package replaces each capability with a
+simulated one; the program is not changed.
+
+- The filesystem is a page cache over a simulated disk. Writes stay in the
+  cache until `fsync` or a directory sync makes them durable. A power cut
+  keeps only what ext4 (`data=writeback`) or APFS may keep.
+- The clocks jump to the next timer, `secure_random` and `Random` are
+  seeded, the standard streams are in memory, a domain manager runs its work
+  on the run's own scheduler, and no process starts.
+
+A program built with [hermetic](https://github.com/samoht/ocaml-hermetic)
+(`open! Hermetic`) cannot escape the check: the compiler rejects direct
+`Unix`, standard-library I/O, entropy, domains and processes, so each run
+replays exactly, unless the program keeps state in memory from one run to the
+next. Without hermetic, a direct call escapes the check, and when it makes
+two runs differ, the report names the first difference and its likely
+cause. The same holds for a filesystem under `device`.
+
+**What is guaranteed.**
+
+1. With no fault, the simulated filesystem answers each call as Linux or
+   macOS does through Eio, as recorded on real kernels; the Limitations list
+   the known differences.
+2. Only failures the real kernel can return at that call are injected, and a
+   power cut leaves only the states the crash rules allow. So every failure
+   reported can happen on a real machine.
+3. Completeness is not guaranteed. Faults fall only on the calls the program
+   made, at most two per run, and a power cut leaves only the crash states of
+   ext4 and APFS. A pass means no counter-example was found there.
+
+`device` checks guarantee 1 for a filesystem of your own: each call's answer
+against the recorded kernel answers. It checks nothing about durability
+across power cuts, or about on-disk layout.
 
 ## Libraries
 
 - `eio-fs` has the in-memory filesystem. Its `eio-fs-crunch` binary embeds a
   directory tree in an executable.
+  - `Eio_fs.Tree` walks, measures, copies and formats a tree on any Eio
+    backend.
+  - `Eio_fs.Nofollow` reads a file, bounded, refusing a symbolic link at the
+    final path component.
 - `eio-fs.chaos` has `Eio_fs_chaos`, the two checks above and the faults
   they are made of, so a program that uses only the filesystem links none of
   it.
@@ -138,11 +243,12 @@ passes every permission check.
 - eio_posix differs from the kernel on a few paths, such as one that ends in
   `..`, and the in-memory filesystem follows the kernel
   ([`Eio_fs.Fs`](lib/eio_fs.mli)).
-- A power cut leaves what ext4 may leave, and APFS follows the same rules
-  but for its syncs ([`Eio_fs_chaos.Power`](lib/chaos/eio_fs_chaos.mli)).
-- `Eio_fs_chaos.run` injects at most two faults in a run, so it misses a bug
-  that needs three, and a restart finds lost data only in a file the program
-  acknowledged ([`Eio_fs_chaos`](lib/chaos/eio_fs_chaos.mli)).
+- A power cut leaves what ext4 with `data=writeback` may leave, a weaker
+  model than ext4's default, `data=ordered`, which writes a file's data
+  before the metadata that names it. Under ``~os:`Macos`` only the syncs
+  differ: `fsync` stops in the drive's cache and `F_FULLFSYNC` goes through
+  it. The rest follows ext4, so a cut may leave a state APFS would not
+  ([`Eio_fs_chaos.Power`](lib/chaos/eio_fs_chaos.mli)).
 
 ## Licence
 

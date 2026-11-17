@@ -4,4 +4,4 @@
 
 (mdx
  (files README.md)
- (libraries eio-fs eio-fs.chaos eio eio_main))
+ (libraries eio-fs eio-fs.chaos eio eio_main cstruct))
