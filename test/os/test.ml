@@ -1,115 +1,165 @@
-(* The in-memory filesystem replays every scenario of the recorded traces:
-   with [~os:`Linux] it must give Linux's outcomes, and with [~os:`Macos]
-   macOS's, except where an exception below says why not.
+(* Conformance.check against the kernel traces: the in-memory filesystem
+   passes for Linux and for macOS, a directory with a fault fails with a
+   report, and eio_posix on this machine fails exactly where its recorded
+   answers differ from the kernel's. README.md says where the traces come
+   from. *)
 
-   The traces hold each kernel's answers through [Unix] and through
-   eio_posix; README.md says where they come from and how to regenerate
-   them. The filesystem follows the kernel; from an operation [Unix] cannot
-   make on, it follows eio_posix. *)
+module Conformance = Eio_fs.Conformance
 
 type os = [ `Linux | `Macos ]
 
 let os_name : os -> string = function `Linux -> "Linux" | `Macos -> "macOS"
 
-(* Operations whose outcome differs from the kernel's, and why. The
-   filesystem answers there as eio_posix does. *)
-type exception_ = { os : os; scenario : string; ops : int list; why : string }
-
-let path_max =
-  "eio_posix resolves a path one component at a time, so no path is too long"
-
-let exceptions =
-  [
-    { os = `Linux; scenario = "path max"; ops = [ 2 ]; why = path_max };
-    { os = `Macos; scenario = "path max"; ops = [ 1; 2; 3 ]; why = path_max };
-    {
-      os = `Linux;
-      scenario = "dir search only";
-      ops = [ 4 ];
-      why = "eio_posix opens a directory O_PATH, which needs no read bit";
-    };
-  ]
-
-type row = {
-  linux : string list;
-  macos : string list;
-  linux_eio : string list;
-  macos_eio : string list;
-}
-
-let traces =
-  lazy
-    (In_channel.with_open_text "../../lib/kernel/fs.csv" In_channel.input_lines
-    |> List.filter (fun l -> not (String.starts_with ~prefix:"#" l))
-    |> List.tl
-    |> List.map (fun line ->
-        let outcomes s = String.split_on_char '|' s in
-        match String.split_on_char ',' line with
-        | [ ops; l; m; le; me ] ->
-            ( ops,
-              {
-                linux = outcomes l;
-                macos = outcomes m;
-                linux_eio = outcomes le;
-                macos_eio = outcomes me;
-              } )
-        | _ -> Fmt.failwith "traces/fs.csv: %s" line))
-
 let user =
   { Eio_fs.uid = 1000L; gid = 1000L; groups = [ 4242L ]; umask = 0o022 }
 
-let ids = { Eio_fs_kernel.gid = 1000; other_gid = 4242 }
-
-let replay ~os i ops =
+let memfs (os : os) name () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run ~os ~user ~cwd:"/w" @@ fun env ->
-  let dir = Eio.Path.(env#cwd / string_of_int i) in
-  Eio.Path.mkdir ~perm:0o755 dir;
-  Eio_fs_kernel.run ids dir ops
+  Conformance.check ~os ~only:[ name ] ~user (fun () ->
+      Eio_fs.Fs.v ~os ~user ())
 
-let check (os : os) i (name, ops) () =
-  let row =
-    match List.assoc_opt (Eio_fs_kernel.key ops) (Lazy.force traces) with
-    | Some r -> r
-    | None -> Alcotest.failf "%s: not in lib/kernel/fs.csv, regenerate" name
+let failure f =
+  match f () with
+  | () -> Alcotest.fail "the check passed"
+  | exception Failure report -> report
+
+(* "stat A" after "write a x" finds the file on macOS: a stat of [A] that
+   answers ENOENT differs there. *)
+let no_stat_of_a (op : Eio_fs.Chaos.Op.t) =
+  if op.kind = `Stat && Filename.basename op.path = "A" then
+    Some (Eio_fs.Chaos.Fault.Fail `Enoent)
+  else None
+
+let test_stat_fault () =
+  Eio_mock.Backend.run @@ fun () ->
+  let report =
+    failure @@ fun () ->
+    Conformance.check ~os:`Macos ~user (fun () ->
+        Eio_fs.Chaos.wrap no_stat_of_a (Eio_fs.Fs.v ~os:`Macos ~user ()))
   in
-  let kernel, eio =
-    match os with
-    | `Linux -> (row.linux, row.linux_eio)
-    | `Macos -> (row.macos, row.macos_eio)
+  Alcotest.(check string)
+    "report"
+    {|Eio_fs.Conformance.check: "case lookup" differs from macOS at operation 2
+  scenario:  case lookup
+  operation: 2, stat A
+  macOS:     file 1
+  directory: ENOENT
+  trace:
+    1 write a x  ok
+    2 stat A     ENOENT
+  replay:    ~only:["case lookup"]|}
+    report
+
+(* Linux does not find [A] either: the same directory passes there. *)
+let test_stat_fault_linux () =
+  Eio_mock.Backend.run @@ fun () ->
+  Conformance.check ~os:`Linux ~only:[ "case lookup" ] ~user (fun () ->
+      Eio_fs.Chaos.wrap no_stat_of_a (Eio_fs.Fs.v ~user ()))
+
+(* Under [`Linux] the filesystem keeps [a] and [A] apart, as macOS does
+   not. *)
+let test_wrong_os () =
+  Eio_mock.Backend.run @@ fun () ->
+  let report =
+    failure @@ fun () ->
+    Conformance.check ~os:`Macos ~user (fun () ->
+        Eio_fs.Fs.v ~os:`Linux ~user ())
   in
-  let got = replay ~os i ops in
-  (* From an operation [Unix] cannot make on, the kernel's state is not
-     eio_posix's: follow eio_posix. *)
-  let cut =
-    let rec go j = function
-      | [] -> max_int
-      | "-" :: _ -> j
-      | _ :: l -> go (j + 1) l
-    in
-    go 0 kernel
-  in
-  List.iteri
-    (fun j op ->
-      let want = List.nth (if j >= cut then eio else kernel) j in
-      let excused =
-        List.find_opt
-          (fun e -> e.scenario = name && e.os = os && List.mem (j + 1) e.ops)
-          exceptions
+  Alcotest.(check bool)
+    "names the first scenario" true
+    (String.starts_with
+       ~prefix:
+         {|Eio_fs.Conformance.check: "case lookup" differs from macOS at operation 2|}
+       report)
+
+let invalid name f =
+  match f () with
+  | () -> Alcotest.failf "%s: the check passed" name
+  | exception Invalid_argument _ -> ()
+
+let test_refused () =
+  Eio_mock.Backend.run @@ fun () ->
+  let fs () = Eio_fs.Fs.v ~user () in
+  invalid "root" (fun () -> Conformance.check ~user:Eio_fs.root fs);
+  invalid "umask" (fun () ->
+      Conformance.check ~user:{ user with umask = 0o077 } fs);
+  invalid "no supplementary group" (fun () ->
+      Conformance.check ~user:{ user with groups = [ 1000L ] } fs);
+  invalid "unknown scenario" (fun () ->
+      Conformance.check ~only:[ "no such scenario" ] ~user fs)
+
+(* eio_posix on this machine, in a fresh directory of $TMPDIR. *)
+
+let host_os () =
+  let ic = Unix.open_process_args_in "uname" [| "uname"; "-s" |] in
+  let s = In_channel.input_all ic in
+  ignore (Unix.close_process_in ic);
+  match String.trim s with
+  | "Darwin" -> Some `Macos
+  | "Linux" -> Some `Linux
+  | _ -> None
+
+let host_user () =
+  let gid = Unix.getgid () in
+  match List.filter (( <> ) gid) (Array.to_list (Unix.getgroups ())) with
+  | other :: _ when Unix.getuid () <> 0 ->
+      Some
+        {
+          Eio_fs.uid = Int64.of_int (Unix.getuid ());
+          gid = Int64.of_int gid;
+          groups = [ Int64.of_int other ];
+          umask = 0o022;
+        }
+  | _ -> None
+
+let remove dir =
+  ignore (Sys.command (Filename.quote_command "chmod" [ "-R"; "u+rwx"; dir ]));
+  ignore (Sys.command (Filename.quote_command "rm" [ "-rf"; dir ]))
+
+let test_host () =
+  match (host_os (), host_user ()) with
+  | None, _ | _, None ->
+      print_endline "skipped: not macOS or Linux, or root, or no second group";
+      Alcotest.skip ()
+  | Some os, Some user ->
+      ignore (Unix.umask 0o022);
+      let tmp = Filename.temp_dir "conformance" "" in
+      Fun.protect ~finally:(fun () -> remove tmp) @@ fun () ->
+      Eio_posix.run @@ fun env ->
+      Eio.Switch.run @@ fun sw ->
+      let n = ref 0 in
+      (* Opened, a directory is confined, as the recorder's cwd was, and takes
+         the user's group, as the recorder's did. *)
+      let fresh () =
+        incr n;
+        let d = Filename.concat tmp (string_of_int !n) in
+        Unix.mkdir d 0o755;
+        Unix.chown d (-1) (Int64.to_int user.gid);
+        Eio.Path.open_dir ~sw Eio.Path.(Eio.Stdenv.fs env / d)
       in
-      let got = List.nth got j in
-      match excused with
-      | None when got <> want ->
-          Alcotest.failf "%s, %s, op %d %S: %s answers %s, the filesystem %s"
-            name (os_name os) (j + 1) op (os_name os) want got
-      | Some e when got = want ->
-          Alcotest.failf "%s, %s, op %d %S: the exception %S is stale" name
-            (os_name os) (j + 1) op e.why
-      | None | Some _ -> ())
-    ops
+      let differs = Conformance.eio_posix_differs os in
+      let wrong =
+        List.filter_map
+          (fun name ->
+            let failed =
+              match Conformance.check ~os ~only:[ name ] ~user fresh with
+              | () -> None
+              | exception Failure r -> Some r
+            in
+            match (failed, List.mem name differs) with
+            | None, false | Some _, true -> None
+            | None, true ->
+                Fmt.kstr Option.some "%s: passes, the trace says it differs"
+                  name
+            | Some r, false -> Some r)
+          Conformance.scenarios
+      in
+      if wrong <> [] then
+        Alcotest.failf "eio_posix on %s:@\n%s" (os_name os)
+          (String.concat "\n" wrong)
 
-(* record.ml and eio_fs_kernel.ml decide every outcome; generate.sh decides only
-   where they run, which the other lines record. *)
+(* record.ml and eio_fs_kernel.ml decide every outcome; generate.sh decides
+   only where they run, which the other lines record. *)
 let test_provenance () =
   Provenance.check ~trace:"../../lib/kernel/fs.csv"
     ~keys:
@@ -135,9 +185,9 @@ let test_provenance () =
 
 let suite (os : os) =
   ( os_name os,
-    List.mapi
-      (fun i ((name, _) as s) -> Alcotest.test_case name `Quick (check os i s))
-      Eio_fs_kernel.scenarios )
+    List.map
+      (fun name -> Alcotest.test_case name `Quick (memfs os name))
+      Conformance.scenarios )
 
 let () =
   Alcotest.run "os"
@@ -146,4 +196,13 @@ let () =
         [ Alcotest.test_case "names its provenance" `Quick test_provenance ] );
       suite `Linux;
       suite `Macos;
+      ( "check",
+        [
+          Alcotest.test_case "a stat fault" `Quick test_stat_fault;
+          Alcotest.test_case "the fault agrees with Linux" `Quick
+            test_stat_fault_linux;
+          Alcotest.test_case "the other os" `Quick test_wrong_os;
+          Alcotest.test_case "refused arguments" `Quick test_refused;
+        ] );
+      ("host", [ Alcotest.test_case "eio_posix" `Quick test_host ]);
     ]
