@@ -8,4 +8,5 @@ let () =
       Test_chaos.suite;
       Test_crash.suite;
       Test_writeback.suite;
+      Test_sync_dir.suite;
     ]

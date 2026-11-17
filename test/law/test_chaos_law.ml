@@ -158,6 +158,7 @@ type step =
   | Split of int * string
   | Join of int * string * string
   | Sync_dir of int * string
+  | Dir_barrier of int * string
   | Process_local of int
   | Modeless of int
   | Admin_stat of int * string
@@ -211,6 +212,7 @@ let rec pp_step ppf = function
   | Split (d, p) -> Fmt.pf ppf "split d%d %S" d p
   | Join (d, a, b) -> Fmt.pf ppf "join d%d %S %S" d a b
   | Sync_dir (d, p) -> Fmt.pf ppf "sync_dir d%d %S" d p
+  | Dir_barrier (d, p) -> Fmt.pf ppf "barrier d%d %S" d p
   | Process_local d -> Fmt.pf ppf "process_local d%d" d
   | Modeless d -> Fmt.pf ppf "modeless d%d" d
   | Admin_stat (d, p) -> Fmt.pf ppf "admin stat d%d %S" d p
@@ -517,12 +519,23 @@ let rec exec side ~sw step =
             (fun (type a) (module D : Eio.Fs.Pi.DIR with type t = a) (_ : a) ->
               D.join a b);
         }
-  | Sync_dir (d, p) -> (
+  | Sync_dir (d, p) ->
+      on_dir side d
+        {
+          dir =
+            (fun (type a) (module D : Eio.Fs.Pi.DIR with type t = a) (v : a) ->
+              D.sync_dir v (at d p);
+              "ok");
+        }
+  | Dir_barrier (d, p) -> (
       match side.dirs.(d) with
       | None -> "no directory"
-      | Some dir ->
-          Eio_fs_sync.sync_dir (dir, at d p);
-          "ok")
+      | Some dir -> (
+          match Eio_fs_sync.dir_barrier dir with
+          | None -> "no barrier"
+          | Some barrier ->
+              barrier ~path:(at d p) ~full:false;
+              "ok"))
   | Process_local d -> (
       match side.dirs.(d) with
       | None -> "no directory"
@@ -732,7 +745,8 @@ let rec entry_of side step =
   | Pp _ -> op Dir "pp"
   | Split _ -> op Dir "split"
   | Join _ -> op Dir "join"
-  | Sync_dir _ -> op Dir_handler "Eio_fs_sync.Dir_sync"
+  | Sync_dir _ -> op Dir "sync_dir"
+  | Dir_barrier _ -> op Dir_handler "Eio_fs_sync.Dir_sync"
   | Process_local _ -> op Dir_handler "Eio_fs_sync.Process_local"
   | Modeless _ -> op Dir_handler "Eio_fs_sync.Modeless"
   | Admin_stat _ -> op Dir_handler "Eio_fs_internal.Admin"
@@ -956,6 +970,7 @@ let dir_uses d =
     Split (d, "a/b");
     Join (d, "a", "b");
     Sync_dir (d, ".");
+    Dir_barrier (d, ".");
     Process_local d;
     Modeless d;
     Admin_stat (d, "f");
