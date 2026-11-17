@@ -1,4 +1,4 @@
-(** What a check is expected to do with a workload. *)
+(** What a check is expected to do with a program. *)
 
 val field : string -> string -> string
 (** [field name report] is the [name] line of a check's failure report. *)

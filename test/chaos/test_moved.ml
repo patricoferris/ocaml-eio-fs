@@ -1,4 +1,4 @@
-(* What the cut of a controller built by hand keeps of entries the workload
+(* What the cut of a controller built by hand keeps of entries the program
    moved, renamed directories included, under directory barriers. Such a
    controller keeps what reached its base other than through the wrapper, so
    its image merges the store's tree with the model's. *)

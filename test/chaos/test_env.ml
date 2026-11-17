@@ -1,4 +1,4 @@
-(* A workload's env mirrors Eio_main's: [fs] reaches the whole tree, [cwd] is
+(* A program's env mirrors Eio_main's: [fs] reaches the whole tree, [cwd] is
    confined to its directory, as eio_posix confines it. *)
 
 module P = Eio.Path
@@ -135,11 +135,11 @@ let suite =
     [
       Alcotest.test_case "check: cwd is confined" `Quick (Expect.passes check);
       Alcotest.test_case "crash: cwd is confined" `Quick (Expect.passes crash);
-      Alcotest.test_case "check: a workload runs as a user" `Quick
+      Alcotest.test_case "check: a program runs as a user" `Quick
         (Expect.passes check_as_user);
       Alcotest.test_case "check: faults reach a user's operations" `Quick
         (Expect.caught check_as_user_faults);
-      Alcotest.test_case "crash: a workload runs as a user" `Quick
+      Alcotest.test_case "crash: a program runs as a user" `Quick
         (Expect.passes crash_as_user);
       Alcotest.test_case "a temporary named by Random" `Quick
         (Expect.passes random_name);

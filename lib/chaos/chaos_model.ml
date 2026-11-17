@@ -588,7 +588,7 @@ let wrap sched (base, path) =
 (* A companion to the schedule-driven wrapper that models power-loss durability:
    a write is unsynced until a [sync] on its file, and a crash may drop or
    reorder unsynced writes. Writes and reads are delegated unchanged while the
-   workload runs; the base is rewritten only at crash time. *)
+   program runs; the base is rewritten only at crash time. *)
 module Crash = struct
   open Chaos_blocks
 

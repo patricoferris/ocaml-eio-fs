@@ -179,7 +179,7 @@ let test_replay_malformed_state () =
     ]
 
 (* A save of [n] bytes that does not sync: the fix changes the size of what
-   it writes, and so the workload's first run. *)
+   it writes, and so the program's first run. *)
 let config ?replay ~value ~sync () =
   Eio_fs_chaos.Private.check_cuts ?replay
     ~setup:(fun env -> App.save_config env#fs "old")
@@ -197,7 +197,7 @@ let config ?replay ~value ~sync () =
       | "old", [] -> ()
       | v, _ -> Fmt.failwith "config is %S" v)
 
-(* A replay whose workload changed, but which still has the scenario, runs
+(* A replay whose program changed, but which still has the scenario, runs
    it and says so. *)
 let test_rematched_replay () =
   let report = Expect.report (config ~value:"new" ~sync:false) in
@@ -212,12 +212,12 @@ let test_rematched_replay () =
     (Expect.field "cut" again);
   Alcotest.(check string)
     "matched"
-    (Fmt.str "the replay named first run %s, and the workload's is now %s"
+    (Fmt.str "the replay named first run %s, and the program's is now %s"
        (hash replay)
        (hash (replay_of again)))
     (Expect.field "matched" again)
 
-(* A replay whose scenario the workload no longer has is refused. *)
+(* A replay whose scenario the program no longer has is refused. *)
 let test_stale_replay () =
   let replay = replay_of (Expect.report (fun () -> cache_mutant ())) in
   let key =
@@ -262,10 +262,10 @@ let test_budget () =
     ()
 
 let test_nothing () =
-  Expect.refused "Eio_fs_chaos.run: the workload makes no filesystem operation"
+  Expect.refused "Eio_fs_chaos.run: the program makes no filesystem operation"
     (fun () -> Eio_fs_chaos.run ignore)
     ();
-  Expect.refused "Eio_fs_chaos.run: the workload makes no filesystem operation"
+  Expect.refused "Eio_fs_chaos.run: the program makes no filesystem operation"
     (fun () ->
       Eio_fs_chaos.Private.check_cuts
         ~setup:(fun env ->
@@ -293,7 +293,7 @@ let test_first_run_fails () =
     (fun () -> Eio_fs_chaos.run (fun env -> ignore (P.load P.(env#fs / "f"))))
     ()
 
-(* A workload that raises before its first operation reports the
+(* A program that raises before its first operation reports the
    exception. *)
 let test_raises_first () =
   Expect.refused "Eio_fs_chaos.run: the run with no fault failed: Failure"
@@ -318,7 +318,7 @@ let test_reads_nothing () =
         ~recover:(fun ~acked:_ _ -> ()))
     ()
 
-(* With no ack and no setup, recover still checks what the workload made is
+(* With no ack and no setup, recover still checks what the program made is
    whole. *)
 let test_nothing_acked () =
   Eio_fs_chaos.Private.check_cuts
@@ -413,7 +413,7 @@ let busy =
 
 let too_many_ops =
   "the run made 100,000 filesystem operations, more than a check plans from: a \
-   busy loop, or a workload too large for a check"
+   busy loop, or a program too large for a check"
 
 (* A fiber that polls with a yield for a file another fiber failed to
    write: each turn of the loop takes time, and the run is a busy loop. Its
@@ -469,7 +469,7 @@ let test_tiny_sleeps_are_busy () =
 let test_too_many_turns () =
   Expect.refused
     "Eio_fs_chaos.run: the run with no fault failed: the run took 10,000,000 \
-     turns, more than a check can repeat: a busy loop, or a workload too large \
+     turns, more than a check can repeat: a busy loop, or a program too large \
      for a check"
     (fun () ->
       Eio_fs_chaos.run (fun env ->
@@ -1006,7 +1006,7 @@ let test_nested_report () =
   Alcotest.(check string)
     "first line"
     "Eio_fs_chaos.run: the run with no fault failed: Eio_fs_chaos.run: the \
-     workload failed under a fault"
+     program failed under a fault"
     first;
   if String.contains report '\\' then
     Alcotest.failf "the inner report is escaped: %s" report
@@ -1088,7 +1088,7 @@ let test_crash_heap_stays_flat () =
         acked);
   Heap.check heap 2_000_000
 
-(* A workload that catches the cut's cancellation keeps going. *)
+(* A program that catches the cut's cancellation keeps going. *)
 let test_kept_going () =
   let report =
     Expect.report (fun () ->
@@ -1302,13 +1302,13 @@ let suite =
       Alcotest.test_case "an unknown replay is refused" `Quick
         test_unknown_replay;
       Alcotest.test_case "the budget" `Quick test_budget;
-      Alcotest.test_case "a workload with no operation is refused" `Quick
+      Alcotest.test_case "a program with no operation is refused" `Quick
         test_nothing;
-      Alcotest.test_case "a nondeterministic workload is refused" `Quick
+      Alcotest.test_case "a nondeterministic program is refused" `Quick
         test_nondeterministic;
       Alcotest.test_case "a first run that fails is refused" `Quick
         test_first_run_fails;
-      Alcotest.test_case "a workload that raises at once reports it" `Quick
+      Alcotest.test_case "a program that raises at once reports it" `Quick
         test_raises_first;
       Alcotest.test_case "a recover that reads nothing is refused" `Quick
         test_reads_nothing;

@@ -186,7 +186,7 @@ module Crash : sig
             operation before that change, as ext4 journals it as it writes the
             pages back, and a truncation survives with any directory operation
             after it that survives, as ext4 journals it in the syscall's own
-            handle. The [int] is the seed; the same seed and workload reproduce
+            handle. The [int] is the seed; the same seed and program reproduce
             the same image. *)
     | Survive of (unsynced -> bool)
         (** Scripted: an unsynced write survives iff the predicate holds;

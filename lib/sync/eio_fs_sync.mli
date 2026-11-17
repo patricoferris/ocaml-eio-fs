@@ -208,13 +208,13 @@ val publish :
 
     An omitted [tmp] is a sibling name, opened exclusively: [path]'s name, cut
     as {!fresh_name} cuts a long one, with [".tmp.0"] appended, then [".tmp.1"]
-    and so on while the name is taken, so one workload names the same
-    temporaries in every run. Past 64 taken names the rest come from
-    {!fresh_name}, up to 128 names in all. An explicit one is also exclusive,
-    must not exist, must differ from [path] and live on the same filesystem, and
-    is never drawn again: a taken name raises [Already_exists]. A process killed
-    between the create and the rename leaves the temporary in place, so a caller
-    naming [tmp] owns every way that name can already be taken. On a failure of
+    and so on while the name is taken, so one program names the same temporaries
+    in every run. Past 64 taken names the rest come from {!fresh_name}, up to
+    128 names in all. An explicit one is also exclusive, must not exist, must
+    differ from [path] and live on the same filesystem, and is never drawn
+    again: a taken name raises [Already_exists]. A process killed between the
+    create and the rename leaves the temporary in place, so a caller naming
+    [tmp] owns every way that name can already be taken. On a failure of
     [write], the sync or the rename, the temporary is removed and [path] stays
     intact; a barrier failure is reported after the rename, the new file visible
     with uncertain durability.

@@ -63,5 +63,5 @@ val images :
   ?block_size:int ->
   ([ `Close | Eio.Fs.dir_ty ] Eio.Path.t -> unit) ->
   string list
-(** [images workload] is the distinct contents of [f] the seeds 0 to 199 of
-    [Reorder_unsynced] rebuild after [workload]. *)
+(** [images program] is the distinct contents of [f] the seeds 0 to 199 of
+    [Reorder_unsynced] rebuild after [program]. *)

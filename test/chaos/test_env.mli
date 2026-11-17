@@ -1,4 +1,4 @@
-(** What a workload runs with. *)
+(** What a program runs with. *)
 
 val suite : string * unit Alcotest.test_case list
 (** [suite] checks that [env] mirrors [Eio_main]'s. *)

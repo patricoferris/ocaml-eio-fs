@@ -62,15 +62,15 @@ let overwrite p data =
   Eio.Path.with_open_out ~create:`Never p (fun f ->
       Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string data ])
 
-(* The images seeds 0 to 199 rebuild of one workload. *)
-let images ?block_size workload =
+(* The images seeds 0 to 199 rebuild of one program. *)
+let images ?block_size program =
   let seen = Hashtbl.create 8 in
   for seed = 0 to 199 do
     let ctl = Crash.v ?block_size ~policy:(Reorder_unsynced seed) () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "";
     Eio.Path.sync_dir fs;
-    workload fs;
+    program fs;
     let post = Crash.post_crash ctl in
     Hashtbl.replace seen (Eio.Path.load (post / "f")) ()
   done;

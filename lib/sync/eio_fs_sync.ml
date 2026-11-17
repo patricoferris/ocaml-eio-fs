@@ -232,7 +232,7 @@ let fresh_name name =
   let n = Atomic.fetch_and_add tmp_sequence 1 in
   stem name ^ ".tmp." ^ string_of_int tmp_salt ^ "." ^ string_of_int n
 
-(* The first names are numbered from [0], so one workload names the same
+(* The first names are numbered from [0], so one program names the same
    temporaries in every run; past [replayable] taken names, the rest are
    salted, so stale leftovers cannot exhaust them. *)
 let replayable = 64

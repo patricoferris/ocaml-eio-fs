@@ -80,13 +80,13 @@ let rec outcome_text = function
       "the run woke 10,000,000 times without waiting 1 ms or more: a busy loop"
   | Too_long ->
       "the run took 10,000,000 turns, more than a check can repeat: a busy \
-       loop, or a workload too large for a check"
+       loop, or a program too large for a check"
   | Kept_going ->
       "the run hangs: it kept going for 1000 operations after the power cut, \
        so it catches Eio.Cancel.Cancelled"
   | Too_many ->
       "the run made 100,000 filesystem operations, more than a check plans \
-       from: a busy loop, or a workload too large for a check"
+       from: a busy loop, or a program too large for a check"
   | Livelock (`Path, path, n) ->
       Fmt.str
         "the run hangs: the same operation on %s failed %d times while its \
@@ -681,8 +681,8 @@ let report name ~title ~hash ~key ~matched ~(trace : record) ~error lines =
   let matched =
     Option.map
       (fun old ->
-        Fmt.str "the replay named first run %s, and the workload's is now %s"
-          old hash)
+        Fmt.str "the replay named first run %s, and the program's is now %s" old
+          hash)
       matched
   in
   let lines =
@@ -704,7 +704,7 @@ let refuse_first name ~(trace : record) out ~budget ~what =
         Fmt.pf ppf
           "%s: the linear tier needs more than the budget of %d runs by \
            operation #%d of the first run, which stopped there, and a check \
-           never passes on a partial one. Shrink the workload, or raise \
+           never passes on a partial one. Shrink the program, or raise \
            ~budget."
           name budget at
     | o ->
@@ -979,7 +979,7 @@ let run_tiers name ~budget ~rng ~meets ~disk ~first ~attempt linear =
   if n > budget then
     fail name
       "the linear tier needs %d runs, more than the budget of %d, and a check \
-       never passes on a partial one. Shrink the workload, or raise ~budget."
+       never passes on a partial one. Shrink the program, or raise ~budget."
       n budget;
   let others, pick_others = Plan.check_others_sample ~keep:meets first in
   let share classes = Plan.sampled_share ~budget ~linear:n_share ~classes in
@@ -1035,7 +1035,7 @@ let failed_check name ~hash ~matched ~trace s out =
   | Restart (e, o) ->
       report
         ~title:
-          "the restart failed: the workload, run again with no fault on what \
+          "the restart failed: the program, run again with no fault on what \
            the faulty run left, did not return"
         ~error:(outcome_text o)
         [ faults; ended e ]
@@ -1049,7 +1049,7 @@ let failed_check name ~hash ~matched ~trace s out =
         ~error:(outcome_text out)
         [ faults; ended e ]
   | o ->
-      report ~title:"the workload failed under a fault" ~error:(outcome_text o)
+      report ~title:"the program failed under a fault" ~error:(outcome_text o)
         [ faults ]
 
 let check_faults ~name ?budget ?(seed = 0) ?replay ?os ?(setup = ignore)
@@ -1068,7 +1068,7 @@ let check_faults ~name ?budget ?(seed = 0) ?replay ?os ?(setup = ignore)
   if out <> Passed then refuse_first name ~trace:first out ~budget ~what:"fault";
   let first = kept first in
   if first = [] then
-    fail name "the workload makes no filesystem operation, so it tests nothing";
+    fail name "the program makes no filesystem operation, so it tests nothing";
   (* A run keeps no more operations than four times the first run made:
      past that, the plan of the next scenarios reads its first ones. *)
   let n = List.length first in
@@ -1192,7 +1192,7 @@ module Crash = struct
   }
 
   and error =
-    | Workload of outcome
+    | Program of outcome
     | Settle of outcome (* an acknowledged file lost, or inspect raised *)
     | Recover of outcome
     | Again of exn
@@ -1436,14 +1436,14 @@ module Crash = struct
                     | () -> None
                     | exception x -> Some (Again x)))
             | o, _ -> Some (Recover o))
-        | o, _ -> Some (Workload o)
+        | o, _ -> Some (Program o)
       with
       | Ok e -> e
       | Error o ->
-          if !kept_run then Some (Workload Kept_going)
+          if !kept_run then Some (Program Kept_going)
           else if !kept_recover then Some (Recover Kept_going)
           else if !recovering then Some (Recover o)
-          else Some (Workload o)
+          else Some (Program o)
     in
     {
       trace;
@@ -1556,15 +1556,15 @@ module Crash = struct
 
   (* The title of a failed run's report, and its error. *)
   let error_text = function
-    | Workload o -> ("the workload failed", outcome_text o)
+    | Program o -> ("the program failed", outcome_text o)
     | Settle (Lost (_, s)) -> ("a power cut lost an acknowledged file: " ^ s, "")
     | Settle o -> ("inspect rejected what the cut left", outcome_text o)
     | Recover o ->
-        ( "the restart failed: the workload, run again with no fault on what \
+        ( "the restart failed: the program, run again with no fault on what \
            the cut left, did not return",
           outcome_text o )
     | Again x ->
-        ( "the restart failed: the workload, run again with no fault on what a \
+        ( "the restart failed: the program, run again with no fault on what a \
            cut during the previous restart left, did not return",
           exn_text x )
 
@@ -1629,13 +1629,12 @@ module Crash = struct
       exec ?budget:(if replay = None then Some budget else None) Plan.base
     in
     (match first.error with
-    | Some (Workload o) ->
+    | Some (Program o) ->
         refuse_first name ~trace:first.trace o ~budget ~what:"cut"
     | _ -> ());
     let first_ops = kept first.trace in
     if first_ops = [] then
-      fail name
-        "the workload makes no filesystem operation, so it tests nothing";
+      fail name "the program makes no filesystem operation, so it tests nothing";
     let n = List.length first_ops in
     let again = kept (exec ~cap:(n + 1) Plan.base).trace in
     (* A run keeps no more operations than four times the first run made:
@@ -1711,8 +1710,8 @@ module Crash = struct
         let over n =
           fail name
             "the linear tier needs %d runs, more than the budget of %d, and a \
-             check never passes on a partial one. Shrink the workload, or \
-             raise ~budget."
+             check never passes on a partial one. Shrink the program, or raise \
+             ~budget."
             n budget
         in
         let linear = List.length cuts + List.length faults in
