@@ -31,41 +31,10 @@ val append : string -> string -> string
     is absolute, and otherwise [base] and [path] joined by a separator, added
     only when [base] is not empty and does not already end in one. *)
 
-val to_dir_path : string -> string
-(** [to_dir_path path] is [path] in directory syntax: [path] ending in a
-    separator, and unchanged when it already does. The empty path is the current
-    directory, as Eio reads it, so [to_dir_path ""] is ["./"]. *)
-
 val basename : string -> string
 (** [basename path] is [path]'s last component, ignoring trailing separators,
     and [""] for a path that has none: the empty path, a root, ["."] or [".."].
 *)
-
-val parent : string -> string
-(** [parent path] is the directory holding [path], in directory syntax and
-    without resolving it: ["/"] for a path directly under the root, ["./"] for a
-    relative path of one component, and the root itself for the root. The empty
-    path is the current directory, as Eio reads it, so its parent is ["../"]; a
-    final ["."] is the directory before it, and the parent of a final [".."] is
-    one more [".."] up, except at the root. *)
-
-val components : string -> string list
-(** [components path] are the segments {!normalize} leaves, its empty and ["."]
-    segments dropped. Two spellings of one path have equal components. An
-    absolute and a relative path can too ([components "/a"] and [components "a"]
-    are both [["a"]]), so a comparison checks {!is_abs} as well, as {!is_rooted}
-    does. *)
-
-val is_rooted : root:string -> string -> bool
-(** [is_rooted ~root path] is [true] iff [root] and [path] are both absolute or
-    both relative, the {!components} of [root] are a prefix of those of [path],
-    and the components of [path] past that prefix hold no [".."]: [path] names
-    [root] or something under it, whatever the spelling of either. A relative
-    [path] that still climbs out of a relative [root] once normalised is not
-    under it, so [is_rooted ~root:"." "../x"] is [false]. An absolute [root] and
-    a relative [path] are never rooted in one another. The answer is lexical, so
-    it holds of the objects named only where no component on the way is a
-    symbolic link. *)
 
 (** The type for the reasons {!canonical} refuses a path. *)
 type refusal =

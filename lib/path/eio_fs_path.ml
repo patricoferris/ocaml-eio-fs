@@ -50,10 +50,6 @@ let append base path =
     let len = String.length base in
     if len = 0 || base.[len - 1] = '/' then base ^ path else base ^ "/" ^ path
 
-let to_dir_path path =
-  let len = String.length path in
-  if len = 0 then "./" else if path.[len - 1] = '/' then path else path ^ "/"
-
 let without_trailing_slashes path =
   let rec last_non_slash i =
     if i <= 0 || path.[i] <> '/' then i else last_non_slash (i - 1)
@@ -72,41 +68,6 @@ let basename path =
           String.sub path (index + 1) (String.length path - index - 1)
     in
     match name with "." | ".." -> "" | name -> name
-
-let rec parent path =
-  let path = without_trailing_slashes path in
-  if String.equal path "/" then path
-  else
-    let dir, last =
-      match String.rindex_opt path '/' with
-      | None -> ("", path)
-      | Some i ->
-          ( String.sub path 0 (i + 1),
-            String.sub path (i + 1) (String.length path - i - 1) )
-    in
-    match last with
-    | "" | "." -> if String.equal dir "" then "../" else parent dir
-    | ".." -> if String.equal dir "/" then "/" else path ^ "/../"
-    | _ -> if String.equal dir "" then "./" else dir
-
-let components path =
-  normalize path |> segs
-  |> List.filter (fun segment ->
-      not (String.equal segment "" || String.equal segment "."))
-
-(* Normalised, a relative path keeps its [..] at its head only, so what is
-   left of [path] past [root] climbs out of [root] iff it holds one. An
-   absolute path has none left: a [..] above the root is the root. *)
-let is_rooted ~root path =
-  if is_abs root <> is_abs path then false
-  else
-    let rec below prefix items =
-      match (prefix, items) with
-      | [], rest -> not (List.exists (String.equal "..") rest)
-      | x :: xs, y :: ys when String.equal x y -> below xs ys
-      | _ -> false
-    in
-    below (components root) (components path)
 
 type refusal = Not_a_path | Relative | Root | Not_canonical
 
