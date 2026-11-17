@@ -156,10 +156,9 @@ end = struct
   let open_subtree t ~sw path = open_dir t ~sw path
   let pp f t = Fmt.string f (String.escaped t.label)
 
-  (* An in-memory tree has no native path. Answering one would point callers
-     at an unrelated real location -- a native open of "./x" resolves
-     against the process cwd -- so a barrier or lock taken "natively" on an
-     in-memory directory would silently hit the real filesystem. *)
+  (* An in-memory tree has no native path: one would point a barrier or a
+     lock at the host filesystem, where "./x" resolves against the process's
+     cwd. *)
   let native t _ =
     ignore (fd t);
     None
@@ -217,16 +216,22 @@ let cwd ?(user = Low_level.User.root) t =
 let v ?clock ?(user = Low_level.User.root) ?os () =
   (fs ~user (Low_level.v ?clock ~owner:user ?os ()), "/")
 
+(* A wrapper is rebuilt over its base as [user]. *)
 let as_user user ((d, path) : _ Eio.Path.t) =
-  match as_memfs_dir d with
-  | None ->
-      Fmt.invalid_arg
-        "Eio_fs.Fs.as_user: path is %a, not a directory of an in-memory \
-         filesystem"
-        Eio.Path.pp (d, path)
-  | Some fd ->
-      let label = Fmt.to_to_string Eio.Path.pp (d, "") in
-      (dir ~label ~path:"." { fd with user }, path)
+  let label = Fmt.to_to_string Eio.Path.pp (d, "") in
+  let rec go (Eio.Resource.T (t, ops) as r : Eio.Fs.dir_ty Eio.Resource.t) =
+    match Eio.Resource.get_opt ops Memfs_dir with
+    | Some fd -> dir ~label ~path:"." { (fd t) with user }
+    | None -> (
+        match Eio_fs_internal.rebase r with
+        | Some rebase -> rebase go
+        | None ->
+            Fmt.invalid_arg
+              "Eio_fs.Fs.as_user: path is %a, not a directory of an in-memory \
+               filesystem"
+              Eio.Path.pp (d, path))
+  in
+  (go (d :> Eio.Fs.dir_ty Eio.Resource.t), path)
 
 (* Looked up as root, as [set_times] is: the model asks about a file the
    wrapped user may reach only through a directory opened before. *)

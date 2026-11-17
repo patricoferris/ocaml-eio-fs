@@ -203,6 +203,11 @@ let base_dir =
     "The base, for this package's own code alone: a rename into a wrapper, and \
      eio-fs.unix's host descriptor."
 
+let rebase =
+  dir_handler "Eio_fs_internal.Rebase" Synthesized
+    "The same wrapper, under the same schedule, over another base: \
+     Eio_fs.Fs.as_user runs it as another user."
+
 let exclusive =
   dir_handler "Eio_fs_sync.Rename.Exclusive" (Intercepted `Change)
     "A fault refuses the rename before the base makes it."
@@ -269,6 +274,7 @@ let handlers =
     close_dir;
     admin;
     base_dir;
+    rebase;
     exclusive;
     process_local;
     modeless;
@@ -301,6 +307,7 @@ let binding (type a) iface (Eio.Resource.H (pi, _) : a Eio.Resource.binding) =
   | Eio.Flow.Pi.Shutdown -> `Op shutdown
   | Eio_fs_internal.Admin -> `Op admin
   | Eio_fs_internal.Base_dir -> `Op base_dir
+  | Eio_fs_internal.Rebase -> `Op rebase
   | Eio_fs_internal.Base_file -> `Op base_file
   | Eio_fs_internal.Sync_failed -> `Op sync_failed
   | Eio_fs_sync.Rename.Exclusive -> `Op exclusive

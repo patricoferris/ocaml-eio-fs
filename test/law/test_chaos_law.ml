@@ -162,6 +162,7 @@ type step =
   | Process_local of int
   | Modeless of int
   | Admin_stat of int * string
+  | As_user_stat of int * string
   | Close_dir of int
   | Read of int * int
   | Pread of int * int * int
@@ -216,6 +217,7 @@ let rec pp_step ppf = function
   | Process_local d -> Fmt.pf ppf "process_local d%d" d
   | Modeless d -> Fmt.pf ppf "modeless d%d" d
   | Admin_stat (d, p) -> Fmt.pf ppf "admin stat d%d %S" d p
+  | As_user_stat (d, p) -> Fmt.pf ppf "as_user stat d%d %S" d p
   | Close_dir d -> Fmt.pf ppf "close d%d" d
   | Read (f, n) -> Fmt.pf ppf "single_read f%d %d" f n
   | Pread (f, o, n) -> Fmt.pf ppf "pread f%d @%d %d" f o n
@@ -553,6 +555,12 @@ let rec exec side ~sw step =
           | Some admin ->
               Fmt.str "%a" pp_stat (Eio.Path.stat ~follow:false (admin, at d p))
           ))
+  | As_user_stat (d, p) -> (
+      match side.dirs.(d) with
+      | None -> "no directory"
+      | Some dir ->
+          let user = Eio_fs.Fs.as_user Eio_fs.root (dir, at d p) in
+          Fmt.str "%a" pp_stat (Eio.Path.stat ~follow:false user))
   | Close_dir d -> (
       match side.dirs.(d) with
       | None -> "no directory"
@@ -753,6 +761,7 @@ let rec entry_of side step =
   | Process_local _ -> op Dir_handler "Eio_fs_sync.Process_local"
   | Modeless _ -> op Dir_handler "Eio_fs_sync.Modeless"
   | Admin_stat _ -> op Dir_handler "Eio_fs_internal.Admin"
+  | As_user_stat _ -> op Dir_handler "Eio_fs_internal.Rebase"
   | Close_dir _ -> op Dir_handler "close"
   | Read _ -> op Read "single_read"
   | Pread _ -> op Read "pread"
@@ -978,6 +987,7 @@ let dir_uses d =
     Process_local d;
     Modeless d;
     Admin_stat (d, "f");
+    As_user_stat (d, "f");
     Close_dir d;
   ]
 

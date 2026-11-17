@@ -9,6 +9,14 @@ type (_, _, _) Eio.Resource.pi +=
       ('t, 't -> Eio.Fs.dir_ty Eio.Resource.t, [> `Admin ]) Eio.Resource.pi
   | Sync_failed :
       ('t, 't -> evict:bool -> unit, [> `Sync_failed ]) Eio.Resource.pi
+  | Rebase :
+      ( 't,
+        't ->
+        (Eio.Fs.dir_ty Eio.Resource.t ->
+        [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t) ->
+        [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t,
+        [> `Rebase ] )
+      Eio.Resource.pi
 
 let base_dir (Eio.Resource.T (t, ops)) =
   Option.map (fun get -> get t) (Eio.Resource.get_opt ops Base_dir)
@@ -18,6 +26,9 @@ let base_file (Eio.Resource.T (t, ops)) =
 
 let admin (Eio.Resource.T (t, ops)) =
   Option.map (fun get -> get t) (Eio.Resource.get_opt ops Admin)
+
+let rebase (Eio.Resource.T (t, ops)) =
+  Option.map (fun get -> get t) (Eio.Resource.get_opt ops Rebase)
 
 let bounded_read ~max_bytes ~validate ~stat ~read =
   match validate stat with

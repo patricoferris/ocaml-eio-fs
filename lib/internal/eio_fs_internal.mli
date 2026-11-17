@@ -24,6 +24,16 @@ type (_, _, _) Eio.Resource.pi +=
         (** A sync a wrapper failed on purpose, told to the file beneath it, so
             a power-loss model there loses what that sync would have written;
             [evict] says the failure dropped the file's cached pages too. *)
+  | Rebase :
+      ( 't,
+        't ->
+        (Eio.Fs.dir_ty Eio.Resource.t ->
+        [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t) ->
+        [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t,
+        [> `Rebase ] )
+      Eio.Resource.pi
+        (** The same directory wrapper over [f base], which [Eio_fs.Fs.as_user]
+            builds a wrapper as another user with. *)
 
 val base_dir : _ Eio.Resource.t -> Eio.Fs.dir_ty Eio.Resource.t option
 (** [base_dir r] is the directory [r] wraps, or [None] when [r] binds no
@@ -36,6 +46,14 @@ val base_file : _ Eio.Resource.t -> Eio.File.ro_ty Eio.Resource.t option
 val admin : _ Eio.Resource.t -> Eio.Fs.dir_ty Eio.Resource.t option
 (** [admin r] is [r] with root's rights, or [None] when [r] binds no {!Admin}.
 *)
+
+val rebase :
+  _ Eio.Resource.t ->
+  ((Eio.Fs.dir_ty Eio.Resource.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t) ->
+  [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t)
+  option
+(** [rebase r] rebuilds the wrapper [r] over another base, or is [None] when [r]
+    binds no {!Rebase}. *)
 
 val bounded_read :
   max_bytes:int ->

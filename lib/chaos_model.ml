@@ -554,6 +554,10 @@ let dir_handler =
               Option.value ~default:t.base (Eio_fs_internal.admin t.base)
             in
             (!wrap_dir_hook ~base ~sched:t.sched :> Eio.Fs.dir_ty r) );
+      Eio.Resource.H
+        ( Eio_fs_internal.Rebase,
+          fun t f ->
+            !wrap_dir_hook ~base:(f t.base :> Eio.Fs.dir_ty r) ~sched:t.sched );
       Eio.Resource.H (Eio_fs_sync.Rename.Exclusive, Dir_impl.rename_exclusive);
       Eio.Resource.H
         (Eio_fs_sync.Process_local, fun t -> Eio_fs_sync.is_process_local t.base);
@@ -3462,28 +3466,38 @@ module Crash = struct
     include Eio_utils.Posix_path
   end
 
-  let cdir_handler :
+  let rec cdir_handler :
       ( cdir,
         [ `Dir | `Close | `Crash_dir | `Dir_sync | `Process_local ] )
-      Eio.Resource.handler =
-    Eio.Resource.handler
-      [
-        H (Eio.Fs.Pi.Dir, (module Cdir_impl));
-        H (Eio.Resource.Close, fun d -> close_resource d.dbase);
-        H (Crash_dir, fun d -> d);
-        H (Eio_fs_sync.Rename.Exclusive, Cdir_impl.rename_exclusive);
-        (* Who can open these files is the base's to say: the model tracks
-           what is written through it and adds no opener of its own, so a
-           caller weighing whether an in-process exclusion is the whole
-           exclusion is weighing the storage underneath. *)
-        H
-          ( Eio_fs_sync.Process_local,
-            fun d -> Eio_fs_sync.is_process_local d.dbase );
-        H (Eio_fs_sync.Modeless, fun d -> Eio_fs_sync.is_modeless d.dbase);
-        H
-          ( Eio_fs_sync.Dir_sync,
-            fun d ~path ~full -> Cdir_impl.barrier ~full d path );
-      ]
+      Eio.Resource.handler
+      Lazy.t =
+    lazy
+      (Eio.Resource.handler
+         [
+           H (Eio.Fs.Pi.Dir, (module Cdir_impl));
+           H (Eio.Resource.Close, fun d -> close_resource d.dbase);
+           H (Crash_dir, fun d -> d);
+           H (Eio_fs_sync.Rename.Exclusive, Cdir_impl.rename_exclusive);
+           (* Who can open these files is the base's to say: the model
+              tracks what is written through it and adds no opener of its
+              own. *)
+           H
+             ( Eio_fs_sync.Process_local,
+               fun d -> Eio_fs_sync.is_process_local d.dbase );
+           H (Eio_fs_sync.Modeless, fun d -> Eio_fs_sync.is_modeless d.dbase);
+           H
+             ( Eio_fs_sync.Dir_sync,
+               fun d ~path ~full -> Cdir_impl.barrier ~full d path );
+           (* The same place in the model, over another base. *)
+           H
+             ( Eio_fs_internal.Rebase,
+               fun d f ->
+                 let base = (f d.dbase :> Eio.Fs.dir_ty r) in
+                 (Eio.Resource.T
+                    ( { d with dbase = base; dboxed = box_dir base },
+                      Lazy.force cdir_handler )
+                   :> [ `Close | Eio.Fs.dir_ty ] r) );
+         ])
 
   let wrap_cdir ctl ~ino ~root ~prefix ~base : [ `Close | Eio.Fs.dir_ty ] r =
     let place = { proot = root; prefix } in
@@ -3496,7 +3510,7 @@ module Crash = struct
            dplace = place;
            dino = ino;
          },
-         cdir_handler )
+         Lazy.force cdir_handler )
       :> [ `Close | Eio.Fs.dir_ty ] r)
 
   let () = crash_dir_hook := wrap_cdir

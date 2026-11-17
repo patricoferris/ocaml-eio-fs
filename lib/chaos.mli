@@ -22,7 +22,8 @@ type env =
 (** The type for what a workload runs with: the root of a fresh in-memory
     filesystem as [fs], the same directory as [cwd], confined to itself as
     eio_posix confines a process's (an absolute path or link and a [".."] above
-    it are refused with [Permission_denied]), and the run's clocks. *)
+    it are refused with [Permission_denied]), and the run's clocks. Both run as
+    {!Eio_fs.root}; {!Eio_fs.Fs.as_user} runs them as another user. *)
 
 (** {1:checks Checks} *)
 

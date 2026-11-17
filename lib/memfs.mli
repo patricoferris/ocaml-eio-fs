@@ -24,9 +24,11 @@ val v :
 
 val as_user :
   Low_level.User.t -> 'a Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [as_user user path] is [path], an in-memory directory, as [user].
+(** [as_user user path] is [path], an in-memory directory, as [user]. A wrapper
+    that binds [Eio_fs_internal.Rebase] is rebuilt over its base as [user].
 
-    @raise Invalid_argument if [path] is not an in-memory directory. *)
+    @raise Invalid_argument
+      if [path] is neither an in-memory directory nor such a wrapper. *)
 
 val held : _ Eio.Path.t -> Extents.t option
 (** [held path] is the byte ranges writes covered in the regular file [path] of

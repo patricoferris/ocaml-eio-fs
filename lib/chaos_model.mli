@@ -275,8 +275,7 @@ module Crash : sig
       every entry of the tree, as its owner or root can.
 
       A controller has one wrapper, and its operations run as the user of
-      [base]. {!Eio_fs.Fs.as_user} refuses a wrapper, so a test cannot drive one
-      controller as several users: it runs each user on a controller of its own.
+      [base]. {!Eio_fs.Fs.as_user} runs them as another user.
 
       @raise Invalid_argument
         if [t] is already wrapped, or if the tree under [base] holds an entry

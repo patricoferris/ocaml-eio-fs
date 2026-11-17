@@ -106,9 +106,11 @@ module Fs : sig
   (** [as_user user path] is [path], an in-memory directory, with its operations
       run as [user]. A test sets a tree up as {!root} and runs the code under
       test as a user. A directory opened from the result shares its descriptor
-      with [path]'s.
+      with [path]'s. A wrapper of {!Chaos} over an in-memory directory, such as
+      a check's [env#fs], stays the same wrapper, over the directory as [user].
 
-      @raise Invalid_argument if [path] is not an in-memory directory. *)
+      @raise Invalid_argument
+        if [path] is neither an in-memory directory nor such a wrapper. *)
 
   val load :
     ?clock:_ Eio.Time.clock ->
