@@ -42,7 +42,7 @@ val run :
     in a fresh event loop whose clocks start at [0.] and move up to [limit]
     seconds: by 1 us each time a fiber resumes, from a yield, another fiber or a
     timer, and to the next timer when every fiber waits. When every fiber waits,
-    [idle ()] runs first (defaults to doing nothing); if it is [true], it woke a
+    [idle ()] runs first (defaults to [false]); if it is [true], it woke a
     fiber, and the clock stays. Before each turn, [stop ()] runs (defaults to
     [false]); if it is [true], the loop ends. [charge ()] takes a turn in the
     fiber that calls it, for work that does not suspend: past the limits, that

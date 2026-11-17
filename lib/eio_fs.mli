@@ -49,10 +49,12 @@ val root : user
     its end, [Eio.Path.chmod ~follow:false] on a symbolic link raises the error
     EOPNOTSUPP names, and a symbolic link to the empty path is refused with
     [Not_found]. Under [`Macos] it answers as macOS does: see
-    {!Fs.section-macos}. Its paths have no native spelling ({!Eio.Path.native}
-    is [None]). The root {!Fs.v} returns stands for [Eio.Stdenv.fs]: an absolute
-    path or link target resolves from it, as eio_posix resolves one from [/]
-    through [fs]. One filesystem may be used from several domains at once.
+    {!Fs.section-macos}. A write of no bytes returns [0] under either, where
+    eio_posix on macOS raises the error EINVAL names from writev(2). Its paths
+    have no native spelling ({!Eio.Path.native} is [None]). The root {!Fs.v}
+    returns stands for [Eio.Stdenv.fs]: an absolute path or link target resolves
+    from it, as eio_posix resolves one from [/] through [fs]. One filesystem may
+    be used from several domains at once.
 
     A path resolves one component at a time, as path_resolution(7) describes: a
     [".."] climbs from the directory the walk has reached, a link's target
@@ -261,7 +263,16 @@ end
 module Chaos = Chaos
 (** Filesystem faults and power cuts, for tests of Eio programs. *)
 
-(** Walks over the tree under an {!Eio.Path.t}, on any backend. *)
+(** Trees and directories on any {!Eio} backend:
+
+    - walks over the tree under a path, which measure it ({!val-usage}), visit
+      it ({!iter}), read its links ({!links}), change its modes ({!grant_owner},
+      {!revoke_writes}), copy its files with other links apart ({!unshare}) or
+      format it ({!pp_tree});
+    - the names a directory holds ({!entries}), and the removal of a chain of
+      empty directories ({!remove_empty});
+    - what a path is called outside the program ({!name}), and whether two paths
+      name one file ({!same_file}). *)
 module Tree : sig
   type usage = {
     allocated_bytes : int64;

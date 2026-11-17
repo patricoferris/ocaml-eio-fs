@@ -11,6 +11,8 @@ open! Hermetic
    - the scheduler stops instead of moving the clock past [limit], so a run
      that every fiber waits in reports as a hang, and one that keeps a timer
      going reports as a run past its time limit;
+   - when every fiber waits, [idle ()] runs first, and if it woke a fiber
+     the clock stays where it is;
    - the scheduler stops once [stop ()] holds, which the check sets when a
      run must end, whatever its fibers do;
    - each turn, a fiber resumed by a yield, another fiber or a timer,

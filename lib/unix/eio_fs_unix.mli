@@ -906,22 +906,20 @@ val inline_fs : Eio.Fs.dir_ty Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
 (** [inline_fs fs] is the unconfined root [fs], such as [Eio.Stdenv.fs env],
     whose [stat], [open_in], [open_out], [read_link], [read_dir] and
     [with_dir_entries] make their system calls on the calling thread, where
-    eio_posix hands each to a system thread and back: a hand-off costs ten to
-    forty microseconds of CPU, the call a few. A link read of a name ending in a
-    slash is the root's. A file it opens is the root's own kind of file, and
-    every other operation, a directory opened from it included, is the root's.
-    An error is the root's in what it says: the operation, the path, the kind of
-    error and its errno; the system call it names is the one made here, which
-    may not be the backend's. The calls block the calling domain while they run,
-    which on a local disk is microseconds; a filesystem whose calls can block
-    for longer, such as a network mount, is better reached through [fs] itself.
-*)
+    eio_posix hands each to a system thread and back, which costs more CPU than
+    the call. A link read of a name ending in a slash is the root's. A file it
+    opens is the root's own kind of file, and every other operation, a directory
+    opened from it included, is the root's. An error is the root's in what it
+    says: the operation, the path, the kind of error and its errno; the system
+    call it names is the one made here, which may not be the backend's. The
+    calls block the calling domain while they run, which on a local disk is
+    microseconds; a filesystem whose calls can block for longer, such as a
+    network mount, is better reached through [fs] itself. *)
 
 (**/**)
 
-(* For this package's tests only. *)
 module Private : sig
   val batch_hops : unit -> int
   (** [batch_hops ()] is how many system-thread hops {!Batch} has made since the
-      program started. *)
+      program started, for this package's tests. *)
 end

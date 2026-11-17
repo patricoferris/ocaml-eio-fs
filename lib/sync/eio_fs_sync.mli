@@ -11,7 +11,9 @@
     {!publish} is the protocol itself, under a mandatory byte ceiling
     ({!Limit_exceeded}), and issues the barriers a {!Barrier.t} names: the
     portable ones above by default, [Eio_fs_unix.barrier] for the platform's
-    strongest, {!Barrier.none} for none.
+    strongest, {!Barrier.none} for none. A publication is atomic on any backend,
+    and durable with the barriers it is given: on macOS the portable ones stop
+    in the drive's cache, and only [Eio_fs_unix.barrier] goes through it.
 
     {!Process_local} declares whether any opener of a backend's files can exist
     outside this process, and {!Lock} is the exclusion a caller supplies. This

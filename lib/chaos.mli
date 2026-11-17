@@ -12,7 +12,8 @@
     The {{!checks}checks} and their {{!blocks}building blocks} come first, then
     how a check works: its {{!exploration}exploration}, the
     {{!contracts}contracts} a workload meets, its
-    {{!replay}failures and replay}, and its {{!runs}runs}. *)
+    {{!replay}failures and replay}, its {{!runs}runs}, and the
+    {{!model}disk model} a power cut follows. *)
 
 type env =
   < fs : Eio.Fs.dir_ty Eio.Path.t
@@ -80,53 +81,29 @@ val check :
 
 (** Power cuts.
 
-    - A write stays unsynced until {!Eio.File.sync} runs on its file. Directory
-      changes enter a journal in program order, and a sync of a directory
-      commits its entries. At a power cut, unsynced writes may be lost, as ext4
-      loses them with [data=writeback].
-    - A file's length is one it had since its last sync, or the end of a
-      4096-byte page a write put bytes in, below a length it had since. A length
-      a write or a truncation set survives only with every directory change made
-      before it, and a truncation with every directory change made after it that
-      survives: ext4 journals a write's length as it writes the pages back,
-      after the earlier changes, and a truncation in the syscall's own handle,
-      before the later ones.
-    - A 4096-byte page the disk held nothing of holds bytes only with every
-      directory change made before the first write into it, as ext4 allocates
-      the page with the length.
-    - A 512-byte sector is written whole: it holds what the disk held, zeros
-      where it held nothing, or what it held after one of the writes to it, so
-      the writes to it land together.
-    - A truncation zeroes the rest of the 4096-byte page it cuts, sector by
-      sector; at a length from before it, a page it frees holds no later write,
-      as ext4 reuses no block before the truncation commits.
-    - A 4096-byte page the disk held nothing of, past the durable length or in a
-      hole, that a write put bytes in is written whole, as ext4 allocates it:
-      each of its sectors within the length may instead hold stale data. That is
-      what a freed block held: a page a synced truncation freed, or one of a
-      file the workload removed, its unsynced bytes included, as writeback may
-      have written them before the removal. ext4 may give a freed block to any
-      offset of any file: the check draws the page at the same place first, then
-      the others, up to eight distinct ones; and else the byte ['7']. Only a
-      freed block holds stale data: a file the cut lost and the workload never
-      removed frees none, and a removed file still open at the cut none either,
-      as ext4 frees its blocks at its last close.
-    - Of the uncommitted directory changes, a prefix survives.
-    - A failed sync loses the file's unsynced writes, as Linux does, though some
-      of their sectors may already be on disk; the page cache may keep them or
-      evict them. Before the cut, a read after a failed sync sees them as kept,
-      or, in a scenario of its own, as the disk holds them.
+    A cut keeps what the program made durable, and may lose the rest:
 
-    {b macOS.} Under [~os:`Macos] the disk is APFS's, on a drive with a cache.
-    {!Eio.File.sync} and the portable barriers of {!Eio_fs_sync} are fsync(2),
-    which stops in that cache: alone, they make nothing durable. The barriers of
-    [eio-fs.unix] ([Eio_fs_unix.sync_file], [Eio_fs_unix.sync_dir],
-    [Eio_fs_unix.barrier]) are [F_FULLFSYNC]: each makes its file or directory
-    durable, and every fsync(2) before it, of any file. A failed fsync(2) loses
-    only the writes no earlier one flushed. The rest is as above, as no source
-    rules it out on APFS: stale data included, though APFS writes its metadata
-    copy-on-write. So a cut may leave a state APFS would not, never miss one it
-    would. *)
+    - a write is durable once {!Eio.File.sync} runs on its file;
+    - a sync of a directory makes its own changes durable, a rename into or out
+      of it whole, and the earlier changes to each directory they touch;
+    - of the rest, a cut may keep some writes and a prefix of the directory
+      changes, in program order;
+    - a failed sync loses the file's unsynced writes, as Linux does.
+
+    This is ext4 with [data=writeback]. The {{!model}disk model} at the end says
+    which states a cut may leave, sector by sector.
+
+    {b macOS.} Under [~os:`Macos] the disk is APFS's, on a drive with a cache:
+
+    - {!Eio.File.sync} and the portable barriers of {!Eio_fs_sync} are fsync(2),
+      which stops in that cache: alone, they make nothing durable;
+    - the barriers of [eio-fs.unix] ([Eio_fs_unix.sync_file],
+      [Eio_fs_unix.sync_dir], [Eio_fs_unix.barrier]) are [F_FULLFSYNC]: each
+      makes its file or directory durable, and every fsync(2) before it, of any
+      file;
+    - a failed fsync(2) loses only the writes no earlier one flushed;
+    - the rest is as on Linux, as no source rules it out on APFS, so a cut may
+      leave a state APFS would not. *)
 module Crash : sig
   val check :
     ?budget:int ->
@@ -193,7 +170,7 @@ module Crash : sig
         if [budget] is not positive, or [replay] is not a replay string of
         eio-fs. *)
 
-  (** {1:blocks Building blocks}
+  (** {1:crash_blocks Building blocks}
 
       A test that drives one scenario by hand, or runs on a directory on disk,
       builds it from a controller. A particular state a cut may leave is pinned
@@ -284,10 +261,11 @@ module Crash : sig
       times of its version the disk kept, as ext4 journals them with the inode:
       a directory's from the last change to it the cut kept, a file's from that
       or its last sync, whichever came later. An unsynced write that survives
-      does not move them. On a disk, an entry the cut spared keeps its times.
-      Every operation through the wrapper fails after the cut. Called from a
-      {!Chaos.wrap} hook over the wrapper, it cuts the power before that
-      operation, in the middle of a run:
+      does not move them, even beside a later directory change the cut kept:
+      ext4 leaves that state only when mounted with [lazytime]. On a disk, an
+      entry the cut spared keeps its times. Every operation through the wrapper
+      fails after the cut. Called from a {!Chaos.wrap} hook over the wrapper, it
+      cuts the power before that operation, in the middle of a run:
       {[
       let cut_at_seventh base =
         let t = Crash.v Drop_unsynced in
@@ -414,7 +392,8 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
       draw may land on any scenario of its group, so a pattern that repeats
       along the scenarios, as the faults tried at each operation do, hides no
       kind of fault from it, where taking every k-th scenario may meet only one.
-      A larger budget tries more.
+      A larger budget tries more only once a fortieth of it passes half the
+      linear tier, so raising it a little may change nothing.
 
     A check never passes on a partial linear tier. One that needs more runs than
     its budget fails and says so: shrink the workload or raise [~budget]. The
@@ -431,15 +410,19 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
 
     {b A lasting condition reaches every operation.} A filesystem that turns
     read-only, full, or denies access does so for every operation from then on,
-    the retries included. A run fails as a hang when, while its clock stands
-    still but for the time operations take, and with no success there in
-    between, one operation on one path fails 10000 times more than three times
-    the first run made it, or one kind of operation in one directory 10000 times
-    more than 1000 times. A program that retries at once spins so, under one
-    name or a fresh one each time. A batch that tries each item up to three
-    times and drops what fails does not, nor a pool that tries up to 1000 names
-    for each name its first run made. No check can tell a spin from a loop that
-    ends later, so one that tries more often than that is taken for a spin.
+    the retries included. A program that retries at once spins, and a run fails
+    as a hang when, with no success in between and its clock still but for the
+    time operations take:
+
+    - one operation on one path fails 10000 times more than three times the
+      first run made it;
+    - or one kind of operation in one directory fails 10000 times more than 1000
+      times the first run made it.
+
+    A batch that tries each item up to three times and drops what fails passes,
+    and so does a pool that tries up to 1000 names for each name its first run
+    made. No check can tell a spin from a loop that ends later, so one that
+    tries more often than that is taken for a spin.
 
     {b [recover] stands for a fresh process.} It runs after the cut on the
     directory as the disk holds it, knowing only what the workload acknowledged:
@@ -450,26 +433,39 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
 
 (** {1:replay Failures and replay}
 
-    A check is deterministic. A failure raises [Failure] with the scenario, the
-    operations of the failing run, and the [~replay:"..."] argument that runs
-    that scenario alone. A power cut's report also says after which operation
-    each value was acknowledged, and, for a state drawn among those the cut
-    allows, what each file holds: its length, and each run of sectors that holds
-    a write, zeros or stale data, with where the stale data comes from. A report
-    numbers an operation by its place in the trace, wherever it names one: the
-    cut, the faults, the changes a cut lost and the acknowledgements. A block of
-    up to eight operations repeated three times or more, in the same directories
-    each time, as a retry makes them, shows its first and last instances, and a
-    trace longer than that keeps its first and last hundred lines and those
-    around its first fault, so a report's size is bounded by the workload's
-    structure rather than by how long it spun. A run keeps only those lines as
-    it goes, and so does its memory. When the workload's first run has changed,
-    a replay finds its scenario again by its operations, and its report says so.
-    A replay fails if the check no longer has that scenario, and if it names a
-    state drawn at random of a cut that allows two states or fewer, which the
-    check never draws. A state drawn at random under a larger budget needs that
-    budget again, which the refusal names. The report of a check run inside
-    another is text in the outer one.
+    A check is deterministic. A failure raises [Failure] with:
+
+    - the scenario;
+    - the operations of the failing run, each numbered by its place in the
+      trace, which the cut, the faults, the changes a cut lost and the
+      acknowledgements name it by;
+    - for a power cut, after which operation each value was acknowledged, and,
+      for a state drawn among those the cut allows, what each file holds: its
+      length, and each run of sectors that holds a write, zeros or stale data,
+      with where the stale data comes from;
+    - the [~replay:"..."] argument that runs that scenario alone.
+
+    A report's size is bounded by the workload's structure, not by how long it
+    spun:
+
+    - a block of up to eight operations repeated three times or more, in the
+      same directories each time, as a retry makes them, shows its first and
+      last instances;
+    - a longer trace keeps its first and last hundred lines and those around its
+      first fault;
+    - a run keeps only those lines as it goes, and so does its memory.
+
+    A replay:
+
+    - finds its scenario again by its operations when the workload's first run
+      has changed, and its report says so;
+    - fails if the check no longer has that scenario, or if it names a state
+      drawn at random of a cut that allows two states or fewer, which the check
+      never draws;
+    - of a state drawn at random under a larger budget needs that budget again,
+      which the refusal names.
+
+    The report of a check run inside another is text in the outer one.
 
     The sampled tier draws its scenarios from a seed, the same one on every
     check unless [~seed] gives another, so a check meets the same faults each
@@ -513,6 +509,53 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
     effect lands at the end of that time. A sync covers the changes made before
     it: a write, a change of mode or owner, or an entry another fiber makes
     while it runs stays unsynced: Linux's fsync(2) promises nothing of them. *)
+
+(** {1:model The disk model}
+
+    A cut leaves a state ext4 with [data=writeback] may leave. Under
+    [~os:`Macos] the same rules hold, but for the syncs {!Crash} lists.
+
+    {b Lengths.}
+
+    - A file's length is one it had since its last sync, or the end of a
+      4096-byte page a write put bytes in, below a length it had since.
+    - A length a write set survives only with every directory change made before
+      it: ext4 journals it as it writes the pages back.
+    - A length a truncation set survives only with every directory change made
+      before it, and whenever a later one survives: ext4 journals it in the
+      syscall's own handle.
+
+    {b Pages and sectors.}
+
+    - A 512-byte sector is written whole. It holds what the disk held, zeros
+      where it held nothing, or what it held after one of the writes to it, so
+      the writes to it land together.
+    - A 4096-byte page the disk held nothing of holds bytes only with every
+      directory change made before the first write into it, as ext4 allocates
+      the page with the length.
+    - A truncation zeroes the rest of the page it cuts, sector by sector. At a
+      length from before it, a page it frees holds no later write, as ext4
+      reuses no block before the truncation commits.
+
+    {b Stale data.}
+
+    - A page the disk held nothing of, past the durable length or in a hole,
+      that a write put bytes in is written whole, as ext4 allocates it. Each of
+      its sectors within the length may instead hold stale data.
+    - Stale data is what a freed block held: a page a synced truncation freed,
+      or one of a file the workload removed, its unsynced bytes included, as
+      writeback may have written them before the removal.
+    - ext4 may give a freed block to any offset of any file. The check tries the
+      page at the same place first, then the others, up to eight distinct ones,
+      and the byte ['7'] when no block was freed.
+    - A file the cut lost and the workload never removed frees no block, nor
+      does a removed file still open at the cut, as ext4 frees its blocks at its
+      last close.
+
+    {b Failed syncs.} A failed sync loses the file's unsynced writes, though
+    some of their sectors may already be on disk. The page cache may keep them
+    or evict them: before the cut, a read after a failed sync sees them as kept,
+    or, in a scenario of its own, as the disk holds them. *)
 
 (**/**)
 
