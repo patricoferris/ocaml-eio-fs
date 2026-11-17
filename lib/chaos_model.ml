@@ -2872,10 +2872,11 @@ module Crash = struct
   end
 
   (* The bytes a read of the file now sees, after its pages were evicted:
-     through the handle, or by the path that still names it. *)
+     through the handle, or by the path that still names it. The file is
+     emptied first: on an append handle the write lands at the end. *)
   let relive_by_handle cf img =
     let rw = writable cf in
-    Eio.File.truncate rw (Optint.Int63.of_int (Cstruct.length img));
+    Eio.File.truncate rw Optint.Int63.zero;
     Eio.File.pwrite_all rw ~file_offset:Optint.Int63.zero [ img ]
 
   let relive_by_path cf fs img =
