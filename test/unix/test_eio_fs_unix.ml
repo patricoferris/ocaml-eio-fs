@@ -3,8 +3,8 @@
    without cutting power; what is testable is that the barrier accepts the
    states a commit protocol hands it. *)
 
-module Chaos = Eio_fs.Chaos.Private
-module Crash = Chaos.Crash
+module Chaos = Eio_fs.Chaos
+module Crash = Chaos.Private.Crash
 open Holder
 
 let ( / ) = Eio.Path.( / )

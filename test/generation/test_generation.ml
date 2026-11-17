@@ -71,16 +71,26 @@ let with_empty fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env -> fn env#fs
 
-(* Crash the publication of [new_tree] over [setup]'s base at its [n]th
-   durability operation, for every [n] until one runs to completion. Each
-   crashed image must read as one of [before]; the completed one as the new
-   tree. Returns the outcome of every crash point. *)
+(* Cut the power before the [n]th operation of the publication of
+   [new_tree] over [setup]'s base that may change the disk, for every [n]
+   until one runs to completion. Each crashed image must read as one of
+   [before]; the completed one as the new tree. Returns the outcome of every
+   crash point. *)
 let every_crash_point ~policy ~setup ~before =
   let rec at n acc =
     if n > 1000 then Alcotest.fail "the publication never completed";
     setup @@ fun base ->
-    let ctl = Crash.v ~policy ~trigger:(Crash.Nth_op n) () in
-    (try publish (Crash.wrap ctl base) new_tree
+    let ctl = Crash.v ~policy () in
+    let seen = ref 0 in
+    let cut (op : Eio_fs.Chaos.Op.t) =
+      (match op.kind with
+      | `Write | `Truncate | `Sync | `Change | `Open_write ->
+          incr seen;
+          if !seen = n then Crash.crash ctl
+      | `Read | `Read_dir | `Stat | `Open_read -> ());
+      None
+    in
+    (try publish (Eio_fs.Chaos.wrap cut (Crash.wrap ctl base)) new_tree
      with Eio.Io _ when Crash.is_crashed ctl -> ());
     let completed = not (Crash.is_crashed ctl) in
     let seen = read_back (Crash.post_crash ctl / "out") in
@@ -364,9 +374,7 @@ let test_posix_readonly_failed_populate () =
    durable publication through it syncs each file all the same. *)
 let test_durable_through_a_fault_wrapper () =
   with_empty @@ fun fs ->
-  let wrapped =
-    Eio_fs.Chaos.Private.wrap Eio_fs.Chaos.Private.Schedule.empty fs
-  in
+  let wrapped = Eio_fs.Chaos.wrap (fun _ -> None) fs in
   publish wrapped new_tree;
   Alcotest.check tree "published" (Some new_tree) (read_back (fs / "out"))
 

@@ -1,14 +1,17 @@
-module Chaos = Eio_fs.Chaos.Private
-module Crash = Chaos.Crash
+module Crash = Eio_fs.Chaos.Private.Crash
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
-let with_chaos schedule fn =
+let at ?(nth = 1) kind path fault (op : Eio_fs.Chaos.Op.t) =
+  if op.kind = kind && String.equal op.path path && op.nth = nth then Some fault
+  else None
+
+let with_chaos f fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let raw = env#fs in
-  let chaos = Chaos.wrap schedule raw in
+  let chaos = Eio_fs.Chaos.wrap f raw in
   fn ~raw ~chaos
 
 (* The whole of a file, read through the handle rather than through its name. *)
@@ -27,19 +30,28 @@ let with_crash ctl fn =
 
 let absent p = Eio.Path.kind ~follow:false p = `Not_found
 
-let with_real_crash ctl fn ~check =
+let with_real_dir fn =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   let dir = Filename.temp_file "eio-fs-crash" "" in
   Sys.remove dir;
   let dir = Eio.Path.(fs / dir) in
   Eio.Path.mkdir ~perm:0o755 dir;
-  let real = (dir :> Eio.Fs.dir_ty Eio.Path.t) in
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true dir)
-  @@ fun () ->
-  let wrapped = Crash.wrap ctl real in
-  fn wrapped;
+  @@ fun () -> fn (dir :> Eio.Fs.dir_ty Eio.Path.t)
+
+let with_real_crash ctl fn ~check =
+  with_real_dir @@ fun real ->
+  fn (Crash.wrap ctl real);
   check (Crash.post_crash ctl)
+
+let rec sync_dirs dir =
+  Eio.Path.sync_dir dir;
+  List.iter
+    (fun name ->
+      let p = dir / name in
+      if Eio.Path.kind ~follow:false p = `Directory then sync_dirs p)
+    (Eio.Path.read_dir dir)
 
 let write_new ?(sync = false) p data =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) p (fun f ->

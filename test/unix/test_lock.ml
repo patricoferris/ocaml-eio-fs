@@ -1,8 +1,8 @@
 (* Locks over a lock file: [with_lock], probes, held locks, waits
    and their bounds, the lock file's checks, and sections. *)
 
-module Chaos = Eio_fs.Chaos.Private
-module Crash = Chaos.Crash
+module Chaos = Eio_fs.Chaos
+module Crash = Chaos.Private.Crash
 open Holder
 
 let ( / ) = Eio.Path.( / )
@@ -701,7 +701,7 @@ let test_probe_through_a_wrapper_names_the_holding_process () =
   Eio_fs_unix.with_lock ~contents:"the last holder\n" lock (fun () -> ());
   Eio.Switch.run @@ fun sw ->
   let child, release = holding_process ~sw ~env ~kind:"record" ~lock in
-  let wrapped = Chaos.wrap Chaos.Schedule.empty dir in
+  let wrapped = Chaos.wrap (fun _ -> None) dir in
   (match Eio_fs_unix.probe (wrapped / "lock") with
   | `Free _ -> Alcotest.fail "a lock another process holds probed as free"
   | `Held refused ->
@@ -750,16 +750,14 @@ let test_probe_of_a_lock_file_that_goes () =
   let native = Eio.Path.native_exn (dir / "ticket") in
   Eio.Path.with_open_dir dir @@ fun base ->
   let opened = ref false and gone = ref false in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun (operation : Chaos.Op.t) ->
-        match operation.kind with
-        | `Open_read | `Open_write -> opened := true
-        | `Stat when !opened && not !gone ->
-            Unix.unlink native;
-            gone := true
-        | _ -> ())
-      Chaos.Schedule.empty
+  let schedule (operation : Chaos.Op.t) =
+    (match operation.kind with
+    | `Open_read | `Open_write -> opened := true
+    | `Stat when !opened && not !gone ->
+        Unix.unlink native;
+        gone := true
+    | _ -> ());
+    None
   in
   let wrapped = Chaos.wrap schedule base in
   (match Eio_fs_unix.probe (wrapped / "ticket") with
@@ -781,18 +779,16 @@ let test_probe_of_a_lock_file_replaced () =
   let native = Eio.Path.native_exn (dir / "ticket") in
   Eio.Path.with_open_dir dir @@ fun base ->
   let opened = ref false and replaced = ref false in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun (operation : Chaos.Op.t) ->
-        match operation.kind with
-        | `Open_read | `Open_write -> opened := true
-        | `Stat when !opened && not !replaced ->
-            Unix.unlink native;
-            Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_excl ]
-              0o600 native (fun oc -> output_string oc "the new ticket\n");
-            replaced := true
-        | _ -> ())
-      Chaos.Schedule.empty
+  let schedule (operation : Chaos.Op.t) =
+    (match operation.kind with
+    | `Open_read | `Open_write -> opened := true
+    | `Stat when !opened && not !replaced ->
+        Unix.unlink native;
+        Out_channel.with_open_gen [ Open_wronly; Open_creat; Open_excl ]
+          0o600 native (fun oc -> output_string oc "the new ticket\n");
+        replaced := true
+    | _ -> ());
+    None
   in
   let wrapped = Chaos.wrap schedule base in
   (match Eio_fs_unix.probe (wrapped / "ticket") with
@@ -1416,7 +1412,7 @@ let test_lock_over_a_process_local_backend_refuses_a_symlink () =
    is the whole of a fault-injected store's locking gone. *)
 let test_lock_over_a_wrapped_process_local_backend_serializes_fibers () =
   with_in_memory_fs @@ fun fs ->
-  let wrapped = Chaos.wrap Chaos.Schedule.empty fs in
+  let wrapped = Chaos.wrap (fun _ -> None) fs in
   let lock = wrapped / "lock" in
   Alcotest.(check bool)
     "the wrapper forwards what its base declares about outside openers" true
@@ -1594,16 +1590,15 @@ let crash_after_a_lock_published_its_contents ~policy =
   Alcotest.(check string)
     "the live lock file carries what the holder published" "held\n"
     (Eio.Path.load (dir / "lock"));
-  Crash.sync_metadata ctl;
+  Eio.Path.sync_dir wrapped;
   Eio.Path.load (Crash.post_crash ctl / "lock")
 
-(* The lock truncates the file to what it wrote, which ext4 journals at
-   once, so the commit keeps the length but not the bytes. *)
+(* The barrier commits the lock file's entry; the bytes the lock wrote and
+   the length its truncation set are unsynced, so the file comes back
+   empty. *)
 let test_lock_contents_are_lost_by_an_unsynced_crash () =
   Alcotest.(check string)
-    "the lock file keeps its committed entry and length, not the un-synced \
-     bytes"
-    (String.make 5 '\000')
+    "the lock file keeps its committed entry, not the un-synced bytes" ""
     (crash_after_a_lock_published_its_contents ~policy:Crash.Drop_unsynced)
 
 let test_lock_contents_survive_a_policy_that_keeps_them () =

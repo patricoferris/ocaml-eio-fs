@@ -510,7 +510,7 @@ let test_crash_pwrite_appends () =
   let ctl = Crash.v ~policy:(Crash.Survive (fun _ -> true)) () in
   let fs = Crash.wrap ctl env#fs in
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "f") "abc";
-  Crash.sync_metadata ctl;
+  Eio.Path.sync_dir fs;
   Eio.Path.with_open_out ~append:true ~create:`Never (fs / "f") (fun f ->
       Eio.File.pwrite_all f ~file_offset:Optint.Int63.zero
         [ Cstruct.of_string "Z" ]);

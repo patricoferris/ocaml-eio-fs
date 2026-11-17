@@ -6,8 +6,9 @@
    no new image comes; each image must be one the reference allows. Directed
    cases check that states the reference allows are drawn. *)
 
-open Eio_fs.Chaos.Private
+module Crash = Eio_fs.Chaos.Private.Crash
 
+let wrap = Eio_fs.Chaos.wrap
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
@@ -34,17 +35,11 @@ let pp_injection ppf = function
   | Beneath -> Fmt.string ppf "beneath"
   | Stacked -> Fmt.string ppf "stacked"
 
-let fail_on_sync n =
-  {
-    Schedule.trigger = Nth_op_on_path { n; kind = `Sync; path = "/f" };
-    fault = Sync_error `Eio;
-  }
-
-let fail_once =
-  {
-    Schedule.trigger = Op_on_path { kind = `Sync; path = "/f" };
-    fault = Sync_error `Eio;
-  }
+(* The syncs of "/f" whose rank among them is in [ns] fail. *)
+let fail_syncs ns (op : Eio_fs.Chaos.Op.t) =
+  if op.kind = `Sync && String.equal op.path "/f" && List.mem op.nth ns then
+    Some (Eio_fs.Chaos.Fault.Fail `Eio)
+  else None
 
 (* The [k]th write of [wl] writes its letter. *)
 let letters wl =
@@ -64,7 +59,7 @@ let run ~init ~injection ~policy wl =
   let raw = Eio_fs.Fs.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") init;
   (* The failing syncs, by rank among the syncs through the handle. *)
-  let rules =
+  let failing =
     let n = ref 0 in
     List.filter_map
       (function
@@ -73,23 +68,23 @@ let run ~init ~injection ~policy wl =
             None
         | Fail ->
             incr n;
-            Some (fail_on_sync !n)
+            Some !n
         | W _ | T _ | Ro_fail -> None)
       wl
   in
-  let sched = Schedule.scripted rules in
+  let sched = fail_syncs failing in
   let ctl = Crash.v ~policy ~block_size:2 () in
   let root, files =
     match injection with
     | Beneath ->
-        let c = Crash.wrap ctl (wrap sched raw) in
+        let c = (Crash.wrap ctl (wrap sched raw) :> Eio.Fs.dir_ty Eio.Path.t) in
         (c, c)
     | Above ->
-        let c = Crash.wrap ctl raw in
+        let c = (Crash.wrap ctl raw :> Eio.Fs.dir_ty Eio.Path.t) in
         (c, wrap sched c)
     | Stacked ->
-        let c = Crash.wrap ctl raw in
-        (c, wrap sched (wrap Schedule.empty c))
+        let c = (Crash.wrap ctl raw :> Eio.Fs.dir_ty Eio.Path.t) in
+        (c, wrap sched (wrap (fun _ -> None) c))
   in
   let h = Eio.Path.open_out ~sw ~create:`Never (files / "f") in
   List.iter2
@@ -104,7 +99,7 @@ let run ~init ~injection ~policy wl =
           | exception Eio.Io _ -> ())
       | Ro_fail ->
           Eio.Path.with_open_in
-            (wrap (Schedule.scripted [ fail_once ]) root / "f")
+            (wrap (fail_syncs [ 1 ]) root / "f")
             (fun f ->
               match Eio_fs_sync.file_barrier f with
               | None -> failwith "no barrier"

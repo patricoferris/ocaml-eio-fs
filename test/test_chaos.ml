@@ -1,12 +1,9 @@
-(** Fault-injection tests for {!Eio_fs.Chaos.Private}: each fault kind is pinned
-    with a scripted schedule and asserted to occur exactly, and a seeded
-    schedule is shown to reproduce deterministically. *)
+(** Fault-injection tests for {!Eio_fs.Chaos.wrap}: each fault is injected at
+    one operation and asserted to occur exactly. *)
 
-module Chaos = Eio_fs.Chaos.Private
-module Schedule = Chaos.Schedule
+module Chaos = Eio_fs.Chaos
 module Fault = Chaos.Fault
 module Op = Chaos.Op
-module Crash = Chaos.Crash
 open Chaos_helpers
 
 let ( / ) = Eio.Path.( / )
@@ -16,19 +13,10 @@ let expect_io name fn =
   | () -> Alcotest.failf "%s: expected Eio.Io, got success" name
   | exception Eio.Io _ -> ()
 
-(* {2 Scripted, exact-scenario faults} *)
+(* {2 Faults} *)
 
 let test_short_read () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Read; path = "f" };
-          fault = Short_read 3;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Read "f" (Short 3)) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "f") "hello";
   Eio.Path.with_open_in (chaos / "f") @@ fun file ->
   let buf = Cstruct.create 5 in
@@ -41,16 +29,7 @@ let test_short_read () =
 (* A short read of an empty buffer has nothing to shorten: the read answers
    what the base answers, and the fault's arithmetic raises nothing. *)
 let test_short_read_empty () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Read; path = "f" };
-          fault = Short_read 3;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Read "f" (Short 3)) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "f") "hello";
   let answer dir =
     Eio.Path.with_open_in (dir / "f") @@ fun file ->
@@ -59,28 +38,15 @@ let test_short_read_empty () =
     | exception ((End_of_file | Eio.Io _) as ex) -> Printexc.to_string ex
   in
   let expected = answer raw in
-  Alcotest.(check string) "as the base answers" expected (answer chaos);
-  Alcotest.(check string)
-    "fault consumed once" "scripted(0 rules)"
-    (Fmt.str "%a" Schedule.pp sched)
+  Alcotest.(check string) "as the base answers" expected (answer chaos)
 
 let test_read_error positional () =
   let observed = ref [] in
-  let schedule =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Read; path = "f" };
-          fault = Read_error `Eio;
-        };
-      ]
+  let hook (op : Op.t) =
+    if op.kind = `Read then observed := op :: !observed;
+    at `Read "f" (Fail `Eio) op
   in
-  let sched =
-    Schedule.observing
-      (fun op -> if op.Op.kind = `Read then observed := op :: !observed)
-      schedule
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "f") "hello";
   Eio.Path.with_open_in (chaos / "f") @@ fun file ->
   let buf = Cstruct.create 3 in
@@ -91,9 +57,6 @@ let test_read_error positional () =
   expect_io "read failure" (fun () -> ignore (read ()));
   Alcotest.(check string)
     "failure delivers no bytes" "\000\000\000" (Cstruct.to_string buf);
-  Alcotest.(check string)
-    "read fault consumed once" "scripted(0 rules)"
-    (Fmt.str "%a" Schedule.pp schedule);
   (match !observed with
   | [ op ] ->
       Alcotest.(check string) "read retains opened path" "f" op.Op.path;
@@ -116,30 +79,8 @@ let test_read_error positional () =
     (if positional then "ell" else "hel")
     (Cstruct.to_string buf)
 
-let test_seeded_read_error positional () =
-  let sched =
-    Schedule.seeded ~probability:1. ~kinds:[ `Read_error ] ~seed:29 ()
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
-  Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "f") "hello";
-  Eio.Path.with_open_in (chaos / "f") @@ fun file ->
-  let buf = Cstruct.create 3 in
-  expect_io "seeded read failure" (fun () ->
-      ignore
-        (if positional then Eio.File.pread file ~file_offset:(i63 1) [ buf ]
-         else Eio.Flow.single_read file buf))
-
 let test_short_write () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Write; path = "f" };
-          fault = Short_write 2;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw:_ ~chaos ->
+  with_chaos (at `Write "f" (Short 2)) @@ fun ~raw:_ ~chaos ->
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (chaos / "f")
   @@ fun file ->
   let got =
@@ -154,16 +95,7 @@ let test_short_write () =
 (* The durability hazard: a torn write commits its prefix to the store and then
    reports failure. Pinned at offset 512 during a 1024-byte "superblock" flush. *)
 let test_torn_write () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Write_covering { path = "sb"; file_offset = 512 };
-          fault = Torn_write 512;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Write "sb" (Torn 512)) @@ fun ~raw ~chaos ->
   let block = Cstruct.create 1024 in
   Cstruct.memset block 0xAB;
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (chaos / "sb")
@@ -177,16 +109,7 @@ let test_torn_write () =
     "prefix bytes committed" (String.make 512 '\xAB') committed
 
 let test_write_error () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Write; path = "f" };
-          fault = Write_error `Enospc;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Write "f" (Fail `Enospc)) @@ fun ~raw ~chaos ->
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (chaos / "f") (fun file ->
       expect_io "enospc" (fun () ->
           Eio.File.pwrite_all file ~file_offset:(i63 0)
@@ -194,16 +117,7 @@ let test_write_error () =
   Alcotest.(check string) "nothing committed" "" (Eio.Path.load (raw / "f"))
 
 let test_sync_error () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Sync; path = "f" };
-          fault = Sync_error `Eio;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw:_ ~chaos ->
+  with_chaos (at `Sync "f" (Fail `Eio)) @@ fun ~raw:_ ~chaos ->
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (chaos / "f")
   @@ fun file ->
   (* the write itself is not perturbed *)
@@ -214,16 +128,7 @@ let test_sync_error () =
    read-only answers the barrier too -- a durable publish syncs a read-only
    file that way -- and the schedule fails it as it fails a read-write one. *)
 let test_read_only_file_sync () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Nth_op_on_path { n = 2; kind = `Sync; path = "f" };
-          fault = Sync_error `Eio;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at ~nth:2 `Sync "f" (Fail `Eio)) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o444) (raw / "f") "data";
   Eio.Switch.run @@ fun sw ->
   let file = Eio.Path.open_in ~sw (chaos / "f") in
@@ -233,61 +138,18 @@ let test_read_only_file_sync () =
       barrier ~full:false;
       expect_io "the scheduled sync failure" (fun () -> barrier ~full:false)
 
-(* [Fault.compare] orders faults by constructor, then by argument, and agrees
-   with [Fault.equal]. *)
-let test_fault_compare () =
-  let faults =
-    Fault.
-      [
-        Short_read 1;
-        Short_read 2;
-        Read_error `Enoent;
-        Read_error `Eio;
-        Short_write 3;
-        Torn_write 0;
-        Write_error `Enospc;
-        Sync_error `Eio;
-        Open_error `Eacces;
-        Stat_error `Enoent;
-        Swap_symlink "a";
-        Swap_symlink "b";
-      ]
-  in
-  List.iteri
-    (fun i a ->
-      List.iteri
-        (fun j b ->
-          let c = Fault.compare a b in
-          Alcotest.(check int)
-            (Fmt.str "%a vs %a" Fault.pp a Fault.pp b)
-            (Int.compare i j)
-            (if c < 0 then -1 else if c > 0 then 1 else 0);
-          Alcotest.(check bool) "agrees with equal" (Fault.equal a b) (c = 0))
-        faults)
-    faults
-
 let test_open_error () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Open_read; path = "secret" };
-          fault = Open_error `Enoent;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Open_read "secret" (Fail `Enoent)) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "secret") "x";
   expect_io "open" (fun () -> ignore (Eio.Path.load (chaos / "secret")))
 
 (* A chmod and a chown change an entry: a fault on [`Change] fails them
    before they are made. *)
 let test_change_error_on_chmod_chown () =
-  let sched =
-    Schedule.hook (fun (op : Op.t) ->
-        if op.kind = `Change then Some (Fault.Change_error `Eperm) else None)
+  let hook (op : Op.t) =
+    if op.kind = `Change then Some (Fault.Fail `Eperm) else None
   in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "x";
   expect_io "chmod" (fun () ->
       Eio.Path.chmod ~follow:false ~perm:0o600 (chaos / "f"));
@@ -300,14 +162,13 @@ let test_change_error_on_chmod_chown () =
 (* An open for reading and one that may write are told apart. *)
 let test_open_kinds () =
   let seen = ref [] in
-  let sched =
-    Schedule.hook (fun (op : Op.t) ->
-        (match op.kind with
-        | (`Open_read | `Open_write) as k -> seen := (k, op.path) :: !seen
-        | _ -> ());
-        None)
+  let hook (op : Op.t) =
+    (match op.kind with
+    | (`Open_read | `Open_write) as k -> seen := (k, op.path) :: !seen
+    | _ -> ());
+    None
   in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.mkdir ~perm:0o755 (raw / "d");
   Eio.Path.save ~create:(`Exclusive 0o644) (chaos / "f") "x";
   ignore (Eio.Path.load (chaos / "f"));
@@ -320,21 +181,11 @@ let test_open_kinds () =
 
 let test_descriptor_stat_error writable () =
   let observed = ref [] in
-  let schedule =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Stat; path = "f" };
-          fault = Stat_error `Eacces;
-        };
-      ]
+  let hook (op : Op.t) =
+    if op.kind = `Stat then observed := op.path :: !observed;
+    at `Stat "f" (Fail `Eacces) op
   in
-  let sched =
-    Schedule.observing
-      (fun op -> if op.Op.kind = `Stat then observed := op.Op.path :: !observed)
-      schedule
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "f") "hello";
   Eio.Switch.run @@ fun sw ->
   let file =
@@ -346,24 +197,12 @@ let test_descriptor_stat_error writable () =
   expect_io "descriptor metadata" (fun () -> ignore (Eio.File.size file));
   Alcotest.(check (list string))
     "one descriptor stat retains its opened path" [ "f" ] (List.rev !observed);
-  Alcotest.(check string)
-    "one scripted metadata fault was consumed" "scripted(0 rules)"
-    (Fmt.str "%a" Schedule.pp schedule);
   Alcotest.(check int)
     "the unchanged descriptor metadata succeeds afterward" 5
     (Optint.Int63.to_int (Eio.File.size file))
 
 let test_stat_error () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Stat; path = "f" };
-          fault = Stat_error `Eacces;
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Stat "f" (Fail `Eacces)) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "f") "x";
   expect_io "stat" (fun () ->
       ignore (Eio.Path.stat ~follow:false (chaos / "f")))
@@ -374,19 +213,11 @@ let directory_names entries path =
 
 let test_directory_error entries () =
   let observed = ref [] in
-  let scripted =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Read_dir; path = "tree" };
-          fault = Read_error `Eacces;
-        };
-      ]
+  let hook op =
+    observed := op :: !observed;
+    at `Read_dir "tree" (Fail `Eacces) op
   in
-  let sched =
-    Schedule.observing (fun op -> observed := op :: !observed) scripted
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.mkdir ~perm:0o755 (raw / "tree");
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "tree" / "f") "payload";
   let callbacks = ref 0 in
@@ -402,9 +233,6 @@ let test_directory_error entries () =
       Alcotest.(check int) "no byte offset" 0 op.file_offset;
       Alcotest.(check int) "no byte length" 0 op.length
   | _ -> Alcotest.fail "expected exactly one directory opportunity");
-  Alcotest.(check string)
-    "fault consumed once" "scripted(0 rules)"
-    (Fmt.str "%a" Schedule.pp scripted);
   Alcotest.(check (list string))
     "subsequent read recovers" [ "f" ]
     (directory_names entries (chaos / "tree"));
@@ -412,60 +240,13 @@ let test_directory_error entries () =
     "refusal preserves payload" "payload"
     (Eio.Path.load (raw / "tree" / "f"))
 
-let test_seeded_directory_error entries () =
-  let sched =
-    Schedule.seeded ~probability:1. ~kinds:[ `Read_error ] ~seed:29 ()
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
-  Eio.Path.mkdir ~perm:0o755 (raw / "tree");
-  expect_io "seeded directory refusal" (fun () ->
-      ignore (directory_names entries (chaos / "tree")))
-
+(* A short read applies to a file's bytes, not to a directory listing. *)
 let test_directory_short_read_inapplicable () =
-  let sched =
-    Schedule.seeded ~probability:1. ~kinds:[ `Short_read ] ~seed:29 ()
-  in
-  let op : Op.t =
-    {
-      kind = `Read_dir;
-      path = "tree";
-      file_offset = 0;
-      length = 0;
-      space = false;
-      dest = None;
-    }
-  in
-  Alcotest.(check bool)
-    "no byte fault selected for directory" true
-    (Chaos.Internal.next sched op = None);
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (fun _ -> Some (Short 1)) @@ fun ~raw ~chaos ->
   Eio.Path.mkdir ~perm:0o755 (raw / "tree");
   Alcotest.(check (list string))
     "directory read is not a byte read" []
     (directory_names false (chaos / "tree"))
-
-(* An operation longer than [2^30] bytes is split like any other. *)
-let test_seeded_short_read_long_op () =
-  let sched =
-    Schedule.seeded ~probability:1. ~kinds:[ `Short_read ] ~seed:29 ()
-  in
-  let length = (1 lsl 30) + 1 in
-  let op : Op.t =
-    {
-      kind = `Read;
-      path = "f";
-      file_offset = 0;
-      length;
-      space = false;
-      dest = None;
-    }
-  in
-  match Chaos.Internal.next sched op with
-  | Some (Short_read n) ->
-      Alcotest.(check bool)
-        "split inside the operation" true
-        (n >= 1 && n < length)
-  | _ -> Alcotest.fail "no short read for a long operation"
 
 (* A [Swap_symlink] fault reproduces a TOCTOU: the scripted [`Stat] on "victim"
    still returns the original regular file, then the path becomes a symlink to
@@ -473,16 +254,7 @@ let test_seeded_short_read_long_op () =
    then opens would do -- resolves to what was swapped in. The check saw one
    thing; the use sees another. *)
 let test_swap_symlink () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Stat; path = "victim" };
-          fault = Swap_symlink "secret";
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Stat "victim" (Swap_symlink "secret")) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "victim") "safe";
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "secret") "SECRET";
   (* The check: the stat through chaos still sees the original regular file... *)
@@ -508,16 +280,8 @@ let test_swap_symlink () =
    another file. Scripted on the [`Open], the fault pins that window for a
    reader. *)
 let test_swap_symlink_on_open_in () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Open_read; path = "current" };
-          fault = Swap_symlink "decoy";
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Open_read "current" (Swap_symlink "decoy"))
+  @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "log") "the original";
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "decoy") "decoy";
   Eio.Path.symlink ~link_to:"log" (raw / "current");
@@ -536,16 +300,8 @@ let test_swap_symlink_on_open_in () =
    another file, so a reader following the name finds neither them nor the file
    they landed in. *)
 let test_swap_symlink_on_open_out () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Open_write; path = "current" };
-          fault = Swap_symlink "decoy";
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Open_write "current" (Swap_symlink "decoy"))
+  @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "log") "";
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "decoy") "decoy";
   Eio.Path.symlink ~link_to:"log" (raw / "current");
@@ -567,16 +323,8 @@ let test_swap_symlink_on_open_out () =
    resolving under the directory it was opened on while the name it was opened
    under leads elsewhere. *)
 let test_swap_symlink_on_open_subtree () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Open_read; path = "current" };
-          fault = Swap_symlink "other";
-        };
-      ]
-  in
-  with_chaos sched @@ fun ~raw ~chaos ->
+  with_chaos (at `Open_read "current" (Swap_symlink "other"))
+  @@ fun ~raw ~chaos ->
   Eio.Path.mkdir ~perm:0o755 (raw / "tree");
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "tree" / "f") "in the tree";
   Eio.Path.mkdir ~perm:0o755 (raw / "other");
@@ -630,7 +378,7 @@ let test_real_child_cwd () =
   Eio.Path.save ~create:(`Or_truncate 0o644)
     (fs / name / "payload")
     "the child's exact cwd payload\n";
-  let chaos = Chaos.wrap Schedule.empty (fs / name) in
+  let chaos = Chaos.wrap (fun _ -> None) (fs / name) in
   match
     Eio.Process.parse_out
       (Eio.Stdenv.process_mgr env)
@@ -639,14 +387,7 @@ let test_real_child_cwd () =
   | got -> Alcotest.failf "a child ran in the wrapped directory: %S" got
   | exception Invalid_argument _ -> ()
 
-let swap_on_open path target =
-  Schedule.scripted
-    [
-      {
-        trigger = Op_on_path { kind = `Open_read; path };
-        fault = Swap_symlink target;
-      };
-    ]
+let swap_on_open path target = at `Open_read path (Swap_symlink target)
 
 (* The name the swap frees is a symlink: the portable case, and the guard rail
    for the fixture -- if this one fails the real-filesystem harness is broken,
@@ -717,158 +458,55 @@ let test_swap_on_real_populated_directory_subtree () =
     "real fs: so the path answers about the other tree" "elsewhere"
     (Eio.Path.load (raw / "current" / "f"))
 
-(* {2 Schedule as an inspectable value} *)
-
-(* A scripted rule fires the first time its trigger matches, then is spent. *)
-let test_scripted_fires_once () =
-  let sched =
-    Schedule.scripted [ { trigger = Nth_op 2; fault = Short_read 1 } ]
-  in
-  let op =
-    {
-      Op.kind = `Read;
-      path = "f";
-      file_offset = 0;
-      length = 10;
-      space = false;
-      dest = None;
-    }
-  in
-  let check name expected =
-    Alcotest.(check bool)
-      name true
-      (match (Chaos.Internal.next sched op, expected) with
-      | None, None -> true
-      | Some a, Some b -> Fault.equal a b
-      | _ -> false)
-  in
-  check "op1 passes through" None;
-  check "op2 fires" (Some (Fault.Short_read 1));
-  check "op3 passes through (rule spent)" None
+(* {2 Operations} *)
 
 (* The third open of "f" fails, and no other operation: not the opens
    before it, not an open of another path between them, not a read of "f",
-   and not the open after it, the rule being spent. *)
+   and not the open after it. *)
 let test_nth_op_on_path () =
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Nth_op_on_path { n = 3; kind = `Open_read; path = "f" };
-          fault = Open_error `Enoent;
-        };
-      ]
-  in
-  let op kind path =
-    { Op.kind; path; file_offset = 0; length = 0; space = false; dest = None }
-  in
-  let faults =
+  with_chaos (at ~nth:3 `Open_read "f" (Fail `Enoent)) @@ fun ~raw ~chaos ->
+  Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "x";
+  Eio.Path.save ~create:(`Exclusive 0o644) (raw / "g") "y";
+  let opens =
     List.map
-      (fun o -> Option.is_some (Chaos.Internal.next sched o))
-      [
-        op `Open_read "f";
-        op `Open_read "g";
-        op `Read "f";
-        op `Open_read "f";
-        op `Read "f";
-        op `Open_read "f";
-        op `Open_read "f";
-      ]
+      (fun name ->
+        match Eio.Path.with_open_in (chaos / name) contents with
+        | _ -> false
+        | exception Eio.Io _ -> true)
+      [ "f"; "g"; "f"; "f"; "f" ]
   in
   Alcotest.(check (list bool))
     "only the third open of f fails"
-    [ false; false; false; false; false; true; false ]
-    faults
+    [ false; false; false; true; false ]
+    opens
 
-(* {2 Seeded determinism} *)
-
-let ops_fixture =
-  let mk kind path file_offset length : Op.t =
-    { kind; path; file_offset; length; space = false; dest = None }
-  in
-  [
-    mk `Open_write "a" 0 0;
-    mk `Write "a" 0 4096;
-    mk `Write "a" 4096 4096;
-    mk `Sync "a" 0 0;
-    mk `Read "a" 0 8192;
-    mk `Stat "b" 0 0;
-    mk `Open_write "b" 0 0;
-    mk `Write "b" 0 512;
-    mk `Read "b" 0 512;
-    mk `Sync "b" 0 0;
-  ]
-
-let run_schedule seed =
-  let s = Schedule.seeded ~seed ~probability:0.7 () in
-  List.map (Chaos.Internal.next s) ops_fixture
-
-let test_seed_determinism () =
-  let a = run_schedule 1234 and b = run_schedule 1234 in
-  Alcotest.(check int) "same length" (List.length a) (List.length b);
-  List.iter2
-    (fun x y ->
-      Alcotest.(check bool)
-        "same fault at step" true
-        (match (x, y) with
-        | None, None -> true
-        | Some fx, Some fy -> Fault.equal fx fy
-        | _ -> false))
-    a b;
-  (* non-vacuous: at this probability at least one op must have faulted *)
-  Alcotest.(check bool)
-    "faults actually occur" true
-    (List.exists Option.is_some a)
-
-(* End-to-end determinism over the composed stack: the same seed drives the
-   same committed bytes and the same success/failure outcome, and some seed
-   perturbs the clean result (so the wrapper really injects). *)
-let run_workload schedule =
-  Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
-  let fs = Chaos.wrap schedule env#fs in
-  let outcome =
-    try
-      Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (fs / "f")
-        (fun file ->
-          for i = 0 to 9 do
-            Eio.File.pwrite_all file
-              ~file_offset:(i63 (i * 16))
-              [ Fmt.kstr Cstruct.of_string "%016d" i ]
-          done;
-          Eio.File.sync file);
-      "ok"
-    with Eio.Io _ -> "io-error"
-  in
-  (* read back the truly-committed bytes through the un-perturbed base *)
-  let committed =
-    try Eio.Path.load (env#fs / "f") with Eio.Io _ -> "<none>"
-  in
-  (outcome, committed)
-
-let test_seed_reproduces () =
-  let a = run_workload (Schedule.seeded ~seed:99 ~probability:0.4 ()) in
-  let b = run_workload (Schedule.seeded ~seed:99 ~probability:0.4 ()) in
-  Alcotest.(check (pair string string)) "same outcome and bytes" a b
+(* A wrapper with no fault changes nothing. *)
+let test_pass_through () =
+  with_chaos (fun _ -> None) @@ fun ~raw ~chaos ->
+  Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (chaos / "f") (fun file ->
+      for i = 0 to 9 do
+        Eio.File.pwrite_all file
+          ~file_offset:(i63 (i * 16))
+          [ Fmt.kstr Cstruct.of_string "%016d" i ]
+      done;
+      Eio.File.sync file);
+  Alcotest.(check string)
+    "every byte reaches the base"
+    (String.concat "" (List.init 10 (Fmt.str "%016d")))
+    (Eio.Path.load (raw / "f"))
 
 (* Permission faults: a directory change or an open for writing refused with
    EACCES, EPERM or EROFS, and nothing changed. *)
 let test_change_error () =
-  let rule kind path fault =
-    { Schedule.trigger = Op_on_path { kind; path }; fault }
+  let hook (op : Op.t) : Fault.t option =
+    match (op.kind, op.path, op.nth) with
+    | `Change, "f", 1 -> Some (Fail `Erofs)
+    | `Change, "d", 1 -> Some (Fail `Eperm)
+    | `Change, "f", 2 -> Some (Fail `Eacces)
+    | `Open_write, "conf", 1 -> Some (Fail `Erofs)
+    | _ -> None
   in
-  with_chaos
-    (Schedule.scripted
-       [
-         rule `Change "f" (Change_error `Erofs);
-         rule `Change "d" (Change_error `Eperm);
-         {
-           trigger = Nth_op_on_path { n = 2; kind = `Change; path = "f" };
-           fault = Change_error `Eacces;
-         };
-         rule `Open_write "conf" (Open_error `Erofs);
-       ])
-  @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "x";
   expect_io "unlink on a read-only filesystem" (fun () ->
       Eio.Path.unlink (chaos / "f"));
@@ -883,81 +521,6 @@ let test_change_error () =
   Alcotest.(check (list string))
     "nothing changed" [ "f" ] (Eio.Path.read_dir raw)
 
-let test_seeded_change_error () =
-  let s = Schedule.seeded ~probability:1. ~kinds:[ `Change_error ] ~seed:3 () in
-  Alcotest.(check string)
-    "printed"
-    "Eio_fs.Chaos.Private.Schedule.seeded ~probability:1. ~kinds:[ \
-     `Change_error ] ~seed:3 ()"
-    (Fmt.str "%a" Schedule.pp s);
-  with_chaos s @@ fun ~raw ~chaos ->
-  expect_io "a seeded mkdir" (fun () ->
-      Eio.Path.mkdir ~perm:0o755 (chaos / "d"));
-  Alcotest.(check (list string)) "nothing made" [] (Eio.Path.read_dir raw)
-
-(* A seeded schedule prints as the expression that rebuilds it. *)
-let test_seeded_pp_rebuilds () =
-  let s =
-    Schedule.seeded ~probability:0.25
-      ~kinds:[ `Torn_write; `Sync_error ]
-      ~seed:42 ()
-  in
-  Alcotest.(check string)
-    "printed"
-    "Eio_fs.Chaos.Private.Schedule.seeded ~probability:0.25 ~kinds:[ \
-     `Torn_write; `Sync_error ] ~seed:42 ()"
-    (Fmt.str "%a" Schedule.pp s);
-  let rebuilt =
-    Eio_fs.Chaos.Private.Schedule.seeded ~probability:0.25
-      ~kinds:[ `Torn_write; `Sync_error ]
-      ~seed:42 ()
-  in
-  let faults s = List.map (Chaos.Internal.next s) ops_fixture in
-  Alcotest.(check bool)
-    "same faults" true
-    (List.equal (Option.equal Fault.equal) (faults s) (faults rebuilt))
-
-(* A probability prints exactly, so the printed schedule draws the same
-   faults. *)
-let test_seeded_pp_floats () =
-  let printed p =
-    Fmt.str "%a" Schedule.pp
-      (Schedule.seeded ~probability:p ~kinds:[] ~seed:1 ())
-  in
-  let expect p lit =
-    Alcotest.(check string)
-      lit
-      ("Eio_fs.Chaos.Private.Schedule.seeded ~probability:" ^ lit
-     ^ " ~kinds:[] ~seed:1 ()")
-      (printed p)
-  in
-  expect (0.1 +. 0.2) "0.30000000000000004";
-  expect 0.3 "0.3";
-  expect 1. "1.";
-  expect infinity "infinity";
-  expect neg_infinity "neg_infinity";
-  expect (-0.5) "(-0.5)";
-  expect 1e-300 "1e-300";
-  Alcotest.(check bool)
-    "the literal is the float" true
-    (Float.equal (0.1 +. 0.2) 0.30000000000000004)
-
-let test_chaos_perturbs () =
-  let clean = run_workload Schedule.empty in
-  Alcotest.(check (pair string string))
-    "clean run succeeds fully"
-    ( "ok",
-      "0000000000000000000000000000000100000000000000020000000000000003000000000000000400000000000000050000000000000006000000000000000700000000000000080000000000000009"
-    )
-    clean;
-  let perturbed =
-    List.init 40 (fun seed ->
-        run_workload (Schedule.seeded ~seed ~probability:0.5 ()))
-  in
-  Alcotest.(check bool)
-    "some seed perturbs the clean result" true
-    (List.exists (fun r -> r <> clean) perturbed)
-
 let suite =
   ( "chaos",
     [
@@ -965,17 +528,12 @@ let suite =
       Alcotest.test_case "short read of an empty buffer" `Quick
         test_short_read_empty;
       Alcotest.test_case "streaming read error" `Quick (test_read_error false);
-      Alcotest.test_case "seeded streaming read error" `Quick
-        (test_seeded_read_error false);
-      Alcotest.test_case "seeded positional read error" `Quick
-        (test_seeded_read_error true);
       Alcotest.test_case "positional read error" `Quick (test_read_error true);
       Alcotest.test_case "short write" `Quick test_short_write;
       Alcotest.test_case "torn write" `Quick test_torn_write;
       Alcotest.test_case "write error" `Quick test_write_error;
       Alcotest.test_case "sync error" `Quick test_sync_error;
       Alcotest.test_case "read-only file sync" `Quick test_read_only_file_sync;
-      Alcotest.test_case "fault compare" `Quick test_fault_compare;
       Alcotest.test_case "open error" `Quick test_open_error;
       Alcotest.test_case "chmod and chown are changes" `Quick
         test_change_error_on_chmod_chown;
@@ -985,14 +543,8 @@ let suite =
       Alcotest.test_case "directory error" `Quick (test_directory_error false);
       Alcotest.test_case "directory entries error" `Quick
         (test_directory_error true);
-      Alcotest.test_case "seeded directory error" `Quick
-        (test_seeded_directory_error false);
-      Alcotest.test_case "seeded directory entries error" `Quick
-        (test_seeded_directory_error true);
       Alcotest.test_case "directory short-read inapplicable" `Quick
         test_directory_short_read_inapplicable;
-      Alcotest.test_case "seeded short read of a long operation" `Quick
-        test_seeded_short_read_long_op;
       Alcotest.test_case "read-only descriptor stat error" `Quick
         (test_descriptor_stat_error false);
       Alcotest.test_case "read-write descriptor stat error" `Quick
@@ -1010,15 +562,7 @@ let suite =
         test_swap_on_real_empty_directory_subtree;
       Alcotest.test_case "swap on a populated directory subtree (real fs)"
         `Quick test_swap_on_real_populated_directory_subtree;
-      Alcotest.test_case "scripted fires once" `Quick test_scripted_fires_once;
       Alcotest.test_case "nth operation on a path" `Quick test_nth_op_on_path;
-      Alcotest.test_case "seed determinism" `Quick test_seed_determinism;
-      Alcotest.test_case "seed reproduces" `Quick test_seed_reproduces;
-      Alcotest.test_case "chaos perturbs" `Quick test_chaos_perturbs;
+      Alcotest.test_case "pass-through" `Quick test_pass_through;
       Alcotest.test_case "change error" `Quick test_change_error;
-      Alcotest.test_case "seeded change error" `Quick test_seeded_change_error;
-      Alcotest.test_case "a seeded schedule prints its rebuild" `Quick
-        test_seeded_pp_rebuilds;
-      Alcotest.test_case "a seeded schedule prints its probability exactly"
-        `Quick test_seeded_pp_floats;
     ] )

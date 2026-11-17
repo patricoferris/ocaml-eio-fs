@@ -3,7 +3,7 @@
    the validation hold before a byte is returned, and a failed read wipes its
    buffer. *)
 
-module Chaos = Eio_fs.Chaos.Private
+module Chaos = Eio_fs.Chaos
 
 let ( / ) = Eio.Path.( / )
 
@@ -102,10 +102,9 @@ let test_read_nofollow_is_one_open_through_its_wrapper () =
   Eio.Path.save ~create:(`Exclusive 0o600) (dir / "private") "secret";
   Eio.Path.with_open_dir dir @@ fun base ->
   let observed = ref [] in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun operation -> observed := operation :: !observed)
-      Chaos.Schedule.empty
+  let schedule operation =
+    observed := operation :: !observed;
+    None
   in
   let wrapped = Chaos.wrap schedule base in
   (match

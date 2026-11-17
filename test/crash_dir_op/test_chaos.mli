@@ -1,4 +1,5 @@
-(** Spec for the crash trigger that stops the clock on a directory operation. *)
+(** The window a directory operation with no barrier of its own leaves. *)
 
 val suite : string * unit Alcotest.test_case list
-(** [suite] tests {!Eio_fs.Chaos.Private.Crash.After_dir_op}. *)
+(** [suite] tests what a cut right after such an operation, and after the
+    barrier that follows it, leaves. *)

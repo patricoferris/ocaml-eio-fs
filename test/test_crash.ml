@@ -2,11 +2,9 @@
    barriers that make them durable, on memory and on the real filesystem,
    and the authority the wrapper keeps. *)
 
-module Chaos = Eio_fs.Chaos.Private
-module Schedule = Chaos.Schedule
-module Fault = Chaos.Fault
+module Chaos = Eio_fs.Chaos
 module Op = Chaos.Op
-module Crash = Chaos.Crash
+module Crash = Chaos.Private.Crash
 open Chaos_helpers
 
 let ( / ) = Eio.Path.( / )
@@ -51,7 +49,7 @@ let test_crash_synced_survives () =
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (fs / "img") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "synced write survives crash" "data"
@@ -66,7 +64,7 @@ let test_crash_barrier_respected () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "AAAA" ];
       Eio.File.sync file;
       Eio.File.pwrite_all file ~file_offset:(i63 4) [ Cstruct.of_string "BBBB" ]);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "synced prefix survived, unsynced suffix lost" "AAAA"
@@ -175,7 +173,7 @@ let test_crash_readonly_synced () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o444) (fs / "img") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   (* an unsynced write on a second file forces the crash to rewrite state *)
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (fs / "scratch")
     (fun file ->
@@ -198,7 +196,7 @@ let test_crash_readonly_unsynced_tail () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "AAAA" ];
       Eio.File.sync file;
       Eio.File.pwrite_all file ~file_offset:(i63 4) [ Cstruct.of_string "BBBB" ]);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "read-only file rewritten to its synced prefix" "AAAA"
@@ -223,7 +221,7 @@ let test_crash_closed_subtree () =
           Eio.File.sync file;
           Eio.File.pwrite_all file ~file_offset:(i63 4)
             [ Cstruct.of_string "BBBB" ]));
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   (* the staging subtree is closed here; only now does the crash fire *)
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -245,7 +243,7 @@ let test_crash_readonly_in_closed_subtree () =
           Eio.File.sync file;
           Eio.File.pwrite_all file ~file_offset:(i63 4)
             [ Cstruct.of_string "junk" ]));
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "read-only subtree-staged file rewritten" "data"
@@ -257,8 +255,8 @@ let test_crash_readonly_in_closed_subtree () =
 (* {2 Directory-operation durability}
 
    Directory operations -- file creation, mkdir, unlink, rmdir, symlink,
-   rename -- are journaled in program order and commit on [sync_metadata] (the
-   stand-in for a directory fsync), never on a file sync: fsync(2) on a
+   rename -- are journaled in program order and commit on a sync of their
+   directory, never on a file sync: fsync(2) on a
    descriptor makes that file's data durable and says nothing about the
    directory its name lives in. A crash rolls back the uncommitted suffix,
    whole. The spec is the journal model in chaos.mli. *)
@@ -272,7 +270,7 @@ let test_crash_committed_unlink_stays_deleted () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
   Eio.Path.unlink (fs / "f");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
     "committed unlink stays deleted" true
@@ -294,7 +292,7 @@ let test_crash_file_sync_leaves_metadata_pending () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "f") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.unlink (fs / "f");
   (* the barrier below is on a different file, so it must not commit the
      unlink above *)
@@ -314,7 +312,7 @@ let test_crash_uncommitted_unlink_rolls_back () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "f") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.unlink (fs / "f");
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -330,7 +328,7 @@ let test_crash_uncommitted_rename_reverts () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "tmp") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "NEW" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.rename (fs / "tmp") (fs / "final");
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -340,16 +338,16 @@ let test_crash_uncommitted_rename_reverts () =
     "final path absent after reverted swap" true
     (absent (post / "final"))
 
-(* The same protocol with the barrier: [sync_metadata] after the rename pins
-   the swap, exactly as fsyncing the parent directory would. *)
-let test_crash_sync_metadata_commits_rename () =
+(* The same protocol with the barrier: a sync of the parent directory after
+   the rename pins the swap. *)
+let test_crash_sync_dir_commits_rename () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "tmp") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "NEW" ];
       Eio.File.sync file);
   Eio.Path.rename (fs / "tmp") (fs / "final");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "committed swap survives" "NEW"
@@ -366,11 +364,11 @@ let test_crash_reverted_rename_restores_victim () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "final") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "OLD" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "tmp") (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "NEW" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.rename (fs / "tmp") (fs / "final");
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -393,11 +391,11 @@ let test_crash_uncommitted_mkdir_vanishes () =
   let post = Crash.post_crash ctl in
   Alcotest.(check bool) "uncommitted directory gone" true (absent (post / "d"))
 
-(* The metadata barrier commits the journal whole: the mkdir and the creation
-   inside it become durable together, and the file's synced bytes come back with
+(* Barriers on the root and on the new directory make the mkdir and the
+   creation inside it durable, and the file's synced bytes come back with
    them. Syncing the file alone would leave both directory entries pending, and
    the crash would take the whole subtree with them. *)
-let test_crash_sync_metadata_commits_mkdir () =
+let test_crash_sync_dir_commits_mkdir () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
@@ -406,7 +404,7 @@ let test_crash_sync_metadata_commits_mkdir () =
     (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "x" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "metadata barrier committed the enclosing mkdir" "x"
@@ -427,7 +425,7 @@ let test_crash_symlink_swap_reverts () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.symlink ~link_to:"releases/a" (fs / "current");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.symlink ~link_to:"releases/b" (fs / ".tmp");
   Eio.Path.rename (fs / ".tmp") (fs / "current");
   let post = Crash.post_crash ctl in
@@ -441,7 +439,7 @@ let test_crash_uncommitted_rmdir_restored () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.rmdir (fs / "d");
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
@@ -460,7 +458,7 @@ let test_crash_dir_rename_uncommitted_reverts () =
     (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.rename (fs / "stage") (fs / "final");
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -478,7 +476,7 @@ let test_crash_dir_rename_committed_moves () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
   Eio.Path.rename (fs / "stage") (fs / "final");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "subtree at the final path" "data"
@@ -496,18 +494,18 @@ let test_crash_held_subtree_follows_a_rename () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "stage");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Switch.run (fun sw ->
       let stage = Eio.Path.open_dir ~sw (fs / "stage") in
       Eio.Path.rename (fs / "stage") (fs / "final");
       Eio.Path.mkdir ~perm:0o755 (fs / "stage");
-      Crash.sync_metadata ctl;
+      sync_dirs fs;
       Eio.Path.with_open_out ~create:(`Exclusive 0o644) (stage / "img")
         (fun file ->
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "synced" ];
           Eio.File.sync file;
-          Crash.sync_metadata ctl;
+          sync_dirs fs;
           Eio.Path.save ~create:(`Exclusive 0o644)
             (fs / "stage" / "img")
             "other";
@@ -517,7 +515,7 @@ let test_crash_held_subtree_follows_a_rename () =
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "LOST!!" ]);
       Eio.Path.mkdir ~perm:0o755 (fs / "later");
-      Crash.sync_metadata ctl);
+      sync_dirs fs);
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the held subtree's file keeps what it synced" "synced"
@@ -599,13 +597,6 @@ let test_crash_survive_prefix_rule () =
     "rejected mkdir cuts the journal before the accepted create" true
     (absent (post / "d"))
 
-(* Directory operations count as durability ops for the [Nth_op] trigger. *)
-let test_crash_nth_op_counts_dir_ops () =
-  let ctl = Crash.v ~policy:Drop_unsynced ~trigger:(Crash.Nth_op 1) () in
-  with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio.Path.mkdir ~perm:0o755 (fs / "d");
-  Alcotest.(check bool) "mkdir fired the trigger" true (Crash.is_crashed ctl)
-
 (* A file whose bytes were synced and whose name a barrier on its directory
    made durable keeps its bytes, even behind an older operation in another
    directory still pending: the image a crash rebuilds from that pending
@@ -615,7 +606,7 @@ let test_crash_synced_file_behind_older_pending_entry () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "d1");
   Eio.Path.mkdir ~perm:0o755 (fs / "d2");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "d2" / "b") "b";
   Eio.Path.with_open_out ~create:(`Exclusive 0o644)
     (fs / "d1" / "a")
@@ -632,15 +623,12 @@ let test_crash_synced_file_behind_older_pending_entry () =
    the one the crash left. A process killed at that point does nothing more
    either, so a cleanup handler the failure runs cannot undo the crash. *)
 let test_crash_stops_directory_ops () =
-  let ctl =
-    Crash.v ~policy:(Crash.Survive (fun _ -> true)) ~trigger:(Crash.Nth_op 4) ()
-  in
+  let ctl = Crash.v ~policy:(Crash.Survive (fun _ -> true)) () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "x") "x";
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
   Eio.Path.mkdir ~perm:0o755 (fs / "e");
-  Alcotest.(check bool)
-    "the fourth op fired the trigger" true (Crash.is_crashed ctl);
+  Crash.crash ctl;
   let refused label f =
     Alcotest.(check bool)
       label true
@@ -789,7 +777,7 @@ let test_crash_streaming_write_offsets () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "f") (fun file ->
       Eio.Flow.copy_string "abcdef" file;
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   streaming_writes fs;
   Alcotest.(check (list (pair int int)))
     "logged where they landed"
@@ -805,13 +793,11 @@ let test_crash_streaming_write_offsets () =
 (* The schedule is told the same offsets. *)
 let test_streaming_write_offsets () =
   let offsets = ref [] in
-  let schedule =
-    Schedule.observing
-      (fun op ->
-        if op.Op.kind = `Write then offsets := op.file_offset :: !offsets)
-      Schedule.empty
+  let hook (op : Op.t) =
+    if op.kind = `Write then offsets := op.file_offset :: !offsets;
+    None
   in
-  with_chaos schedule @@ fun ~raw ~chaos ->
+  with_chaos hook @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "abcdef";
   streaming_writes chaos;
   Alcotest.(check (list int)) "write offsets" [ 2; 6 ] (List.rev !offsets);
@@ -828,7 +814,7 @@ let test_crash_truncation_kind () =
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (fs / "f") (fun file ->
       Eio.Flow.copy_string "abc" file;
       Eio.File.sync file);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.with_open_out ~create:`Never (fs / "f") (fun file ->
       Eio.File.truncate file (i63 1);
       Eio.File.pwrite_all file ~file_offset:(i63 1) [ Cstruct.of_string "Z" ]);
@@ -849,7 +835,7 @@ let test_crash_dir_sync_keeps_a_pending_rename () =
         [ Cstruct.of_string "synced" ];
       Eio.File.sync file;
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "LOST" ]);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.rename (fs / "f") (fs / "g");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "x" / "h") "h";
   Eio.Path.sync_dir (fs / "x");
@@ -872,7 +858,7 @@ let test_crash_dir_sync_keeps_a_pending_replacement () =
   in
   synced "a" "A";
   synced "b" "B";
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.rename (fs / "b") (fs / "a");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "x" / "h") "h";
   Eio.Path.sync_dir (fs / "x");
@@ -890,7 +876,7 @@ let test_crash_write_only_file () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "AAAA" ];
       Eio.File.sync file;
       Eio.File.pwrite_all file ~file_offset:(i63 4) [ Cstruct.of_string "BBBB" ]);
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check int)
     "write-only mode preserved after rewrite" 0o200
@@ -917,7 +903,7 @@ let test_crash_readonly_real () =
           Eio.File.sync file;
           Eio.File.pwrite_all file ~file_offset:(i63 4)
             [ Cstruct.of_string "BBBB" ]);
-      Crash.sync_metadata ctl)
+      sync_dirs fs)
     ~check:(fun post ->
       Alcotest.(check string)
         "real fs: read-only file rewritten to its synced prefix" "AAAA"
@@ -940,7 +926,7 @@ let test_crash_closed_subtree_real () =
               Eio.File.sync file;
               Eio.File.pwrite_all file ~file_offset:(i63 4)
                 [ Cstruct.of_string "junk" ]));
-      Crash.sync_metadata ctl)
+      sync_dirs fs)
     ~check:(fun post ->
       Alcotest.(check string)
         "real fs: read-only subtree-staged file rewritten" "data"
@@ -988,7 +974,7 @@ let test_crash_cancelled_real () =
           Eio.File.sync file;
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "BBBB" ]);
-      Crash.sync_metadata ctl;
+      sync_dirs fs;
       match
         Eio.Cancel.sub (fun cc ->
             Eio.Cancel.cancel cc Exit;
@@ -1015,7 +1001,7 @@ let test_crash_replaced_under_pending_real () =
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "old" ];
           Eio.File.sync file);
-      Crash.sync_metadata ctl;
+      sync_dirs fs;
       Eio.Path.with_open_out ~create:(`Exclusive 0o644)
         (fs / "refs" / "x.lock")
         (fun file ->
@@ -1045,7 +1031,7 @@ let test_crash_rename_revert_real () =
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "NEW" ];
           Eio.File.sync file);
-      Crash.sync_metadata ctl;
+      sync_dirs fs;
       Eio.Path.rename (fs / "tmp") (fs / "final"))
     ~check:(fun post ->
       Alcotest.(check string)
@@ -1068,7 +1054,7 @@ let test_crash_write_through_a_symlink () =
   let fs = Crash.wrap ctl raw in
   overwrite (fs / "link") "NEW";
   Eio.Path.mkdir ~perm:0o755 (fs / "x");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the target's write is lost" "old"
@@ -1106,7 +1092,7 @@ let test_crash_sync_through_a_directory_handle () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   write_new ~sync:true (fs / "d" / "f") "data";
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_in ~sw (fs / "d") in
@@ -1157,16 +1143,7 @@ let test_crash_sync_retry_after_failure () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") (String.make 12288 'a');
     Eio.Path.sync_dir fs;
-    let sched =
-      Schedule.scripted
-        [
-          {
-            trigger = Op_on_path { kind = `Sync; path = "f" };
-            fault = Sync_error `Eio;
-          };
-        ]
-    in
-    let cfs = Chaos.wrap sched fs in
+    let cfs = Chaos.wrap (at `Sync "f" (Fail `Eio)) fs in
     Eio.Path.with_open_out ~create:`Never (cfs / "f") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0)
           [ Cstruct.of_string "record" ];
@@ -1187,16 +1164,9 @@ let test_crash_sync_failure_beneath () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let sched =
-    Schedule.scripted
-      [
-        {
-          trigger = Nth_op_on_path { n = 2; kind = `Sync; path = "f" };
-          fault = Sync_error `Eio;
-        };
-      ]
+  let fs =
+    Crash.wrap ctl (Chaos.wrap (at ~nth:2 `Sync "f" (Fail `Eio)) env#fs)
   in
-  let fs = Crash.wrap ctl (Chaos.wrap sched env#fs) in
   write_new ~sync:true (fs / "f") "";
   Eio.Path.sync_dir fs;
   Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
@@ -1241,7 +1211,7 @@ let test_crash_omits_a_write_through_a_bare_descriptor () =
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "AAAA" ];
           Eio.File.sync file;
-          Crash.sync_metadata ctl;
+          sync_dirs fs;
           (* through the wrapper: unsynced, journalled, kept by this policy *)
           Eio.File.pwrite_all file ~file_offset:(i63 4)
             [ Cstruct.of_string "BBBB" ];
@@ -1275,7 +1245,7 @@ let test_crash_ignores_a_barrier_through_a_bare_descriptor () =
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "AAAA" ];
           Eio.File.sync file;
-          Crash.sync_metadata ctl;
+          sync_dirs fs;
           Eio.File.pwrite_all file ~file_offset:(i63 4)
             [ Cstruct.of_string "BBBB" ];
           Eio_unix.Fd.use_exn "bare descriptor" (carried_over_fd file)
@@ -1312,7 +1282,7 @@ let test_crash_drops_an_entry_planted_by_native_name () =
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "AAAA" ];
           Eio.File.sync file);
-      Crash.sync_metadata ctl;
+      sync_dirs fs;
       (* by name, as a child process writing into the tree would: the wrapper
          is not on the path this write takes *)
       planted := Eio.Path.native_exn (fs / "device.img");
@@ -1330,19 +1300,25 @@ let test_crash_drops_an_entry_planted_by_native_name () =
         "an entry planted by name after the wrap is not in the image" true
         (absent (post / "device.img")))
 
-(* The same plant under [Kept]: a workload whose processes write the tree
-   beside the wrapper keeps their writes, as a disk keeps what a process that
-   syncs its own writes left there. *)
+(* A cut over a host directory, through the public controller. *)
+let with_real_cut policy fn ~check =
+  with_real_dir @@ fun real ->
+  let ctl = Chaos.Crash.v policy in
+  fn (Chaos.Crash.wrap ctl real);
+  check (Chaos.Crash.cut ctl)
+
+(* A workload whose processes write the tree by name beside the wrapper
+   keeps their writes, as a disk keeps what a process that syncs its own
+   writes left there. *)
 let test_crash_keeps_an_entry_planted_by_native_name () =
-  let ctl = Crash.v ~policy:Drop_unsynced ~outside:Kept () in
-  with_real_crash ctl
+  with_real_cut Drop_unsynced
     (fun fs ->
       Eio.Path.with_open_out ~create:(`Exclusive 0o600) (fs / "img")
         (fun file ->
           Eio.File.pwrite_all file ~file_offset:(i63 0)
             [ Cstruct.of_string "AAAA" ];
           Eio.File.sync file);
-      Crash.sync_metadata ctl;
+      sync_dirs fs;
       Eio.Path.with_open_out ~create:(`Or_truncate 0o600) (fs / "img")
         (fun file ->
           Eio.File.pwrite_all file ~file_offset:(i63 0)
@@ -1364,8 +1340,7 @@ let test_crash_keeps_an_entry_planted_by_native_name () =
    barrier the rename is lost, and the image holds the child's file, never no
    file. *)
 let rename_over_a_childs_file ~barrier =
-  let ctl = Crash.v ~policy:Drop_unsynced ~outside:Kept () in
-  with_real_crash ctl
+  with_real_cut Drop_unsynced
     (fun fs ->
       let dir = Eio.Path.native_exn fs ^ "/made" in
       Unix.mkdir dir 0o755;
@@ -1467,14 +1442,14 @@ let test_crash_public_controller_keeps_a_childs_entry () =
    file a child rewrites between the snapshot's stat and its read is read as
    it stands, one of the images the rewrite passes through, and a snapshot is
    no failure of the workload. The rewrite through [raw], once the snapshot
-   reads the file, stands in for the child. *)
+   the wrap takes reads the file, stands in for the child. *)
 let test_crash_snapshot_reads_a_file_being_rewritten () =
   let ctl = Crash.v () in
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let raw = env#fs in
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "img") "AAAAAAAA";
-  let armed = ref false in
+  let armed = ref true in
   let rewrite (op : Op.t) =
     match op.kind with
     | `Read when !armed && String.equal (Filename.basename op.path) "img" ->
@@ -1483,40 +1458,19 @@ let test_crash_snapshot_reads_a_file_being_rewritten () =
     | _ -> ()
   in
   let fs =
-    Crash.wrap ctl (Chaos.wrap (Schedule.observing rewrite Schedule.empty) raw)
+    Crash.wrap ctl
+      (Chaos.wrap
+         (fun op ->
+           rewrite op;
+           None)
+         raw)
   in
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
-  armed := true;
-  Crash.sync_metadata ctl;
   Alcotest.(check bool) "the rewrite ran during the snapshot" false !armed;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the image holds the file as it stood" "BB"
     (Eio.Path.load (post / "img"))
-
-(* An [After_write] trigger crashes the moment the covering write commits; the
-   next op through the wrapper fails, and the unsynced block is lost. *)
-let test_crash_after_write_trigger () =
-  let ctl =
-    Crash.v ~policy:Drop_unsynced
-      ~trigger:(Crash.After_write { path = "img"; file_offset = 0 })
-      ()
-  in
-  with_crash ctl @@ fun ~raw:_ ~fs ->
-  (try
-     Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (fs / "img")
-       (fun file ->
-         Eio.File.pwrite_all file ~file_offset:(i63 0)
-           [ Cstruct.of_string "block" ];
-         (* the crash has fired; a further op must fail *)
-         Eio.File.pwrite_all file ~file_offset:(i63 5)
-           [ Cstruct.of_string "more" ])
-   with Eio.Io _ -> ());
-  Alcotest.(check bool) "crash fired on the write" true (Crash.is_crashed ctl);
-  let post = Crash.post_crash ctl in
-  Alcotest.(check bool)
-    "uncommitted file gone after auto-crash" true
-    (absent (post / "img"))
 
 (* {2 A wrapper hands out nothing behind it}
 
@@ -1537,12 +1491,12 @@ let each_without (Eio.Resource.T (v, ops)) fn =
       fn k (Eio.Resource.T (v, Eio.Resource.handler rest)))
     bindings
 
-let every_op fault =
-  Schedule.scripted
-    (List.init 64 (fun n -> { Schedule.trigger = Nth_op (n + 1); fault }))
+(* Every operation of [kinds] fails with [code]. *)
+let every kinds code (op : Op.t) =
+  if List.mem op.kind kinds then Some (Chaos.Fault.Fail code) else None
 
 let test_wrapped_dir_hides_its_base () =
-  with_chaos (every_op (Open_error `Eacces)) @@ fun ~raw ~chaos ->
+  with_chaos (every [ `Open_read; `Open_write ] `Eacces) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "base";
   let dir, path = chaos in
   each_without dir (fun k stripped ->
@@ -1562,7 +1516,7 @@ let test_wrapped_dir_hides_its_base () =
     (Eio.Path.load (raw / "f"))
 
 let test_wrapped_file_hides_its_base () =
-  with_chaos (every_op (Write_error `Eio)) @@ fun ~raw ~chaos ->
+  with_chaos (every [ `Write; `Truncate ] `Eio) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "base";
   Eio.Path.with_open_out ~create:`Never (chaos / "f") @@ fun file ->
   each_without file (fun k stripped ->
@@ -1599,7 +1553,7 @@ let test_crash_file_hides_its_base () =
    lands in the tree both share, as a rename between two directories of one
    in-memory filesystem does. *)
 let test_rename_into_a_wrapper () =
-  with_chaos Schedule.empty @@ fun ~raw ~chaos ->
+  with_chaos (fun _ -> None) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "a") "moved";
   Eio.Path.rename (raw / "a") (chaos / "b");
   Alcotest.(check string) "at its new name" "moved" (Eio.Path.load (raw / "b"));
@@ -1654,8 +1608,6 @@ let suite =
         test_crash_pointer_without_data;
       Alcotest.test_case "crash: seeded determinism" `Quick
         test_crash_determinism;
-      Alcotest.test_case "crash: after-write trigger" `Quick
-        test_crash_after_write_trigger;
       Alcotest.test_case "pre-existing file synced after the wrap" `Quick
         (preexisting_file_synced_after_wrap ~policy:Crash.Drop_unsynced
            ~pending_entry:false);
@@ -1693,14 +1645,14 @@ let suite =
         test_crash_file_sync_leaves_metadata_pending;
       Alcotest.test_case "crash: uncommitted rename reverts" `Quick
         test_crash_uncommitted_rename_reverts;
-      Alcotest.test_case "crash: sync_metadata commits rename" `Quick
-        test_crash_sync_metadata_commits_rename;
+      Alcotest.test_case "crash: sync_dir commits rename" `Quick
+        test_crash_sync_dir_commits_rename;
       Alcotest.test_case "crash: reverted rename restores victim" `Quick
         test_crash_reverted_rename_restores_victim;
       Alcotest.test_case "crash: uncommitted mkdir vanishes" `Quick
         test_crash_uncommitted_mkdir_vanishes;
-      Alcotest.test_case "crash: sync_metadata commits mkdir" `Quick
-        test_crash_sync_metadata_commits_mkdir;
+      Alcotest.test_case "crash: sync_dir commits mkdir" `Quick
+        test_crash_sync_dir_commits_mkdir;
       Alcotest.test_case "crash: uncommitted symlink vanishes" `Quick
         test_crash_uncommitted_symlink_vanishes;
       Alcotest.test_case "crash: symlink swap reverts" `Quick
@@ -1715,8 +1667,6 @@ let suite =
         test_crash_held_subtree_follows_a_rename;
       Alcotest.test_case "crash: survive prefix rule" `Quick
         test_crash_survive_prefix_rule;
-      Alcotest.test_case "crash: nth-op counts dir ops" `Quick
-        test_crash_nth_op_counts_dir_ops;
       Alcotest.test_case "crash: no directory op after the crash" `Quick
         test_crash_stops_directory_ops;
       Alcotest.test_case "crash: a synced file behind an older pending entry"
@@ -1747,8 +1697,8 @@ let suite =
         `Quick test_crash_omits_a_write_through_a_bare_descriptor;
       Alcotest.test_case "crash: a bare descriptor's barrier is not the model's"
         `Quick test_crash_ignores_a_barrier_through_a_bare_descriptor;
-      Alcotest.test_case "crash: an entry planted by name is not in the image"
-        `Quick test_crash_drops_an_entry_planted_by_native_name;
+      Alcotest.test_case "crash: an entry planted by name is dropped" `Quick
+        test_crash_drops_an_entry_planted_by_native_name;
       Alcotest.test_case "crash: kept, an entry planted by name is in the image"
         `Quick test_crash_keeps_an_entry_planted_by_native_name;
       Alcotest.test_case "crash: kept, a barrier on a child's directory" `Quick

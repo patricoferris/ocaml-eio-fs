@@ -7,7 +7,7 @@
 
 open Envelope
 module Crash = Eio_fs.Chaos.Private.Crash
-module Chaos = Eio_fs.Chaos.Private
+module Chaos = Eio_fs.Chaos
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
@@ -63,16 +63,13 @@ let exec_op ~sw ~ctl ~cw ~handles ~dhandles op =
           Eio_fs_sync.Barrier.sync_file Eio_fs_sync.Barrier.portable f)
   | Fsync_dir x -> Eio.Path.sync_dir (p x)
   | Fsync_fail x ->
-      let sched =
-        Chaos.Schedule.scripted
-          [
-            {
-              trigger = Op_on_path { kind = `Sync; path = snd (cw / x) };
-              fault = Sync_error `Eio;
-            };
-          ]
+      let path = snd (cw / x) in
+      let fail (op : Chaos.Op.t) =
+        if op.kind = `Sync && String.equal op.path path && op.nth = 1 then
+          Some (Chaos.Fault.Fail `Eio)
+        else None
       in
-      let xw = Chaos.wrap sched cw in
+      let xw = Chaos.wrap fail cw in
       Eio.Path.with_open_out ~create:`Never (xw / x) Eio.File.sync
   | Sync_meta -> Crash.sync_metadata ctl
   | Hopen (h, x) ->

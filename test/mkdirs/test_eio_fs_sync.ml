@@ -97,12 +97,11 @@ let test_barrier_retry () =
   let target = fs / "a" in
   let parent, _ = Option.get (Eio.Path.split target) in
   let _, path = parent in
-  let module Chaos = Eio_fs.Chaos.Private in
-  let schedule =
-    Chaos.Schedule.scripted
-      [
-        { trigger = Op_on_path { kind = `Sync; path }; fault = Sync_error `Eio };
-      ]
+  let module Chaos = Eio_fs.Chaos in
+  let schedule (op : Chaos.Op.t) : Chaos.Fault.t option =
+    if op.kind = `Sync && String.equal op.path path && op.nth = 1 then
+      Some (Fail `Eio)
+    else None
   in
   let faulted = Chaos.wrap schedule fs in
   (match Eio_fs_sync.mkdirs ~perm:0o700 (faulted / "a") with
@@ -124,15 +123,12 @@ let test_racing_prefix () =
   Eio.Path.sync_dir fs;
   let _, parent_path = fs / "a" in
   let raced = ref false in
-  let module Chaos = Eio_fs.Chaos.Private in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun (op : Chaos.Op.t) ->
-        if op.kind = `Stat && String.equal op.path parent_path && not !raced
-        then (
-          raced := true;
-          Eio.Path.mkdir ~perm:0o755 (fs / "a" / "b")))
-      Chaos.Schedule.empty
+  let module Chaos = Eio_fs.Chaos in
+  let schedule (op : Chaos.Op.t) =
+    if op.kind = `Stat && String.equal op.path parent_path && not !raced then (
+      raced := true;
+      Eio.Path.mkdir ~perm:0o755 (fs / "a" / "b"));
+    None
   in
   let observed = Chaos.wrap schedule fs in
   Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 (observed / "a" / "b");
@@ -193,11 +189,10 @@ let test_posix_symbolic_link () =
   Eio_fs_unix.sync_dir root;
   Eio.Path.with_open_dir root @@ fun anchor ->
   let syncs = ref 0 in
-  let module Chaos = Eio_fs.Chaos.Private in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun (op : Chaos.Op.t) -> if op.kind = `Sync then incr syncs)
-      Chaos.Schedule.empty
+  let module Chaos = Eio_fs.Chaos in
+  let schedule (op : Chaos.Op.t) =
+    if op.kind = `Sync then incr syncs;
+    None
   in
   let observed = Chaos.wrap schedule anchor in
   List.iter
@@ -228,12 +223,10 @@ let test_parent_order () =
       in
       Eio.Path.mkdirs ~perm:0o755 target;
       let syncs = ref [] in
-      let module Chaos = Eio_fs.Chaos.Private in
-      let schedule =
-        Chaos.Schedule.observing
-          (fun (op : Chaos.Op.t) ->
-            if op.kind = `Sync then syncs := op.path :: !syncs)
-          Chaos.Schedule.empty
+      let module Chaos = Eio_fs.Chaos in
+      let schedule (op : Chaos.Op.t) =
+        if op.kind = `Sync then syncs := op.path :: !syncs;
+        None
       in
       let _, target_path = target in
       let observed = Chaos.wrap schedule fs in
@@ -261,12 +254,10 @@ let test_borrowed_root () =
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "anchor");
   Eio.Path.with_open_dir (fs / "anchor") (fun anchor ->
       let syncs = ref [] in
-      let module Chaos = Eio_fs.Chaos.Private in
-      let schedule =
-        Chaos.Schedule.observing
-          (fun (op : Chaos.Op.t) ->
-            if op.kind = `Sync then syncs := op.path :: !syncs)
-          Chaos.Schedule.empty
+      let module Chaos = Eio_fs.Chaos in
+      let schedule (op : Chaos.Op.t) =
+        if op.kind = `Sync then syncs := op.path :: !syncs;
+        None
       in
       let local = Chaos.wrap schedule anchor in
       Eio_fs_sync.mkdirs ~perm:0o700 (local / "child" / "leaf");

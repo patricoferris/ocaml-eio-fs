@@ -7,8 +7,8 @@
    the end of its switch. *)
 
 open Eio.Std
-module Chaos = Eio_fs.Chaos.Private
-module Law = Chaos.Law
+module Chaos = Eio_fs.Chaos
+module Law = Chaos.Private.Law
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
@@ -62,7 +62,7 @@ let both_handlers () =
   let base = Eio_fs.Fs.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (base / "f") "x";
   Eio.Path.mkdir ~perm:0o755 (base / "d");
-  let wrapped = Chaos.wrap Chaos.Schedule.empty base in
+  let wrapped = Chaos.wrap (fun _ -> None) base in
   (handlers base, handlers wrapped)
 
 let bound s =
@@ -241,10 +241,9 @@ let rec pp_step ppf = function
 let slots = 3
 
 type side = {
-  dirs : [ `Close | Eio.Fs.dir_ty ] r option array;
+  dirs : Eio.Fs.dir_ty r option array;
   files : (Eio.File.ro_ty r * bool) option array; (* writable *)
-  mutable opened :
-    [ `File of Eio.File.ro_ty r | `Dir of [ `Close | Eio.Fs.dir_ty ] r ] list;
+  mutable opened : [ `File of Eio.File.ro_ty r | `Dir of Eio.Fs.dir_ty r ] list;
   mutable kinds : Chaos.Op.kind list;
       (* the wrapper asked about, latest first *)
   wrapped : bool;
@@ -383,6 +382,7 @@ let rec exec side ~sw step =
           dir =
             (fun (type a) (module D : Eio.Fs.Pi.DIR with type t = a) (v : a) ->
               let sub = D.open_subtree v ~sw (at d p) in
+              let sub = (sub :> Eio.Fs.dir_ty r) in
               side.dirs.(n) <- Some sub;
               opened side (`Dir sub);
               "opened");
@@ -556,9 +556,12 @@ let rec exec side ~sw step =
   | Close_dir d -> (
       match side.dirs.(d) with
       | None -> "no directory"
-      | Some dir ->
-          Eio.Resource.close dir;
-          "closed")
+      | Some (Eio.Resource.T (v, ops)) -> (
+          match Eio.Resource.get_opt ops Eio.Resource.Close with
+          | Some close ->
+              close v;
+              "closed"
+          | None -> "no close"))
   | Read (f, n) ->
       on_read side f
         {
@@ -822,9 +825,10 @@ let record_run ?(fault = fun _ -> None) ?(crash = false) ~wrapped
         Fiber.yield ();
         if !live then fault op else None
       in
-      Chaos.wrap (Chaos.Schedule.hook hook)
-        (if crash then Chaos.Crash.wrap (Chaos.Crash.v ()) base else base)
-    else base
+      Chaos.wrap hook
+        (if crash then Chaos.Private.Crash.wrap (Chaos.Private.Crash.v ()) base
+         else base)
+    else (base :> Eio.Fs.dir_ty Eio.Path.t)
   in
   side.dirs.(0) <- Some (fst root);
   let steps = ref [] in
@@ -852,7 +856,7 @@ let record_run ?(fault = fun _ -> None) ?(crash = false) ~wrapped
       side.opened
   in
   let leaked =
-    match Chaos.Internal.descriptors base with
+    match Chaos.Private.Internal.descriptors base with
     | Some 0 | None -> leaked
     | Some n -> Fmt.str "%d descriptors" n :: leaked
   in
@@ -1104,14 +1108,14 @@ let test_generated () =
 (* {1 Under a fault} *)
 
 let faults : Chaos.Op.kind -> Chaos.Fault.t list = function
-  | `Read -> [ Read_error `Eio; Short_read 1 ]
-  | `Read_dir -> [ Read_error `Eio ]
-  | `Write -> [ Write_error `Enospc; Short_write 1; Torn_write 1 ]
-  | `Truncate -> [ Write_error `Eio ]
-  | `Sync -> [ Sync_error `Eio; Sync_evict `Eio ]
-  | `Open_read | `Open_write -> [ Open_error `Eacces; Swap_symlink "g" ]
-  | `Stat -> [ Stat_error `Eio; Swap_symlink "g" ]
-  | `Change -> [ Change_error `Erofs ]
+  | `Read -> [ Fail `Eio; Short 1 ]
+  | `Read_dir -> [ Fail `Eio ]
+  | `Write -> [ Fail `Enospc; Short 1; Torn 1 ]
+  | `Truncate -> [ Fail `Eio ]
+  | `Sync -> [ Fail `Eio; Evict `Eio ]
+  | `Open_read | `Open_write -> [ Fail `Eacces; Swap_symlink "g" ]
+  | `Stat -> [ Fail `Eio; Swap_symlink "g" ]
+  | `Change -> [ Fail `Erofs ]
 
 (* Each fault each operation of the use takes, injected there: whatever it
    cut short, nothing the run opened outlives its switch. *)

@@ -573,19 +573,13 @@ let test_append_retries_a_failed_parent_barrier () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let dir_syncs = ref 0 in
-  let schedule =
-    Eio_fs.Chaos.Private.Schedule.observing
-      (fun (op : Eio_fs.Chaos.Private.Op.t) ->
-        if op.kind = `Sync && op.path <> "log.jsonl" then incr dir_syncs)
-      (Eio_fs.Chaos.Private.Schedule.scripted
-         [
-           {
-             trigger = Op_on_path { kind = `Sync; path = "" };
-             fault = Sync_error `Eio;
-           };
-         ])
+  let schedule (op : Eio_fs.Chaos.Op.t) : Eio_fs.Chaos.Fault.t option =
+    if op.kind = `Sync && op.path <> "log.jsonl" then incr dir_syncs;
+    if op.kind = `Sync && String.equal op.path "" && op.nth = 1 then
+      Some (Fail `Eio)
+    else None
   in
-  let p = Eio_fs.Chaos.Private.wrap schedule env#fs / "log.jsonl" in
+  let p = Eio_fs.Chaos.wrap schedule env#fs / "log.jsonl" in
   (match Eio_fs_sync.append_lines p [ "1" ] with
   | () -> Alcotest.fail "the directory barrier did not fail"
   | exception Eio.Io _ -> ());
@@ -599,17 +593,13 @@ let test_append_retries_a_failed_parent_barrier () =
 let test_append_nothing_retries_the_barriers () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let module Chaos = Eio_fs.Chaos.Private in
-  let module Crash = Chaos.Crash in
+  let module Chaos = Eio_fs.Chaos in
+  let module Crash = Chaos.Private.Crash in
   let ctl = Crash.v () in
-  let schedule =
-    Chaos.Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Sync; path = "" };
-          fault = Sync_error `Eio;
-        };
-      ]
+  let schedule (op : Chaos.Op.t) : Chaos.Fault.t option =
+    if op.kind = `Sync && String.equal op.path "" && op.nth = 1 then
+      Some (Fail `Eio)
+    else None
   in
   let p = Chaos.wrap schedule (Crash.wrap ctl env#fs) / "log.jsonl" in
   (match Eio_fs_sync.append_lines p [ "1" ] with
@@ -640,19 +630,14 @@ let test_sparse_cost size =
   Eio.Path.mkdir ~perm:0o700 dir;
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree dir) @@ fun () ->
   let writes = ref [] in
-  let schedule =
-    Eio_fs.Chaos.Private.Schedule.observing
-      (fun (op : Eio_fs.Chaos.Private.Op.t) ->
-        if op.kind = `Write then
-          writes := (op.file_offset, op.length) :: !writes)
-      Eio_fs.Chaos.Private.Schedule.empty
+  let schedule (op : Eio_fs.Chaos.Op.t) =
+    if op.kind = `Write then writes := (op.file_offset, op.length) :: !writes;
+    None
   in
   (* The wrapper closes what it wraps: an opened directory, which the switch
      closes, not the root of [fs]. *)
   Eio.Switch.run @@ fun sw ->
-  let observed =
-    Eio_fs.Chaos.Private.wrap schedule (Eio.Path.open_dir ~sw dir)
-  in
+  let observed = Eio_fs.Chaos.wrap schedule (Eio.Path.open_dir ~sw dir) in
   Eio_fs_sync.publish_sparse ~max_bytes:(Int64.of_int size)
     ~exclusive:Eio_fs_unix.exclusive_rename ~size_bytes:(Int64.of_int size)
     (observed / "image")
@@ -682,12 +667,11 @@ let test_sparse_bounds_before_io () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let operations = ref [] in
-  let schedule =
-    Eio_fs.Chaos.Private.Schedule.observing
-      (fun op -> operations := op :: !operations)
-      Eio_fs.Chaos.Private.Schedule.empty
+  let schedule op =
+    operations := op :: !operations;
+    None
   in
-  let fs = Eio_fs.Chaos.Private.wrap schedule env#fs in
+  let fs = Eio_fs.Chaos.wrap schedule env#fs in
   let byte = Cstruct.of_string "x" in
   List.iter
     (fun (name, ceiling, size, spans, limit) ->
@@ -747,16 +731,12 @@ let test_sparse_write_failure () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   Eio.Path.save ~create:(`Exclusive 0o600) (env#fs / "image") "foreign bytes";
-  let schedule =
-    Eio_fs.Chaos.Private.Schedule.scripted
-      [
-        {
-          trigger = Op_on_path { kind = `Write; path = "draft" };
-          fault = Torn_write 1;
-        };
-      ]
+  let schedule (op : Eio_fs.Chaos.Op.t) : Eio_fs.Chaos.Fault.t option =
+    if op.kind = `Write && String.equal op.path "draft" && op.nth = 1 then
+      Some (Torn 1)
+    else None
   in
-  let fs = Eio_fs.Chaos.Private.wrap schedule env#fs in
+  let fs = Eio_fs.Chaos.wrap schedule env#fs in
   (match
      Eio_fs_sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
        ~size_bytes:16L (fs / "image")
@@ -798,16 +778,14 @@ let test_sparse_cancellation () =
   Eio.Path.save ~create:(`Exclusive 0o600) (env#fs / "image") "foreign bytes";
   let ready, start = Eio.Promise.create () in
   let blocked, hold = Eio.Promise.create () in
-  let schedule =
-    Eio_fs.Chaos.Private.Schedule.observing
-      (fun (op : Eio_fs.Chaos.Private.Op.t) ->
-        if op.kind = `Write then begin
-          Eio.Promise.resolve start ();
-          Eio.Promise.await blocked
-        end)
-      Eio_fs.Chaos.Private.Schedule.empty
+  let schedule (op : Eio_fs.Chaos.Op.t) =
+    if op.kind = `Write then begin
+      Eio.Promise.resolve start ();
+      Eio.Promise.await blocked
+    end;
+    None
   in
-  let fs = Eio_fs.Chaos.Private.wrap schedule env#fs in
+  let fs = Eio_fs.Chaos.wrap schedule env#fs in
   Eio.Fiber.first
     (fun () ->
       Eio_fs_sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
@@ -1133,18 +1111,16 @@ module Links = struct
   let test_durable_retry () =
     fixture @@ fun fs ->
     let module Crash = Eio_fs.Chaos.Private.Crash in
-    let module Chaos = Eio_fs.Chaos.Private in
+    let module Chaos = Eio_fs.Chaos in
     Eio.Path.symlink ~link_to:"../old" (fs / "portal");
     let ctl = Crash.v () in
     let disk = Crash.wrap ctl fs in
     let syncs = ref 0 in
-    let schedule =
-      Chaos.Schedule.observing
-        (fun (op : Chaos.Op.t) ->
-          if op.kind = `Sync then (
-            incr syncs;
-            if !syncs = 2 then failwith "fixture post-rename barrier"))
-        Chaos.Schedule.empty
+    let schedule (op : Chaos.Op.t) =
+      if op.kind = `Sync then (
+        incr syncs;
+        if !syncs = 2 then failwith "fixture post-rename barrier");
+      None
     in
     let faults = Chaos.wrap schedule disk in
     (match
@@ -1169,17 +1145,15 @@ module Links = struct
 
   let test_last_observation () =
     fixture @@ fun fs ->
-    let module Chaos = Eio_fs.Chaos.Private in
+    let module Chaos = Eio_fs.Chaos in
     Eio.Path.symlink ~link_to:"../old" (fs / "portal");
     let changed = ref false in
-    let schedule =
-      Chaos.Schedule.observing
-        (fun (op : Chaos.Op.t) ->
-          if op.kind = `Sync && not !changed then (
-            changed := true;
-            Eio.Path.unlink (fs / "portal");
-            Eio.Path.symlink ~link_to:"../foreign" (fs / "portal")))
-        Chaos.Schedule.empty
+    let schedule (op : Chaos.Op.t) =
+      if op.kind = `Sync && not !changed then (
+        changed := true;
+        Eio.Path.unlink (fs / "portal");
+        Eio.Path.symlink ~link_to:"../foreign" (fs / "portal"));
+      None
     in
     let faults = Chaos.wrap schedule fs in
     (match

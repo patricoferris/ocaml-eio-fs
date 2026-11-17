@@ -1,12 +1,12 @@
-(** Fuzz tests for {!Eio_fs.Chaos.Private}: crash-safety (only [Eio.Io] or
-    [End_of_file] ever escapes), determinism (a seeded schedule replays the same
-    outcome and bytes), the [Drop_unsynced] barrier invariant (the post-crash
-    image is the synced prefix and keeps its mode), and a reference model (an
-    arbitrary operation tape drives a crash-wrapped tree in lockstep with a pure
-    model of the journal, byte for byte). *)
+(** Fuzz tests for {!Eio_fs.Chaos}: crash-safety (only [Eio.Io] or [End_of_file]
+    ever escapes), determinism (faults drawn from a seed replay the same outcome
+    and bytes), the [Drop_unsynced] barrier invariant (the post-crash image is
+    the synced prefix and keeps its mode), and a reference model (an arbitrary
+    operation tape drives a crash-wrapped tree in lockstep with a pure model of
+    the journal, byte for byte). *)
 
 open Alcobar
-module Chaos = Eio_fs.Chaos.Private
+module Chaos = Eio_fs.Chaos
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
@@ -23,13 +23,27 @@ let write_blocks ?sync_after ~perm ~nblocks ~block path =
       done;
       if sync_after = None then Eio.File.sync file)
 
+(* Each operation meets, with [probability], a fault drawn from [seed]. *)
+let drawn ~seed ~probability =
+  let rng = Random.State.make [| seed |] in
+  fun (op : Chaos.Op.t) : Chaos.Fault.t option ->
+    if Random.State.float rng 1. >= probability then None
+    else
+      let n =
+        if op.length <= 1 then 1 else 1 + Random.State.int rng (op.length - 1)
+      in
+      match Random.State.int rng 4 with
+      | 0 -> Some (Short n)
+      | 1 -> Some (Torn n)
+      | 2 -> Some (Fail `Eio)
+      | _ -> Some (Fail `Eacces)
+
 (* A run of block writes, a sync, then a read-back, over a chaos-wrapped
    in-memory filesystem: the outcome, and the bytes that reached the store. *)
 let run_workload ~seed ~probability ~nblocks ~block ~read_only ~via_subtree =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let schedule = Chaos.Schedule.seeded ~seed ~probability () in
-  let fs = Chaos.wrap schedule env#fs in
+  let fs = Chaos.wrap (drawn ~seed ~probability) env#fs in
   let perm = if read_only then 0o444 else 0o644 in
   let rel = if via_subtree then "stage/f" else "f" in
   let write_blocks = write_blocks ~perm ~nblocks ~block in
@@ -81,7 +95,7 @@ let test_crash_safety_and_determinism seed prob_pct nblocks block access
   in
   check_eq ~pp:outcome ~eq:( = ) a b
 
-module Crash = Chaos.Crash
+module Crash = Chaos.Private.Crash
 
 (* Write [nblocks] contiguous [block]-byte blocks, syncing once after block
    [sync_after], then crash under [policy] and return the post-crash image and
@@ -102,9 +116,10 @@ let post_crash_image ~policy ~nblocks ~block ~sync_after ~read_only ~via_subtree
         write_blocks Eio.Path.(stage / "f"))
   end
   else write_blocks (fs / "f");
-  (* The store's directory barrier, pinning the new name; what the file holds
-     is the file sync's business, settled block by block above. *)
-  Crash.sync_metadata ctl;
+  (* The store's directory barriers, pinning the new name; what the file
+     holds is the file sync's business, settled block by block above. *)
+  Eio.Path.sync_dir fs;
+  if via_subtree then Eio.Path.sync_dir (fs / "stage");
   (* A truncating reopen of a writable file discards the durable bytes and
      overwrites the head, all unsynced. *)
   if trunc_reopen && not read_only then
@@ -869,19 +884,20 @@ let test_publish_is_atomic old_body new_body =
    there. A save that destroys the previous value on its way to failing is the
    worst outcome: the caller is told the save failed and has also lost what it
    had. *)
-let test_failed_save_preserves_old seed old_body new_body =
+let test_failed_save_preserves_old old_body new_body =
   let cap s = if String.length s > 1024 then String.sub s 0 1024 else s in
   let old_body = cap old_body and new_body = cap new_body in
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   (* Write the original through a clean view, then fault the replacement. *)
   publish_string Eio.Path.(env#fs / "f") old_body;
-  let sched =
-    Eio_fs.Chaos.Private.Schedule.seeded ~probability:1.0
-      ~kinds:[ `Write_error; `Sync_error ]
-      ~seed ()
+  let refuse (op : Chaos.Op.t) : Chaos.Fault.t option =
+    match op.kind with
+    | `Write -> Some (Fail `Enospc)
+    | `Sync -> Some (Fail `Eio)
+    | _ -> None
   in
-  let hostile = Eio_fs.Chaos.Private.wrap sched env#fs in
+  let hostile = Chaos.wrap refuse env#fs in
   (try publish_string Eio.Path.(hostile / "f") new_body
    with Eio.Io _ | Sys_error _ -> ());
   match Eio.Path.kind ~follow:false Eio.Path.(env#fs / "f") with
@@ -938,5 +954,5 @@ let suite =
       test_case "publish survives a crash whole or not at all" [ bytes; bytes ]
         test_publish_is_atomic;
       test_case "a failed publish leaves the old content intact"
-        [ int; bytes; bytes ] test_failed_save_preserves_old;
+        [ bytes; bytes ] test_failed_save_preserves_old;
     ] )

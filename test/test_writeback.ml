@@ -1,14 +1,15 @@
 (* The crash model's writeback: which blocks, sectors and lengths a power cut
    keeps of the writes no sync made durable. *)
 
-module Chaos = Eio_fs.Chaos.Private
-module Schedule = Chaos.Schedule
-module Fault = Chaos.Fault
-module Op = Chaos.Op
-module Crash = Chaos.Crash
+module Chaos = Eio_fs.Chaos
+module Crash = Chaos.Private.Crash
 open Chaos_helpers
 
 let ( / ) = Eio.Path.( / )
+
+(* Every sync fails with [EIO]. *)
+let fail_syncs (op : Chaos.Op.t) =
+  if op.kind = `Sync then Some (Chaos.Fault.Fail `Eio) else None
 
 (* {2 Writeback in blocks} *)
 
@@ -73,7 +74,7 @@ let test_crash_rename_over_an_open_file () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   write_new ~sync:true (fs / "b") "old";
   write_new ~sync:true (fs / "a") "other";
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_out ~sw ~create:`Never (fs / "b") in
       Eio.File.pwrite_all h ~file_offset:(i63 0) [ Cstruct.of_string "NEW" ];
@@ -118,7 +119,7 @@ let test_crash_over_a_user_view () =
   let fs = Crash.wrap ctl (a / "home") in
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
   write_new ~sync:true (fs / "d/f") "x";
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.chmod ~follow:true ~perm:0o600 (fs / "d");
   Eio.Path.mkdir ~perm:0o755 (fs / "e");
   Eio.Path.chmod ~follow:true ~perm:0o000 (fs / "e");
@@ -129,19 +130,22 @@ let test_crash_over_a_user_view () =
     (List.sort String.compare (Eio.Path.read_dir (root / "home")));
   Alcotest.(check string) "d/f" "x" (Eio.Path.load (root / "home/d/f"))
 
-(* A crash rebuilds each entry with its owner. *)
+(* A crash rebuilds each entry with its owner: entries the disk held, removed
+   through the wrapper with no barrier, come back as they were. *)
 let test_crash_restores_owners () =
   Eio_mock.Backend.run @@ fun () ->
   let root = Eio_fs.Fs.v () in
+  write_new ~sync:true (root / "f") "x";
+  Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (root / "f");
+  Eio.Path.mkdir ~perm:0o700 (root / "d");
+  Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (root / "d");
+  Eio.Path.symlink ~link_to:"f" (root / "l");
+  Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (root / "l");
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl root in
-  write_new ~sync:true (fs / "f") "x";
-  Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (fs / "f");
-  Eio.Path.mkdir ~perm:0o700 (fs / "d");
-  Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (fs / "d");
-  Eio.Path.symlink ~link_to:"f" (fs / "l");
-  Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (fs / "l");
-  Crash.sync_metadata ctl;
+  Eio.Path.unlink (fs / "f");
+  Eio.Path.rmdir (fs / "d");
+  Eio.Path.unlink (fs / "l");
   let post = Crash.post_crash ctl in
   let owner p =
     let s = Eio.Path.stat ~follow:false (post / p) in
@@ -191,7 +195,7 @@ let test_crash_chmod_journaled () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "k";
     Eio.Path.mkdir ~perm:0o755 (fs / "d");
-    Crash.sync_metadata ctl;
+    sync_dirs fs;
     Eio.Path.chmod ~follow:true ~perm:0o600 (fs / "f");
     Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (fs / "f");
     Eio.Path.chmod ~follow:true ~perm:0o700 (fs / "d");
@@ -231,7 +235,7 @@ let test_crash_synced_mode_follows_the_file () =
   let ctl = Crash.v () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   write_new ~sync:true (fs / "b") "x";
-  Crash.sync_metadata ctl;
+  sync_dirs fs;
   Eio.Path.chmod ~follow:true ~perm:0o777 (fs / "b");
   Eio.Path.rename (fs / "b") (fs / "l");
   Eio.Path.chmod ~follow:true ~perm:0o700 (fs / "l");
@@ -514,7 +518,7 @@ let test_crash_move_needs_ancestor_moves () =
         | `Dir -> p ^ "/"
         | `File s -> p ^ "=" ^ s
         | `Link t -> p ^ "->" ^ t)
-      (Eio_fs.Chaos.Private.Internal.crash_image
+      (Chaos.Private.Internal.crash_image
          (Crash.crash ctl;
           ctl))
     |> List.sort String.compare
@@ -635,9 +639,9 @@ let test_crash_hole_lands_zeroed () =
     "zeroed hole, stale bytes" (true, true)
     (Hashtbl.mem seen "\000\000x", Hashtbl.mem seen "ABx")
 
-(* A user's write clears setgid: a crash keeps the old mode, unless
-   sync_metadata committed the journal since. *)
-let test_crash_sync_metadata_commits_cleared_mode () =
+(* A user's write clears setgid: a crash keeps the old mode, unless a sync
+   of the file committed the clear since. *)
+let test_crash_sync_commits_cleared_mode () =
   let run ~commit =
     Eio_mock.Backend.run @@ fun () ->
     let raw = Eio_fs.Fs.v () in
@@ -648,11 +652,12 @@ let test_crash_sync_metadata_commits_cleared_mode () =
     let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice raw) in
     Eio.Path.with_open_out ~create:`Never (fs / "g") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "x" ]);
-    if commit then Crash.sync_metadata ctl;
+    if commit then
+      Eio.Path.with_open_out ~create:`Never (fs / "g") Eio.File.sync;
     (Eio.Path.stat ~follow:false (Crash.post_crash ctl / "g")).perm
   in
   Alcotest.(check (pair int int))
-    "without, then with sync_metadata" (0o2775, 0o775)
+    "without, then with a sync" (0o2775, 0o775)
     (run ~commit:false, run ~commit:true)
 
 (* A chmod of a new directory, then a barrier on it: the chmod is listed as
@@ -684,15 +689,7 @@ let test_crash_failed_sync_keeps_truncation () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") init;
     Eio.Path.sync_dir fs;
-    let sched =
-      Schedule.scripted
-        [
-          {
-            trigger = Op_on_path { kind = `Sync; path = "f" };
-            fault = Sync_error `Eio;
-          };
-        ]
-    in
+    let sched = at `Sync "f" (Fail `Eio) in
     let cfs = Chaos.wrap sched fs in
     Eio.Path.with_open_out ~create:`Never (cfs / "f") (fun f ->
         Eio.File.truncate f (i63 0);
@@ -723,15 +720,7 @@ let test_crash_lost_page_kept_or_evicted () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "";
     Eio.Path.sync_dir fs;
-    let sched =
-      Schedule.scripted
-        [
-          {
-            trigger = Op_on_path { kind = `Sync; path = "f" };
-            fault = Sync_error `Eio;
-          };
-        ]
-    in
+    let sched = at `Sync "f" (Fail `Eio) in
     let cfs = Chaos.wrap sched fs in
     Eio.Path.with_open_out ~create:`Never (cfs / "f") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "rec1" ];
@@ -783,15 +772,7 @@ let test_crash_kept_truncation_length_only () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "WXYZ";
     Eio.Path.sync_dir fs;
-    let sched =
-      Schedule.scripted
-        [
-          {
-            trigger = Op_on_path { kind = `Sync; path = "f" };
-            fault = Sync_error `Eio;
-          };
-        ]
-    in
+    let sched = at `Sync "f" (Fail `Eio) in
     let cfs = Chaos.wrap sched fs in
     Eio.Path.with_open_out ~create:`Never (cfs / "f") (fun f ->
         work f;
@@ -842,15 +823,7 @@ let test_crash_partial_writeback () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "aaaa";
     Eio.Path.sync_dir fs;
-    let sched =
-      Schedule.scripted
-        [
-          {
-            trigger = Op_on_path { kind = `Sync; path = "f" };
-            fault = Sync_error `Eio;
-          };
-        ]
-    in
+    let sched = at `Sync "f" (Fail `Eio) in
     let cfs = Chaos.wrap sched fs in
     Eio.Path.with_open_out ~create:`Never (cfs / "f") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "BBCC" ];
@@ -876,9 +849,7 @@ let test_crash_second_failure () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   write_new ~sync:true (fs / "f") "xyz";
   Eio.Path.sync_dir fs;
-  let sched =
-    Schedule.seeded ~probability:1.0 ~kinds:[ `Sync_error ] ~seed:0 ()
-  in
+  let sched = fail_syncs in
   let cfs = Chaos.wrap sched fs in
   Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
       Eio.File.truncate f (i63 1);
@@ -905,15 +876,7 @@ let test_crash_durable_cut_frees_lost_pages () =
       with_crash ctl @@ fun ~raw:_ ~fs ->
       write_new ~sync:true (fs / "f") init;
       Eio.Path.sync_dir fs;
-      let sched =
-        Schedule.scripted
-          [
-            {
-              trigger = Op_on_path { kind = `Sync; path = "f" };
-              fault = Sync_error `Eio;
-            };
-          ]
-      in
+      let sched = at `Sync "f" (Fail `Eio) in
       let cfs = Chaos.wrap sched fs in
       Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
           List.iter
@@ -949,16 +912,8 @@ let test_crash_stacked_wrappers_relay_failure () =
     Eio_mock.Backend.run @@ fun () ->
     let raw = Eio_fs.Fs.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "pqr";
-    let mid = Chaos.wrap Schedule.empty (Crash.wrap ctl raw) in
-    let rule =
-      Schedule.scripted
-        [
-          {
-            trigger = Op_on_path { kind = `Sync; path = "/f" };
-            fault = Sync_error `Eio;
-          };
-        ]
-    in
+    let mid = Chaos.wrap (fun _ -> None) (Crash.wrap ctl raw) in
+    let rule = at `Sync "/f" (Fail `Eio) in
     Eio.Switch.run (fun sw ->
         let h = Eio.Path.open_out ~sw ~create:`Never (mid / "f") in
         Eio.File.pwrite_all h ~file_offset:(i63 0) [ Cstruct.of_string "A" ];
@@ -996,9 +951,7 @@ let lost_images ?(init = "pqr") steps =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") init;
     Eio.Path.sync_dir fs;
-    let sched =
-      Schedule.seeded ~probability:1.0 ~kinds:[ `Sync_error ] ~seed:0 ()
-    in
+    let sched = fail_syncs in
     let cfs = Chaos.wrap sched fs in
     Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
         List.iter
@@ -1150,9 +1103,9 @@ let images_over_old steps =
    free, and a new file's page may hold what it held there. *)
 let test_crash_removed_before_snapshot () =
   let images =
-    images_over_old (fun ctl fs ->
+    images_over_old (fun _ fs ->
         Eio.Path.unlink (fs / "old");
-        Crash.sync_metadata ctl;
+        sync_dirs fs;
         write_new (fs / "new") (String.make 512 'n'))
   in
   Alcotest.(check bool)
@@ -1394,7 +1347,7 @@ let test_crash_over_chaos_over_user () =
   Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (raw / "u");
   let ctl = Crash.v () in
   let fs =
-    Crash.wrap ctl (Chaos.wrap Schedule.empty (Eio_fs.Fs.as_user alice raw))
+    Crash.wrap ctl (Chaos.wrap (fun _ -> None) (Eio_fs.Fs.as_user alice raw))
   in
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "u" / "g") "y";
   let post = Crash.post_crash ctl in
@@ -1462,8 +1415,8 @@ let suite =
       Alcotest.test_case
         "crash: the hole a write past the end leaves can land zeroed" `Quick
         test_crash_hole_lands_zeroed;
-      Alcotest.test_case "crash: sync_metadata commits a write's setgid clear"
-        `Quick test_crash_sync_metadata_commits_cleared_mode;
+      Alcotest.test_case "crash: a sync commits a write's setgid clear" `Quick
+        test_crash_sync_commits_cleared_mode;
       Alcotest.test_case
         "crash: a reached chmod stays unsynced until its node is durable" `Quick
         test_crash_attrs_wait_for_their_node;

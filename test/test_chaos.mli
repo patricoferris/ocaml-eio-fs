@@ -1,4 +1,4 @@
-(** Fault-injection tests for {!Eio_fs.Chaos.Private}. *)
+(** Fault-injection tests for {!Eio_fs.Chaos.wrap}. *)
 
 val suite : string * unit Alcotest.test_case list
-(** [suite] tests the adversarial filesystem wrapper's faults and schedules. *)
+(** [suite] tests the faults the wrapper injects. *)

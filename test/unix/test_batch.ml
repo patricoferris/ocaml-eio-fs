@@ -2,7 +2,7 @@
    it one component at a time: no [..], no symbolic link before the last
    component, and every operation answers for itself. *)
 module Batch = Eio_fs_unix.Batch
-module Chaos = Eio_fs.Chaos.Private
+module Chaos = Eio_fs.Chaos
 
 let outside_contents = "outside, must not change"
 
@@ -408,21 +408,19 @@ let held_parent root =
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "observed/leaf") "observed";
   let observed_leaf = identity (root / "observed/leaf") in
   let swapped = ref false in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun (op : Chaos.Op.t) ->
-        if
-          (op.kind = `Open_read || op.kind = `Open_write)
-          && String.equal op.path "observed"
-          && not !swapped
-        then begin
-          swapped := true;
-          Eio.Path.rename (root / "observed") (root / "observed-original");
-          Eio.Path.mkdir ~perm:0o700 (root / "observed");
-          Eio.Path.save ~create:(`Exclusive 0o600) (root / "observed/leaf")
-            "replacement"
-        end)
-      Chaos.Schedule.empty
+  let schedule (op : Chaos.Op.t) =
+    if
+      (op.kind = `Open_read || op.kind = `Open_write)
+      && String.equal op.path "observed"
+      && not !swapped
+    then begin
+      swapped := true;
+      Eio.Path.rename (root / "observed") (root / "observed-original");
+      Eio.Path.mkdir ~perm:0o700 (root / "observed");
+      Eio.Path.save ~create:(`Exclusive 0o600) (root / "observed/leaf")
+        "replacement"
+    end;
+    None
   in
   let wrapped = Chaos.wrap schedule root in
   called := false;
@@ -506,14 +504,11 @@ let test_memory_batch_refuses_a_link () =
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "source") "source";
   let before = identity (root / "source") in
   let empty_open = ref false in
-  let schedule =
-    Chaos.Schedule.observing
-      (fun (op : Chaos.Op.t) ->
-        if
-          (op.kind = `Open_read || op.kind = `Open_write)
-          && String.equal op.path ""
-        then empty_open := true)
-      Chaos.Schedule.empty
+  let schedule (op : Chaos.Op.t) =
+    if
+      (op.kind = `Open_read || op.kind = `Open_write) && String.equal op.path ""
+    then empty_open := true;
+    None
   in
   let wrapped = Chaos.wrap schedule root in
   Eio.Switch.run (fun sw ->

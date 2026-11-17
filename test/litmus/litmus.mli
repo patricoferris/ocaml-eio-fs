@@ -27,7 +27,7 @@ type op =
   | Fsync_dir of string  (** A barrier on a directory, [""] for the root. *)
   | Fsync_fails of string
       (** A barrier on the descriptor that fails with [EIO], injected by
-          {!Eio_fs.Chaos.Private.wrap} above the crash model. *)
+          {!Eio_fs.Chaos.wrap} above the crash model. *)
 
 type t = {
   name : string;

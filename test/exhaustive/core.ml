@@ -3,7 +3,7 @@
    test check that the invariants catch a barrier that was never issued. *)
 
 module C = Eio_fs.Chaos.Private.Crash
-module Ch = Eio_fs.Chaos.Private
+module Ch = Eio_fs.Chaos
 module P = Eio.Path
 module I63 = Optint.Int63
 module IM = Map.Make (Int64)
@@ -155,8 +155,8 @@ type handles = {
   mutable dfh : Eio.File.ro_ty Eio.Resource.t option;
 }
 
-let fail_sched () =
-  Ch.Schedule.seeded ~probability:1.0 ~kinds:[ `Sync_error ] ~seed:0 ()
+let fail_syncs (op : Ch.Op.t) =
+  if op.kind = `Sync then Some (Ch.Fault.Fail `Eio) else None
 
 let must_fail f =
   match f () with
@@ -182,11 +182,11 @@ let exec ~sw ~w ~wu ~dry hs i op =
         (fun h -> Eio.File.truncate h (I63.of_int n))
   | Fsync p -> P.with_open_out ~create:`Never P.(w / p) Eio.File.sync
   | Fsync_fail p ->
-      let wf = Ch.wrap (fail_sched ()) w in
+      let wf = Ch.wrap fail_syncs w in
       must_fail (fun () ->
           P.with_open_out ~create:`Never P.(wf / p) Eio.File.sync)
   | Fsync_fail_s p ->
-      let wf = Ch.wrap (fail_sched ()) (Ch.wrap Ch.Schedule.empty w) in
+      let wf = Ch.wrap fail_syncs (Ch.wrap (fun _ -> None) w) in
       must_fail (fun () ->
           P.with_open_out ~create:`Never P.(wf / p) Eio.File.sync)
   | Fsync_fail_b p ->
@@ -194,7 +194,7 @@ let exec ~sw ~w ~wu ~dry hs i op =
       if dry then sync () else must_fail sync
   | Fsync_u p -> P.with_open_out ~create:`Never P.(wu / p) Eio.File.sync
   | Fsync_fail_u p ->
-      let wf = Ch.wrap (fail_sched ()) wu in
+      let wf = Ch.wrap fail_syncs wu in
       must_fail (fun () ->
           P.with_open_out ~create:`Never P.(wf / p) Eio.File.sync)
   | Create (u, p, perm) ->
@@ -293,18 +293,13 @@ let beneath_rules ~init ops =
         let n = 1 + Option.value ~default:0 (Hashtbl.find_opt counts op.path) in
         Hashtbl.replace counts op.path n;
         if failing !cur && not (List.mem_assoc !cur !rules) then
-          rules :=
-            ( !cur,
-              {
-                Ch.Schedule.trigger =
-                  Nth_op_on_path { n; kind = `Sync; path = op.path };
-                fault = Sync_error `Eio;
-              } )
-            :: !rules
+          rules := (!cur, (op.path, n)) :: !rules
       end
     in
     exec_all
-      ~sched:(Ch.Schedule.observing f Ch.Schedule.empty)
+      ~sched:(fun op ->
+        f op;
+        None)
       ~dry:true
       ~observe:(fun _ _ -> ())
       ~at:(fun i -> cur := i)
@@ -317,13 +312,18 @@ let beneath_rules ~init ops =
    called with the raw base after each op (oracle run only). *)
 let run ?(observe = fun _ _ -> ()) ?(before_crash = fun _ -> ()) ~init ~policy
     ops =
-  let sched = Ch.Schedule.scripted (beneath_rules ~init ops) in
+  let failing = beneath_rules ~init ops in
+  let sched (op : Ch.Op.t) =
+    if op.kind = `Sync && List.mem (op.path, op.nth) failing then
+      Some (Ch.Fault.Fail `Eio)
+    else None
+  in
   exec_all ~sched ~dry:false ~observe ~at:ignore ~init ~policy ops
   @@ fun t base ->
   before_crash t;
   let _pc = C.post_crash t in
   let pc = base in
-  let img = Ch.Internal.crash_image t in
+  let img = Ch.Private.Internal.crash_image t in
   let img =
     List.map
       (fun (p, ino, c) ->

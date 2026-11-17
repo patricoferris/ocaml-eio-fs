@@ -556,7 +556,8 @@ let fsync_after_rewrite =
 (* A file moved into a new directory, then a barrier on that directory
    alone. The rename changes both directories in one step, so once the
    barrier returns it is durable: [a/f] is gone. [b/d] may still be lost
-   with it (the envelope) or not (ext4). *)
+   with it (the envelope) or not (ext4), from the moment the barrier
+   returns. *)
 let rename_into_new_dir =
   let pre =
     [
@@ -575,7 +576,7 @@ let rename_into_new_dir =
     }
     ~ext4:(unmarked pre @ marked [ List.nth pre 2 ])
     ~envelope:(unmarked (pre @ [ lost ]) @ marked [ List.nth pre 2; lost ])
-    ~extra:(marked [ lost ]) ~not_produced:(unmarked [ lost ])
+    ~extra:(unmarked [ lost ] @ marked [ lost ])
 
 (* A file made in [a], then another moved from [a] to [b], then a barrier
    on [b]. Both change [a], so they stay in order (Ferrite's same-directory

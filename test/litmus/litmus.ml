@@ -1,5 +1,5 @@
-module Chaos = Eio_fs.Chaos.Private
-module Crash = Chaos.Crash
+module Chaos = Eio_fs.Chaos
+module Crash = Chaos.Private.Crash
 
 type op =
   | Creat of string
@@ -181,12 +181,7 @@ let schedule body =
           None
       | Fsync_fails path ->
           let n = count path in
-          Some
-            Chaos.Schedule.
-              {
-                trigger = Nth_op_on_path { n; kind = `Sync; path };
-                fault = Chaos.Fault.Sync_error `Eio;
-              }
+          Some (path, n)
       | _ -> None)
     body
 
@@ -206,26 +201,30 @@ let run ?(block_size = 4096) ~policy ~crash_at t =
   Eio.Switch.run (fun sw ->
       let fds = Hashtbl.create 7 in
       List.iter (exec ~sw ~fds ~mark:ignore raw) t.setup);
-  let trigger =
-    match crash_at with None -> Crash.Manual | Some n -> Crash.Nth_op n
-  in
-  let ctl = Crash.v ~policy ~trigger ~block_size () in
-  let crashed = Crash.wrap ctl raw in
+  let ctl = Crash.v ~policy ~block_size () in
+  let crashed = (Crash.wrap ctl raw :> Eio.Fs.dir_ty Eio.Path.t) in
   let fs =
     match schedule t.body with
     | [] -> crashed
-    | rules -> Chaos.wrap (Chaos.Schedule.scripted rules) crashed
+    | failing ->
+        let fail (op : Chaos.Op.t) =
+          if op.kind = `Sync && List.mem (op.path, op.nth) failing then
+            Some (Chaos.Fault.Fail `Eio)
+          else None
+        in
+        Chaos.wrap fail crashed
   in
   let marked = ref false in
   let mark () = if not (Crash.is_crashed ctl) then marked := true in
   (try
      Eio.Switch.run @@ fun sw ->
      let fds = Hashtbl.create 7 in
-     List.iter
-       (fun op ->
+     List.iteri
+       (fun i op ->
          if Crash.is_crashed ctl then raise Power_lost;
-         try exec ~sw ~fds ~mark fs op
-         with Eio.Io _ when Crash.is_crashed ctl -> raise Power_lost)
+         (try exec ~sw ~fds ~mark fs op
+          with Eio.Io _ when Crash.is_crashed ctl -> raise Power_lost);
+         if crash_at = Some (i + 1) then Crash.crash ctl)
        t.body
    with
   | Power_lost -> ()
@@ -241,8 +240,7 @@ let run ?(block_size = 4096) ~policy ~crash_at t =
 
 type exploration = { outcomes : Set.t; runs : int; last_new : int }
 
-(* After each body operation, and at the end. A trigger past the last
-   operation never fires, which is the end again. *)
+(* After each body operation, and at the end. *)
 let crash_points t =
   None :: List.init (List.length t.body) (fun i -> Some (i + 1))
 
