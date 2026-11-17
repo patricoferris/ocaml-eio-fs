@@ -141,13 +141,12 @@ let suite =
   ( "time",
     [
       Alcotest.test_case "a chmod during a sync is not covered" `Quick
-        (Expect.caught ~tier:"linear"
-           (overlap ~sync:fsync ~change:chmod ~held:chmodded));
+        (Expect.caught (overlap ~sync:fsync ~change:chmod ~held:chmodded));
       Alcotest.test_case "a chmod before a sync is covered" `Quick
         (Expect.passes
            (overlap ~before:true ~sync:fsync ~change:chmod ~held:chmodded));
       Alcotest.test_case "a chmod during fsync is not drained on macOS" `Quick
-        (Expect.caught ~tier:"linear"
+        (Expect.caught
            (overlap ~os:`Macos ~after:drain ~sync:fsync_ro ~change:chmod
               ~held:chmodded));
       Alcotest.test_case "a chmod before fsync is drained on macOS" `Quick
@@ -155,11 +154,11 @@ let suite =
            (overlap ~os:`Macos ~before:true ~after:drain ~sync:fsync_ro
               ~change:chmod ~held:chmodded));
       Alcotest.test_case "a chmod fsync alone covers is lost on macOS" `Quick
-        (Expect.caught ~tier:"linear"
+        (Expect.caught
            (overlap ~os:`Macos ~before:true ~sync:fsync_ro ~change:chmod
               ~held:chmodded));
       Alcotest.test_case "a write during fsync is not drained on macOS" `Quick
-        (Expect.caught ~tier:"linear"
+        (Expect.caught
            (overlap ~os:`Macos ~after:drain ~sync:fsync ~change:rewrite
               ~held:rewritten));
       Alcotest.test_case "a write before fsync is drained on macOS" `Quick
@@ -168,12 +167,11 @@ let suite =
               ~change:rewrite ~held:rewritten));
       Alcotest.test_case "an entry made during a directory sync is not covered"
         `Quick
-        (Expect.caught ~tier:"linear"
-           (overlap ~sync:dirsync ~change:touch ~held:touched));
+        (Expect.caught (overlap ~sync:dirsync ~change:touch ~held:touched));
       Alcotest.test_case "an append during a sync does not move its times"
         `Quick (Expect.passes times);
       Alcotest.test_case "an append during a sync is not covered" `Quick
-        (Expect.caught ~tier:"linear" (checkpoint ~size_after:true));
+        (Expect.caught (checkpoint ~size_after:true));
       Alcotest.test_case "a size read before a sync is covered" `Quick
         (Expect.passes (checkpoint ~size_after:false));
       Alcotest.test_case "a fiber runs while another one syncs" `Quick

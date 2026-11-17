@@ -206,7 +206,7 @@ let suite =
       Alcotest.test_case "fsync is durable on Linux" `Quick
         (Expect.passes (save plain));
       Alcotest.test_case "fsync is not durable on macOS" `Quick
-        (Expect.caught ~tier:"linear" (save ~os:`Macos plain));
+        (Expect.caught (save ~os:`Macos plain));
       Alcotest.test_case "F_FULLFSYNC is durable on macOS" `Quick
         (Expect.passes (save ~os:`Macos full));
       Alcotest.test_case "F_FULLFSYNC drains earlier fsyncs" `Quick
@@ -228,9 +228,9 @@ let suite =
         `Quick
         (Expect.passes (flushed ~more:true));
       Alcotest.test_case "a retry after a failed fsync is lost on Linux" `Quick
-        (Expect.caught ~tier:"linear" retried);
+        (Expect.caught retried);
       Alcotest.test_case "a retry after a failed fsync is lost on macOS" `Quick
-        (Expect.caught ~tier:"linear" (retried ~os:`Macos));
+        (Expect.caught (retried ~os:`Macos));
       Alcotest.test_case "a report names a write as its trace does" `Quick
         named_as_traced;
     ] )

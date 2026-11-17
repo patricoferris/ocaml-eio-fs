@@ -13,11 +13,10 @@ let report f =
   | () -> Alcotest.fail "the check passed: it did not catch the bug"
   | exception Failure m -> m
 
-let caught ~tier f () =
+let caught f () =
   let m = report f in
-  if field "tier" m = "" then
-    Alcotest.failf "the check failed for another reason: %s" m;
-  Alcotest.(check string) "tier" tier (field "tier" m)
+  if field "replay" m = "" then
+    Alcotest.failf "the check failed for another reason: %s" m
 
 let refused prefix f () =
   let m = report f in

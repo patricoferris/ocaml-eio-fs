@@ -248,10 +248,6 @@ let rec diverge (a : Plan.trace) (b : Plan.trace) =
   | x :: _, [] | [], x :: _ -> Fmt.str "%a, then nothing" Op.pp x
   | [], [] -> "nothing"
 
-type tier = Linear | Sampled
-
-let tier_name = function Linear -> "linear" | Sampled -> "sampled"
-
 let parent path =
   match String.rindex_opt path '/' with
   | Some 0 -> "/"
@@ -564,8 +560,7 @@ let found r p =
 
 (* The report of a failing run: the scenario's lines, the trace, and the
    replay that runs it alone. *)
-let report name ~title ~tier ~hash ~key ~matched ~(trace : record) ~error lines
-    =
+let report name ~title ~hash ~key ~matched ~(trace : record) ~error lines =
   let matched =
     Option.map
       (fun old ->
@@ -575,7 +570,6 @@ let report name ~title ~tier ~hash ~key ~matched ~(trace : record) ~error lines
   in
   let lines =
     lines
-    @ [ ("tier", tier_name tier) ]
     @ Option.fold ~none:[] ~some:(fun m -> [ ("matched", m) ]) matched
     @ [ ("error", error) ]
   in
@@ -776,15 +770,15 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
   in
   (trace, outcome)
 
-(* The scenario a replay's key [k] names, and its tier: a linear one, another
-   single fault, or a second fault a linear one's run allows. *)
+(* The scenario a replay's key [k] names: a linear one, another single
+   fault, or a second fault a linear one's run allows. *)
 let replayed ~exec ~meets ~rng ~disk ~first linear k =
   let find l = List.find_opt (fun s -> Plan.check_key s = k) l in
   match find linear with
-  | Some s -> Some (s, Linear)
+  | Some _ as s -> s
   | None -> (
       match find (List.filter meets (Plan.check_others first)) with
-      | Some s -> Some (s, Sampled)
+      | Some _ as s -> s
       | None ->
           List.find_map
             (fun (s : Plan.check) ->
@@ -795,7 +789,7 @@ let replayed ~exec ~meets ~rng ~disk ~first linear k =
                   let changed, rest =
                     Plan.check_seconds ~rng one ~first:disk ~after:(kept r)
                   in
-                  Option.map (fun s -> (s, Sampled)) (find (changed @ rest))
+                  find (changed @ rest)
               | _ -> None)
             linear)
 
@@ -824,7 +818,7 @@ let run_tiers name ~budget ~rng ~meets ~disk ~first ~attempt linear =
   let best = Plan.Pairs.v sh in
   List.iter
     (fun (s : Plan.check) ->
-      let r = attempt Linear s in
+      let r = attempt s in
       match s.faults with
       | [ one ] when not (Plan.is_evict one) ->
           Plan.Pairs.add best
@@ -843,7 +837,7 @@ let run_tiers name ~budget ~rng ~meets ~disk ~first ~attempt linear =
   let share = share (List.length classes) in
   List.iter
     (fun (_, pick) ->
-      List.iter (fun s -> ignore (attempt Sampled s : record)) (pick share))
+      List.iter (fun s -> ignore (attempt s : record)) (pick share))
     classes
 
 (* A scenario whose fault the operation never meets is none: an [ENOSPC] on
@@ -889,10 +883,10 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let disk = Plan.Disk.v first in
   let meets = meets spaces in
   let linear = List.filter meets (Plan.check_linear first) in
-  let attempt ?matched tier s =
+  let attempt ?matched s =
     let trace, out = exec s in
     if out <> Passed then
-      report name ~title:"the workload failed under a fault" ~tier ~hash
+      report name ~title:"the workload failed under a fault" ~hash
         ~key:(Plan.check_key s) ~matched ~trace ~error:(outcome_text out)
         [ ("faults", Plan.check_text ~at:(found trace) s) ];
     trace
@@ -902,13 +896,13 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
       (* After a fix the first run may differ: the scenario is found by the
          operations it names, which its key carries. *)
       match replayed ~exec ~meets ~rng ~disk ~first linear k with
-      | Some (s, tier) ->
+      | Some s ->
           let matched = if h = hash then None else Some h in
-          ignore (attempt ?matched tier s : record)
+          ignore (attempt ?matched s : record)
       | None -> no_longer name ~hash r)
   | None ->
       run_tiers name ~budget ~rng ~meets ~disk ~first
-        ~attempt:(fun tier s -> attempt tier s)
+        ~attempt:(fun s -> attempt s)
         linear
 
 (* {1 Crash} *)
@@ -1422,7 +1416,7 @@ module Crash = struct
     (* A run's result is dropped once the scenarios it leads to are drawn
        from it, so memory stays that of one run. *)
     let runs = ref 0 in
-    let attempt ?matched tier s =
+    let attempt ?matched s =
       incr runs;
       let r = exec s in
       let s = named s r in
@@ -1431,7 +1425,7 @@ module Crash = struct
       | None -> ()
       | Some e ->
           let title, err = error_text e in
-          report name ~title ~tier ~hash ~key:(Plan.crash_key s) ~matched
+          report name ~title ~hash ~key:(Plan.crash_key s) ~matched
             ~trace:r.trace ~error:err (lines s r));
       r
     in
@@ -1447,42 +1441,36 @@ module Crash = struct
         let rcuts s r = Plan.rcuts ~changed:(rchanged r) s ~recover:r.rtrace in
         let candidates =
           [
-            (Linear, fun () -> find (cuts @ faults));
-            (Linear, fun () -> find_after cuts rcuts);
-            ( Sampled,
-              fun () -> find (Plan.crash_others ~changed ~tears first_ops) );
-            ( Sampled,
-              fun () ->
-                find_after faults (fun (s : Plan.crash) r ->
-                    match s.cfaults with
-                    | [ one ] when s.state = Drop ->
-                        let changed, rest =
-                          Plan.crash_seconds ~rng ~tears one ~first:disk
-                            ~after:(kept r.trace)
-                        in
-                        changed @ rest
-                    | _ -> []) );
-            (Sampled, fun () -> find_after faults rcuts);
-            (Sampled, fun () -> state_of_cut cuts k);
+            (fun () -> find (cuts @ faults));
+            (fun () -> find_after cuts rcuts);
+            (fun () -> find (Plan.crash_others ~changed ~tears first_ops));
+            (fun () ->
+              find_after faults (fun (s : Plan.crash) r ->
+                  match s.cfaults with
+                  | [ one ] when s.state = Drop ->
+                      let changed, rest =
+                        Plan.crash_seconds ~rng ~tears one ~first:disk
+                          ~after:(kept r.trace)
+                      in
+                      changed @ rest
+                  | _ -> []));
+            (fun () -> find_after faults rcuts);
+            (fun () -> state_of_cut cuts k);
           ]
         in
-        let found =
-          List.find_map
-            (fun (tier, f) -> Option.map (fun s -> (s, tier)) (f ()))
-            candidates
-        in
+        let found = List.find_map (fun f -> f ()) candidates in
         (* A state drawn at random is drawn by a seed below a fourth of the
            budget. *)
         match found with
-        | Some (s, _) when not (drawn ~exec s && (exec s).allowed) ->
+        | Some s when not (drawn ~exec s && (exec s).allowed) ->
             no_longer name ~hash r
-        | Some ({ state = Seed n; _ }, _) when n >= budget / 4 ->
+        | Some { state = Seed n; _ } when n >= budget / 4 ->
             let need = 4 * (n + 1) in
             fail name
               "the replay names %s, a state drawn at random under a budget of \
                %d or more: pass ~budget:%d."
               k need need
-        | Some (s, tier) -> ignore (attempt ?matched tier s)
+        | Some s -> ignore (attempt ?matched s)
         | None -> no_longer name ~hash r)
     | None ->
         let over n =
@@ -1501,7 +1489,7 @@ module Crash = struct
         let rcuts =
           List.concat_map
             (fun s ->
-              let r = attempt Linear s in
+              let r = attempt s in
               let l = Plan.rcuts ~changed:(rchanged r) s ~recover:r.rtrace in
               nrcuts := !nrcuts + List.length l;
               if List.length lin + !nrcuts > budget then [] else l)
@@ -1528,7 +1516,7 @@ module Crash = struct
         let recovery =
           List.concat_map
             (fun (s : Plan.crash) ->
-              let r = attempt Linear s in
+              let r = attempt s in
               (match s.cfaults with
               | [ one ] when s.state = Drop ->
                   Plan.Pairs.add best
@@ -1539,11 +1527,11 @@ module Crash = struct
                 (Plan.rcuts ~changed:(rchanged r) s ~recover:r.rtrace))
             faults
         in
-        List.iter (fun s -> ignore (attempt Linear s)) evicts;
+        List.iter (fun s -> ignore (attempt s)) evicts;
         if linear > budget then over linear;
-        List.iter (fun r -> ignore (attempt Linear r)) rcuts;
+        List.iter (fun r -> ignore (attempt r)) rcuts;
         (* Sampled tier. *)
-        let thunks = List.map (fun s () -> ignore (attempt Sampled s)) in
+        let thunks = List.map (fun s () -> ignore (attempt s)) in
         let others = thunks (Plan.crash_others ~changed ~tears first_ops) in
         let pairs = thunks (Plan.Pairs.to_list best) in
         let recovery = thunks recovery in
@@ -1564,7 +1552,7 @@ module Crash = struct
                 Some v
             | Some v ->
                 incr spent;
-                let r = attempt Sampled { s with state = Enum v } in
+                let r = attempt { s with state = Enum v } in
                 Plan.Draws.add tree r.trail;
                 go (Plan.next_choices r.trail)
           in
@@ -1575,7 +1563,7 @@ module Crash = struct
         let enumerate_from_first s spent allowance =
           let tree = Plan.Draws.empty () in
           incr spent;
-          let r = attempt Sampled { s with state = Enum [] } in
+          let r = attempt { s with state = Enum [] } in
           Plan.Draws.add tree r.trail;
           match
             enumerate s tree spent allowance (Plan.next_choices r.trail)
@@ -1613,14 +1601,11 @@ module Crash = struct
                   (* The first draw is a seed, which needs no widths: its
                       draws give them to the others. *)
                   incr spent;
-                  let r =
-                    attempt Sampled { s with state = Plan.shape ~widths:[] 0 }
-                  in
+                  let r = attempt { s with state = Plan.shape ~widths:[] 0 } in
                   let widths = List.rev_map snd r.trail in
                   for i = 1 to share - 1 do
                     incr spent;
-                    ignore
-                      (attempt Sampled { s with state = Plan.shape ~widths i })
+                    ignore (attempt { s with state = Plan.shape ~widths i })
                   done
                 end;
                 share_out (left - !spent) rest

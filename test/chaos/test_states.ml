@@ -463,12 +463,12 @@ let suite =
             "error" "Failure(\"an aborted record replayed\")"
             (Expect.field "error" m));
       Alcotest.test_case "a read after a failed sync may see the disk" `Quick
-        (Expect.caught ~tier:"linear" (reread ~rewrite:false));
+        (Expect.caught (reread ~rewrite:false));
       Alcotest.test_case "a write again after a failed sync is read back" `Quick
         (Expect.passes (reread ~rewrite:true));
       Alcotest.test_case "a copy after a failed sync may hold the disk's bytes"
         `Quick
-        (Expect.caught ~tier:"linear" (copy ~rewrite:false));
+        (Expect.caught (copy ~rewrite:false));
       Alcotest.test_case "a copy of what was written again holds it" `Quick
         (Expect.passes (copy ~rewrite:true));
       Alcotest.test_case "a file whose creation a cut lost frees no block"

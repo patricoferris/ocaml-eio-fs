@@ -6,9 +6,9 @@ val field : string -> string -> string
 val report : (unit -> unit) -> string
 (** [report f] is the failure report of the check [f], which must fail. *)
 
-val caught : tier:string -> (unit -> unit) -> unit -> unit
-(** [caught ~tier f ()] tests that the check [f] fails on a scenario of [tier],
-    ["linear"] or ["sampled"]. *)
+val caught : (unit -> unit) -> unit -> unit
+(** [caught f ()] tests that the check [f] fails on a scenario: its report names
+    the replay that runs it alone. *)
 
 val refused : string -> (unit -> unit) -> unit -> unit
 (** [refused prefix f ()] tests that the check [f] fails with a report that

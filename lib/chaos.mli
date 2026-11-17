@@ -450,25 +450,25 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
 (** {1:replay Failures and replay}
 
     A check is deterministic. A failure raises [Failure] with the scenario, the
-    tier that found it, the operations of the failing run, and the
-    [~replay:"..."] argument that runs that scenario alone. A power cut's report
-    also says after which operation each value was acknowledged, and, for a
-    state drawn among those the cut allows, what each file holds: its length,
-    and each run of sectors that holds a write, zeros or stale data, with where
-    the stale data comes from. A report numbers an operation by its place in the
-    trace, wherever it names one: the cut, the faults, the changes a cut lost
-    and the acknowledgements. A block of up to eight operations repeated three
-    times or more, in the same directories each time, as a retry makes them,
-    shows its first and last instances, and a trace longer than that keeps its
-    first and last hundred lines and those around its first fault, so a report's
-    size is bounded by the workload's structure rather than by how long it spun.
-    A run keeps only those lines as it goes, and so does its memory. When the
-    workload's first run has changed, a replay finds its scenario again by its
-    operations, and its report says so. A replay fails if the check no longer
-    has that scenario, and if it names a state drawn at random of a cut that
-    allows two states or fewer, which the check never draws. A state drawn at
-    random under a larger budget needs that budget again, which the refusal
-    names. The report of a check run inside another is text in the outer one.
+    operations of the failing run, and the [~replay:"..."] argument that runs
+    that scenario alone. A power cut's report also says after which operation
+    each value was acknowledged, and, for a state drawn among those the cut
+    allows, what each file holds: its length, and each run of sectors that holds
+    a write, zeros or stale data, with where the stale data comes from. A report
+    numbers an operation by its place in the trace, wherever it names one: the
+    cut, the faults, the changes a cut lost and the acknowledgements. A block of
+    up to eight operations repeated three times or more, in the same directories
+    each time, as a retry makes them, shows its first and last instances, and a
+    trace longer than that keeps its first and last hundred lines and those
+    around its first fault, so a report's size is bounded by the workload's
+    structure rather than by how long it spun. A run keeps only those lines as
+    it goes, and so does its memory. When the workload's first run has changed,
+    a replay finds its scenario again by its operations, and its report says so.
+    A replay fails if the check no longer has that scenario, and if it names a
+    state drawn at random of a cut that allows two states or fewer, which the
+    check never draws. A state drawn at random under a larger budget needs that
+    budget again, which the refusal names. The report of a check run inside
+    another is text in the outer one.
 
     The sampled tier draws its scenarios from a seed, the same one on every
     check unless [~seed] gives another, so a check meets the same faults each

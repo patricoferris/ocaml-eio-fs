@@ -12,7 +12,6 @@ let replay_of m = Scanf.sscanf (Expect.field "replay" m) "~replay:%S" Fun.id
 let test_seed_replay () =
   let w = Sampling.log ~bug:true ~n:254 in
   let found = Expect.report (check ~seed:7 w) in
-  Alcotest.(check string) "tier" "sampled" (Expect.field "tier" found);
   let replay = replay_of found in
   List.iter
     (fun seed ->
@@ -22,8 +21,7 @@ let test_seed_replay () =
       Alcotest.(check string)
         "faults"
         (Expect.field "faults" found)
-        (Expect.field "faults" again);
-      Alcotest.(check string) "tier" "sampled" (Expect.field "tier" again))
+        (Expect.field "faults" again))
     [ None; Some 7; Some 8 ]
 
 (* The same for a power cut: the scenario of a failure the sampled tier
@@ -55,7 +53,7 @@ let test_crash_seed_replay () =
         (fun f ->
           Alcotest.(check string)
             f (Expect.field f found) (Expect.field f again))
-        [ "cut"; "faults"; "tier"; "error" ])
+        [ "cut"; "faults"; "error" ])
     [ None; Some 7; Some 8 ]
 
 let suite =
@@ -67,7 +65,7 @@ let suite =
         "log: no rollback in the middle, by the sampled tier, whatever the \
          period of its candidates"
         `Quick
-        (Expect.caught ~tier:"sampled" (check (Sampling.log ~bug:true ~n:254)));
+        (Expect.caught (check (Sampling.log ~bug:true ~n:254)));
       Alcotest.test_case "a failure found under seed 7 replays under any seed"
         `Quick test_seed_replay;
       Alcotest.test_case "a power cut found under seed 7 replays under any seed"

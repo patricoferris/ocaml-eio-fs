@@ -21,7 +21,7 @@ let hash replay = List.nth (String.split_on_char '/' replay) 1
 let same_failure a b =
   List.iter
     (fun f -> Alcotest.(check string) f (Expect.field f a) (Expect.field f b))
-    [ "cut"; "faults"; "tier"; "error"; "replay" ]
+    [ "cut"; "faults"; "error"; "replay" ]
 
 let test_determinism () =
   same_failure
