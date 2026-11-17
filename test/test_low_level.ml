@@ -1047,8 +1047,8 @@ let test_sync_dir_checks () =
   List.iter
     (fun (what, dir) ->
       expect_io_error "not found" (fun () ->
-          Eio_fs_sync.sync_dir (dir / "missing"));
-      denied what (fun () -> Eio_fs_sync.sync_dir (dir / "x")))
+          Eio.Path.sync_dir (dir / "missing"));
+      denied what (fun () -> Eio.Path.sync_dir (dir / "x")))
     [ ("in memory", a); ("through the crash model", crash) ]
 
 (* A file a user creates in a setgid directory of a group the user is not

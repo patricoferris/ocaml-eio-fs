@@ -56,7 +56,7 @@ let read_state dir =
 let reset_wal dir =
   P.save ~create:(`Or_truncate 0o644) P.(dir / "wal.tmp") "";
   P.rename P.(dir / "wal.tmp") P.(dir / "wal");
-  Eio_fs_sync.sync_dir dir
+  Eio.Path.sync_dir dir
 
 let write_snap ~sync ~ignore_sync_error dir mem =
   P.with_open_out ~create:(`Or_truncate 0o644)
@@ -67,7 +67,7 @@ let write_snap ~sync ~ignore_sync_error dir mem =
         if ignore_sync_error then try Eio.File.sync f with Eio.Io _ -> ()
         else Eio.File.sync f);
   P.rename P.(dir / "snap.tmp") P.(dir / "snap");
-  Eio_fs_sync.sync_dir dir
+  Eio.Path.sync_dir dir
 
 let compact ?(on_open = false) t =
   let sync = not (on_open && t.bug = `Recovery_no_sync) in
@@ -84,7 +84,7 @@ let open_ ?(bug = `None) ~sw dir =
   let dir = (dir :> Eio.Fs.dir_ty P.t) in
   let mem = read_state dir in
   let wal = open_wal ~sw dir in
-  Eio_fs_sync.sync_dir dir;
+  Eio.Path.sync_dir dir;
   let t = { dir; sw; wal; mem; n = 0; bug } in
   if load_opt P.(dir / "wal") <> "" || exists P.(dir / "snap.tmp") then
     compact ~on_open:true t;

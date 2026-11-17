@@ -88,7 +88,7 @@ let fsync ~sw env =
 let fsync_ro ~sw env =
   Eio_fs_sync.Barrier.(sync_file portable) (P.open_in ~sw P.(env#fs / "f"))
 
-let dirsync ~sw:_ env = Eio_fs_sync.sync_dir env#fs
+let dirsync ~sw:_ env = Eio.Path.sync_dir env#fs
 
 (* F_FULLFSYNC of another file: on macOS it drains every fsync(2) before. *)
 let drain env =

@@ -16,7 +16,7 @@ let content file g = Fmt.str "%s generation=%d\n" file g
 let switch ?(bug = `None) dir g =
   write_sync dir "CURRENT.tmp" (string_of_int g);
   P.rename P.(dir / "CURRENT.tmp") P.(dir / "CURRENT");
-  if bug <> `No_switch_sync then Eio_fs_sync.sync_dir dir
+  if bug <> `No_switch_sync then Eio.Path.sync_dir dir
 
 let update ?(bug = `None) dir ~old g =
   match bug with
@@ -26,7 +26,7 @@ let update ?(bug = `None) dir ~old g =
       write_sync dir "b.tmp" (content "b" g);
       P.rename P.(dir / "a.tmp") P.(dir / "a.conf");
       P.rename P.(dir / "b.tmp") P.(dir / "b.conf");
-      Eio_fs_sync.sync_dir dir
+      Eio.Path.sync_dir dir
   | _ ->
       let sync = bug <> `No_data_sync in
       write_sync ~sync dir (Fmt.str "a.%d" g) (content "a" g);
@@ -34,12 +34,12 @@ let update ?(bug = `None) dir ~old g =
       if bug = `Delete_first then (
         P.unlink P.(dir / Fmt.str "a.%d" old);
         P.unlink P.(dir / Fmt.str "b.%d" old));
-      Eio_fs_sync.sync_dir dir;
+      Eio.Path.sync_dir dir;
       switch ~bug dir g;
       if bug <> `Delete_first then (
         P.unlink P.(dir / Fmt.str "a.%d" old);
         P.unlink P.(dir / Fmt.str "b.%d" old);
-        if bug <> `No_switch_sync then Eio_fs_sync.sync_dir dir)
+        if bug <> `No_switch_sync then Eio.Path.sync_dir dir)
 
 let load ?(bug = `None) dir =
   match bug with

@@ -12,7 +12,7 @@ let put ?(bug = `None) dir data =
       Eio.Flow.copy_string data f;
       if bug <> `No_blob_sync then Eio.File.sync f);
   P.rename tmp P.(blobs / h);
-  if bug <> `No_dir_sync then Eio_fs_sync.sync_dir blobs;
+  if bug <> `No_dir_sync then Eio.Path.sync_dir blobs;
   P.with_open_out ~append:true ~create:(`If_missing 0o644)
     P.(dir / "index")
     (fun f ->

@@ -3,14 +3,14 @@
 
     A barrier is a sync that returns once what it covers is durable, so that a
     power cut after it loses none of it: a file barrier covers a file's data,
-    and a directory barrier the entries of a directory. {!sync_dir} issues the
-    barrier a write-temporary-then-rename protocol needs; a backend with its own
-    semantics registers {!Dir_sync}, and a plain POSIX directory is opened
-    read-only and fsynced. {!sync_file} is the same for the bytes an entry
-    names: a backend registers {!File_sync}, otherwise the barrier is
-    {!Eio.File.sync}. {!publish} is the protocol itself, under a mandatory byte
-    ceiling ({!Limit_exceeded}), and issues the barriers a {!Barrier.t} names:
-    the portable ones above by default, [Eio_fs_unix.barrier] for the platform's
+    and a directory barrier the entries of a directory. [Eio.Path.sync_dir]
+    issues the barrier a write-temporary-then-rename protocol needs. A backend
+    registers {!Dir_sync} for a barrier that may also go through the drive's
+    cache. {!sync_file} is the barrier over the bytes an entry names: a backend
+    registers {!File_sync}, otherwise the barrier is {!Eio.File.sync}.
+    {!publish} is the protocol itself, under a mandatory byte ceiling
+    ({!Limit_exceeded}), and issues the barriers a {!Barrier.t} names: the
+    portable ones above by default, [Eio_fs_unix.barrier] for the platform's
     strongest, {!Barrier.none} for none.
 
     {!Process_local} declares whether any opener of a backend's files can exist
@@ -29,26 +29,12 @@ type (_, _, _) Eio.Resource.pi +=
             handler: make the entries of the directory at [path] (relative to
             the resource, as for every DIR operation) durable. [full] asks for
             them to go through the drive's cache too, as [F_FULLFSYNC] does on
-            Darwin; {!sync_dir} asks [false], [Eio_fs_unix.sync_dir] [true]. *)
+            Darwin; [Eio_fs_unix.sync_dir] asks [true], and the backend's own
+            [Eio.Path.sync_dir] is the barrier with [false]. *)
 
 val dir_barrier : 'a Eio.Resource.t -> (path:string -> full:bool -> unit) option
 (** [dir_barrier res] is [Some b] with [b] the directory barrier [res] registers
     through {!Dir_sync}, and [None] if it registers none. *)
-
-val sync_dir : _ Eio.Path.t -> unit
-(** [sync_dir dir] makes [dir]'s entries durable: the barrier a commit protocol
-    issues after renaming a file into place. A backend that registers
-    {!Dir_sync} answers through it; otherwise [dir] is opened read-only and its
-    handle fsynced. [Eio_fs_unix.sync_dir] also goes through the drive's cache,
-    for programs that link unix. On a backend that can sync no directory,
-    [sync_dir] raises rather than skip the barrier.
-
-    @raise Invalid_argument
-      if [dir]'s backend registers no {!Dir_sync} and its directory handle
-      cannot sync.
-    @raise Eio.Io
-      if the directory cannot be opened, or as the barrier or the sync raises.
-*)
 
 type (_, _, _) Eio.Resource.pi +=
   | File_sync : ('t, 't -> full:bool -> unit, [> `File_sync ]) Eio.Resource.pi
@@ -123,8 +109,9 @@ module Barrier : sig
 
   val portable : t
   (** [portable] is {!sync_file}, on a file open for reading through the write
-      side the POSIX backends give every handle, and {!sync_dir}. On Darwin both
-      are [fsync(2)], which reaches the drive but not through its cache. *)
+      side the POSIX backends give every handle, and [Eio.Path.sync_dir]. On
+      Darwin both are [fsync(2)], which reaches the drive but not through its
+      cache. *)
 
   val none : t
   (** [none] issues no barrier: a publication keeps only its atomicity. *)

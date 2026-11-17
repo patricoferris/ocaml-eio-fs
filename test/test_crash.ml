@@ -622,7 +622,7 @@ let test_crash_synced_file_behind_older_pending_entry () =
     (fun f ->
       Eio.Flow.copy_string "a" f;
       Eio.File.sync f);
-  Eio_fs_sync.sync_dir (fs / "d1");
+  Eio.Path.sync_dir (fs / "d1");
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "a's bytes" "a" (Eio.Path.load (post / "d1" / "a"));
   Alcotest.(check string) "b's bytes" "b" (Eio.Path.load (post / "d2" / "b"))
@@ -673,7 +673,7 @@ let test_crash_unsynced_lists_dir_ops () =
 
 (* {2 The directory barrier is scoped to one directory}
 
-   [Eio_fs_sync.sync_dir] through the crash wrapper is the model's metadata
+   [Eio.Path.sync_dir] through the crash wrapper is the model's metadata
    barrier, and fsync(2) fixes what one barrier covers: syncing directory D
    makes the entries OF D durable -- the journal entries whose recorded path's
    parent is D -- and says nothing about D's own entry in its parent, nor about
@@ -698,7 +698,7 @@ let test_crash_dir_sync_leaves_its_own_entry_pending () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.mkdir ~perm:0o755 (fs / "b");
-  Eio_fs_sync.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "a");
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
@@ -713,14 +713,14 @@ let test_crash_dir_sync_commits_its_own_entries () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Eio.Path.mkdir ~perm:0o755 (fs / "b");
   Eio.Path.with_open_out ~create:(`Exclusive 0o644)
     (fs / "a" / "f")
     (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Eio_fs_sync.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "a");
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -737,7 +737,7 @@ let test_crash_root_sync_commits_both_siblings () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.mkdir ~perm:0o755 (fs / "b");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
@@ -755,14 +755,14 @@ let test_crash_dir_sync_does_not_reach_a_grandchild () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Eio.Path.mkdir ~perm:0o755 (fs / "a" / "sub");
   Eio.Path.with_open_out ~create:(`Exclusive 0o644)
     (fs / "a" / "sub" / "g")
     (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
-  Eio_fs_sync.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "a");
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
@@ -852,7 +852,7 @@ let test_crash_dir_sync_keeps_a_pending_rename () =
   Crash.sync_metadata ctl;
   Eio.Path.rename (fs / "f") (fs / "g");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "x" / "h") "h";
-  Eio_fs_sync.sync_dir (fs / "x");
+  Eio.Path.sync_dir (fs / "x");
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the synced bytes, at the durable name" "synced"
@@ -875,7 +875,7 @@ let test_crash_dir_sync_keeps_a_pending_replacement () =
   Crash.sync_metadata ctl;
   Eio.Path.rename (fs / "b") (fs / "a");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "x" / "h") "h";
-  Eio_fs_sync.sync_dir (fs / "x");
+  Eio.Path.sync_dir (fs / "x");
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "a" "A" (Eio.Path.load (post / "a"));
   Alcotest.(check string) "b" "B" (Eio.Path.load (post / "b"))
@@ -1024,7 +1024,7 @@ let test_crash_replaced_under_pending_real () =
           Eio.File.sync file);
       Eio.Path.mkdir ~perm:0o755 (fs / "other");
       Eio.Path.rename (fs / "refs" / "x.lock") (fs / "refs" / "x");
-      Eio_fs_sync.sync_dir (fs / "refs");
+      Eio.Path.sync_dir (fs / "refs");
       Crash.crash ctl)
     ~check:(fun post ->
       Alcotest.(check bool)
@@ -1079,7 +1079,7 @@ let test_crash_sync_through_another_spelling () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   write_new ~sync:true (fs / "f") "";
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   overwrite (fs / "f") "data";
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_in ~sw (fs / "./f") in
@@ -1094,7 +1094,7 @@ let test_crash_open_through_another_spelling () =
       let ctl = Crash.v ~policy:Drop_unsynced () in
       with_crash ctl @@ fun ~raw:_ ~fs ->
       write_new ~sync:true (fs / "f") "";
-      Eio_fs_sync.sync_dir fs;
+      Eio.Path.sync_dir fs;
       overwrite (fs / "f") "secret";
       Eio.Path.with_open_out ~create:`Never (fs / alias) (fun _ -> ());
       let post = Crash.post_crash ctl in
@@ -1123,9 +1123,9 @@ let test_crash_bottom_up_barriers () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   write_new ~sync:true (fs / "a" / "f") "data";
-  Eio_fs_sync.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "a");
   write_new ~sync:true (fs / "a" / "g") "late";
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "a/f" "data" (Eio.Path.load (post / "a" / "f"));
   Alcotest.(check bool)
@@ -1138,11 +1138,11 @@ let test_crash_rename_destination_barrier () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.mkdir ~perm:0o755 (fs / "b");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   write_new ~sync:true (fs / "a" / "f") "data";
-  Eio_fs_sync.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "a");
   Eio.Path.rename (fs / "a" / "f") (fs / "b" / "f");
-  Eio_fs_sync.sync_dir (fs / "b");
+  Eio.Path.sync_dir (fs / "b");
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "b/f" "data" (Eio.Path.load (post / "b" / "f"));
   Alcotest.(check bool) "a/f" true (absent (post / "a" / "f"))
@@ -1156,7 +1156,7 @@ let test_crash_sync_retry_after_failure () =
     let ctl = Crash.v ~policy:Drop_unsynced () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") (String.make 12288 'a');
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let sched =
       Schedule.scripted
         [
@@ -1198,7 +1198,7 @@ let test_crash_sync_failure_beneath () =
   in
   let fs = Crash.wrap ctl (Chaos.wrap sched env#fs) in
   write_new ~sync:true (fs / "f") "";
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
       Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "record" ];
       (try Eio.File.sync f with Eio.Io _ -> ());
@@ -1378,7 +1378,7 @@ let rename_over_a_childs_file ~barrier =
             [ Cstruct.of_string "run" ];
           Eio.File.sync file);
       Eio.Path.rename (fs / "made" / "ref.lock") (fs / "made" / "ref");
-      if barrier then Eio_fs_sync.sync_dir (fs / "made"))
+      if barrier then Eio.Path.sync_dir (fs / "made"))
     ~check:(fun post ->
       Alcotest.(check string)
         "the file the image holds"
@@ -1414,7 +1414,7 @@ let test_crash_public_controller_keeps_a_childs_entry () =
         if s = "AAAA" then Eio.File.sync file)
   in
   write (`Exclusive 0o600) "AAAA";
-  Eio_fs_sync.sync_dir wrapped;
+  Eio.Path.sync_dir wrapped;
   write (`Or_truncate 0o600) "BBBB";
   Out_channel.with_open_bin
     (Eio.Path.native_exn (wrapped / "device.img"))

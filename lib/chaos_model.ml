@@ -828,13 +828,17 @@ module Dir_impl = struct
     let (Base_dir ((module B), bv)) = t.boxed in
     B.native bv path
 
-  let sync_dir ?(full = false) t path =
+  let barrier ~full t path =
     (match Schedule.next t.sched (Op.sync path) with
     | Some (Fault.Sync_error c | Fault.Sync_evict c) -> raise_io c path
     | _ -> ());
     match Eio_fs_sync.dir_barrier t.base with
     | Some barrier -> barrier ~path ~full
-    | None -> Eio_fs_sync.sync_dir (t.base, path)
+    | None ->
+        let (Base_dir ((module B), bv)) = t.boxed in
+        B.sync_dir bv path
+
+  let sync_dir t path = barrier ~full:false t path
 
   let pp ppf t =
     let (Base_dir ((module B), bv)) = t.boxed in
@@ -873,7 +877,7 @@ let dir_handler =
         (Eio_fs_sync.Modeless, fun t -> Eio_fs_sync.is_modeless t.base);
       Eio.Resource.H
         ( Eio_fs_sync.Dir_sync,
-          fun t ~path ~full -> Dir_impl.sync_dir ~full t path );
+          fun t ~path ~full -> Dir_impl.barrier ~full t path );
     ]
 
 let wrap_dir ~base ~sched : [ `Close | Eio.Fs.dir_ty ] r =
@@ -3797,14 +3801,15 @@ module Crash = struct
        subtree itself is on the inode it opened, even once removed or
        replaced: it commits that directory's own entries. After the power cut it fails like every other
        operation. *)
-    let sync_dir ?(full = false) d path =
+    let barrier ~full d path =
       live d;
       let upto = d.dctl.seq in
       d.dctl.pause ();
       live d;
       (* The base's barrier first: it refuses a directory that is missing or
          that the caller cannot read. *)
-      Eio_fs_sync.sync_dir (d.dbase, path);
+      (let (Base_dir ((module B), bv)) = d.dboxed in
+       B.sync_dir bv path);
       match (d.dino, path_segments path) with
       | Some ino, [] -> commit d.dctl ~full (Commit.Dir { ino; upto })
       | _ ->
@@ -3812,6 +3817,8 @@ module Crash = struct
           Option.iter
             (fun ino -> commit d.dctl ~full (Commit.Dir { ino; upto }))
             (dir_ino d.dctl dir)
+
+    let sync_dir d path = barrier ~full:false d path
 
     let native d path =
       let (Base_dir ((module B), bv)) = d.dboxed in
@@ -3844,7 +3851,7 @@ module Crash = struct
         H (Eio_fs_sync.Modeless, fun d -> Eio_fs_sync.is_modeless d.dbase);
         H
           ( Eio_fs_sync.Dir_sync,
-            fun d ~path ~full -> Cdir_impl.sync_dir ~full d path );
+            fun d ~path ~full -> Cdir_impl.barrier ~full d path );
       ]
 
   let wrap_cdir ctl ~ino ~root ~prefix ~base : [ `Close | Eio.Fs.dir_ty ] r =

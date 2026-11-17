@@ -97,7 +97,7 @@ let test_crash_create_through_a_dangling_link () =
     (List.exists
        (fun (u : Crash.unsynced) -> u.kind = Crash.Create)
        (Crash.unsynced ctl));
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "target" "data" (Eio.Path.load (post / "target"))
 
@@ -160,11 +160,11 @@ let test_crash_deferred_barrier_identity () =
     with_crash ctl @@ fun ~raw:_ ~fs ->
     Eio.Path.mkdir ~perm:0o755 (fs / "d");
     write_new ~sync:true (fs / "d/f") "x";
-    Eio_fs_sync.sync_dir (fs / "d");
+    Eio.Path.sync_dir (fs / "d");
     how fs;
     Eio.Path.mkdir ~perm:0o755 (fs / "d");
-    Eio_fs_sync.sync_dir fs;
-    Eio_fs_sync.sync_dir (fs / "d");
+    Eio.Path.sync_dir fs;
+    Eio.Path.sync_dir (fs / "d");
     let post = Crash.post_crash ctl in
     ( Eio.Path.read_dir (post / "d"),
       List.sort String.compare (Eio.Path.read_dir post) )
@@ -208,9 +208,9 @@ let test_crash_chmod_journaled () =
     (mode ~sync:(fun _ fs ->
          Eio.Path.with_open_out ~create:`Never (fs / "f") Eio.File.sync));
   check "a barrier on the parent" (0o644, 0L, 0o755)
-    (mode ~sync:(fun _ fs -> Eio_fs_sync.sync_dir fs));
+    (mode ~sync:(fun _ fs -> Eio.Path.sync_dir fs));
   check "a barrier on the directory itself" (0o644, 0L, 0o700)
-    (mode ~sync:(fun _ fs -> Eio_fs_sync.sync_dir (fs / "d")))
+    (mode ~sync:(fun _ fs -> Eio.Path.sync_dir (fs / "d")))
 
 (* A sync makes a new file's mode durable before its name: whenever a crash
    keeps the name, the file has that mode. *)
@@ -279,7 +279,7 @@ let test_crash_inode_identity () =
     Eio.Path.rename (fs / "u/d") (fs / "u/x");
     Eio.Path.mkdir ~perm:0o755 (fs / "u/d");
     write_new ~sync:true (fs / "u/d/planted") "evil";
-    Eio_fs_sync.sync_dir (fs / "u/d");
+    Eio.Path.sync_dir (fs / "u/d");
     let post = Crash.post_crash ctl in
     Alcotest.(check (list string))
       "root's directory is untouched" []
@@ -341,7 +341,7 @@ let test_crash_entries_whole () =
        (fun fs ->
          Eio.Path.rename (fs / "D") (fs / "E");
          write_new ~sync:true (fs / "E/f") "synced";
-         Eio_fs_sync.sync_dir (fs / "E")));
+         Eio.Path.sync_dir (fs / "E")));
   check "a move out of a directory then removed"
     [ "P/"; "Q/"; "Q/C/"; "Q/C/x=durable" ]
     (run
@@ -351,7 +351,7 @@ let test_crash_entries_whole () =
        (fun fs ->
          Eio.Path.rename (fs / "P/A/B") (fs / "Q/C");
          Eio.Path.rmdir (fs / "P/A");
-         Eio_fs_sync.sync_dir (fs / "P")));
+         Eio.Path.sync_dir (fs / "P")));
   check "a rename into a new directory, its parent never synced" [ "P/" ]
     (run
        (fun raw ->
@@ -360,7 +360,7 @@ let test_crash_entries_whole () =
        (fun fs ->
          Eio.Path.mkdir ~perm:0o755 (fs / "Q");
          Eio.Path.rename (fs / "P/f") (fs / "Q/f");
-         Eio_fs_sync.sync_dir (fs / "P")));
+         Eio.Path.sync_dir (fs / "P")));
   check "a moved directory carries only what the image holds"
     [ "A/"; "B/"; "B/e/"; "B/e/f=data" ]
     (run
@@ -371,7 +371,7 @@ let test_crash_entries_whole () =
          Eio.Path.rename (fs / "A/f") (fs / "A/d/f");
          write_new ~sync:true (fs / "A/d/new") "x";
          Eio.Path.rename (fs / "A/d") (fs / "B/e");
-         Eio_fs_sync.sync_dir (fs / "B")))
+         Eio.Path.sync_dir (fs / "B")))
 
 (* A crash gives each entry its owner before its mode: a chown clears
    setuid and setgid, which the mode then sets back. *)
@@ -460,8 +460,8 @@ let test_crash_dir_handle_barrier_by_inode () =
   let h = Eio.Path.open_in ~sw (fs / "a/d") in
   Eio.Path.rename (fs / "a/d") (fs / "b/d");
   Eio.Path.mkdir ~perm:0o755 (fs / "a/d");
-  Eio_fs_sync.sync_dir (fs / "a");
-  Eio_fs_sync.sync_dir (fs / "b");
+  Eio.Path.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "b");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "b/d/x") "x";
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "a/d/y") "y";
   (match Eio_fs_sync.file_barrier h with
@@ -486,7 +486,7 @@ let test_crash_deferred_barrier_whole () =
     Eio.Path.mkdir ~perm:0o755 (fs / "d");
     Eio.Path.save ~create:(`Exclusive 0o644) (fs / "d/x") "x";
     Eio.Path.rename (fs / "d/x") (fs / "c/x");
-    Eio_fs_sync.sync_dir (fs / "c");
+    Eio.Path.sync_dir (fs / "c");
     let post = Crash.post_crash ctl in
     if
       Eio.Path.is_directory (post / "c")
@@ -506,7 +506,7 @@ let test_crash_move_needs_ancestor_moves () =
   let fs = Crash.wrap ctl raw in
   Eio.Path.rename (fs / "a/m") (fs / "b/m");
   Eio.Path.rename (fs / "a") (fs / "b/m/a");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   let image =
     List.map
       (fun (p, _, k) ->
@@ -534,8 +534,8 @@ let test_crash_new_dir_needs_parent_barrier () =
     let fs = Crash.wrap ctl raw in
     Eio.Path.mkdir ~perm:0o755 (fs / "d");
     write_new ~sync:true (fs / "d/f") "x";
-    Eio_fs_sync.sync_dir (fs / "d");
-    if parent then Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir (fs / "d");
+    if parent then Eio.Path.sync_dir fs;
     Eio.Path.is_file (Crash.post_crash ctl / "d/f")
   in
   Alcotest.(check (pair bool bool))
@@ -588,7 +588,7 @@ let test_crash_rename_over_filled_dir () =
   let fs = Crash.wrap ctl raw in
   Eio.Path.rename (fs / "b/g") (fs / "a/g");
   Eio.Path.rename (fs / "a") (fs / "b");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Alcotest.(check string)
     "b/g" "G"
     (Eio.Path.load (Crash.post_crash ctl / "b/g"))
@@ -609,7 +609,7 @@ let test_crash_subtree_barrier_by_inode () =
   Eio.Path.rmdir (fs / "a");
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "a/g") "G";
-  Eio_fs_sync.sync_dir d;
+  Eio.Path.sync_dir d;
   let post = Crash.post_crash ctl in
   Alcotest.(check (pair bool bool))
     "a/old and a/g" (false, false)
@@ -666,7 +666,7 @@ let test_crash_attrs_wait_for_their_node () =
   let fs = Crash.wrap ctl raw in
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.chmod ~follow:false ~perm:0o700 (fs / "a");
-  Eio_fs_sync.sync_dir (fs / "a");
+  Eio.Path.sync_dir (fs / "a");
   let kinds =
     List.map
       (fun (u : Crash.unsynced) -> Fmt.str "%a" Crash.pp_unsynced u)
@@ -683,7 +683,7 @@ let test_crash_failed_sync_keeps_truncation () =
     let ctl = Crash.v ~policy:Drop_unsynced () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") init;
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let sched =
       Schedule.scripted
         [
@@ -722,7 +722,7 @@ let test_crash_lost_page_kept_or_evicted () =
     let ctl = Crash.v ~policy:(Reorder_unsynced seed) () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "";
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let sched =
       Schedule.scripted
         [
@@ -762,7 +762,7 @@ let test_crash_clear_journaled_at_write () =
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "Y" ]);
     if barrier then begin
       Eio.Path.mkdir ~perm:0o755 (fs / "n");
-      Eio_fs_sync.sync_dir fs
+      Eio.Path.sync_dir fs
     end;
     (Eio.Path.stat ~follow:false (Crash.post_crash ctl / "f")).perm
   in
@@ -782,7 +782,7 @@ let test_crash_kept_truncation_length_only () =
     let ctl = Crash.v ~policy () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "WXYZ";
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let sched =
       Schedule.scripted
         [
@@ -841,7 +841,7 @@ let test_crash_partial_writeback () =
     let ctl = Crash.v ~policy ~block_size:2 () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "aaaa";
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let sched =
       Schedule.scripted
         [
@@ -875,7 +875,7 @@ let test_crash_second_failure () =
   let ctl = Crash.v ~policy:Drop_unsynced ~block_size:2 () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   write_new ~sync:true (fs / "f") "xyz";
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   let sched =
     Schedule.seeded ~probability:1.0 ~kinds:[ `Sync_error ] ~seed:0 ()
   in
@@ -904,7 +904,7 @@ let test_crash_durable_cut_frees_lost_pages () =
       let ctl = Crash.v ~policy:(Reorder_unsynced seed) ~block_size:2 () in
       with_crash ctl @@ fun ~raw:_ ~fs ->
       write_new ~sync:true (fs / "f") init;
-      Eio_fs_sync.sync_dir fs;
+      Eio.Path.sync_dir fs;
       let sched =
         Schedule.scripted
           [
@@ -995,7 +995,7 @@ let lost_images ?(init = "pqr") steps =
     let ctl = Crash.v ~policy:(Reorder_unsynced seed) ~block_size:2 () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") init;
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let sched =
       Schedule.seeded ~probability:1.0 ~kinds:[ `Sync_error ] ~seed:0 ()
     in
@@ -1030,7 +1030,7 @@ let chosen_image ?grow ~init steps draw =
   let ctl = Crash.v ~policy:(Choose draw) ~block_size:512 () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   write_new ~sync:true (fs / "f") init;
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
       Option.iter
         (fun n ->
@@ -1245,7 +1245,7 @@ let sampled_images ~init steps =
     let image =
       with_crash ctl @@ fun ~raw:_ ~fs ->
       write_new ~sync:true (fs / "f") init;
-      Eio_fs_sync.sync_dir fs;
+      Eio.Path.sync_dir fs;
       Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
           List.iter
             (function
@@ -1311,7 +1311,7 @@ let test_crash_survive_keeps_a_sector () =
     in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "hdr") (String.make 16 '.');
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     Eio.Path.with_open_out ~create:`Never (fs / "hdr") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "MAGIC" ];
         Eio.File.pwrite_all f ~file_offset:(i63 8) [ Cstruct.of_string "42" ]);

@@ -1,11 +1,8 @@
 open! Hermetic
 module Rename = Rename
 
-(* The directory-durability barrier. A backend with its own semantics registers
-   [Dir_sync]; one that registers nothing gets the POSIX route, the directory
-   opened read-only and its handle fsynced. Eio types [File.sync] as write-only
-   but the POSIX backends build every descriptor from one read-write
-   implementation, so the operation is probed from the handle. *)
+(* The directory barrier with its strength, which [Eio.Path.sync_dir] does
+   not take. *)
 
 type (_, _, _) Eio.Resource.pi +=
   | Dir_sync :
@@ -16,28 +13,6 @@ type (_, _, _) Eio.Resource.pi +=
 
 let dir_barrier (Eio.Resource.T (v, ops)) =
   Option.map (fun f -> f v) (Eio.Resource.get_opt ops Dir_sync)
-
-(* A directory handle that cannot sync is a wiring error: skipping the
-   barrier would lose durability. *)
-let fsync_handle (Eio.Resource.T (v, ops)) =
-  match Eio.Resource.get_opt ops Eio.File.Pi.Write with
-  | Some (module W) -> W.sync v
-  | None ->
-      invalid_arg
-        "Eio_fs_sync.sync_dir: the directory's backend has no sync, register a \
-         Dir_sync barrier on the directory resource"
-
-let sync_dir ((res, path) as p : _ Eio.Path.t) =
-  match dir_barrier res with
-  | Some barrier -> barrier ~path ~full:false
-  | None -> (
-      Eio.Switch.run @@ fun sw ->
-      match Eio.Path.open_in ~sw p with
-      | handle -> fsync_handle handle
-      | exception (Eio.Io _ as ex) ->
-          let bt = Printexc.get_raw_backtrace () in
-          Eio.Exn.reraise_with_context ex bt
-            "syncing directory (backend registers no Dir_sync barrier)")
 
 (* The file-data barrier. A file is itself the resource, so its operation takes
    no name. A registered barrier is answered whole: syncing the file behind it
@@ -92,7 +67,7 @@ module Barrier = struct
     type t = unit
 
     let sync_file () file = sync_any_file file
-    let sync_dir () path = sync_dir path
+    let sync_dir () path = Eio.Path.sync_dir path
   end
 
   let sync_file t file =

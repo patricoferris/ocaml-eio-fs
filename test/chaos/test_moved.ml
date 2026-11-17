@@ -57,7 +57,7 @@ let two_dirs fs =
 let rename_across sync () =
   let run fs =
     P.rename P.(fs / "d/f") P.(fs / "e/f");
-    Eio_fs_sync.sync_dir P.(fs / sync)
+    Eio.Path.sync_dir P.(fs / sync)
   in
   let want = [ "d/ 755"; "e/ 755"; "e/f 644 \"F\"" ] in
   check_image want (cut ~setup:two_dirs Drop_unsynced run);
@@ -74,8 +74,8 @@ let rename_into_new_dir () =
   let run ~parent fs =
     P.mkdir ~perm:0o755 P.(fs / "e");
     P.rename P.(fs / "d/f") P.(fs / "e/f");
-    Eio_fs_sync.sync_dir P.(fs / "d");
-    if parent then Eio_fs_sync.sync_dir fs
+    Eio.Path.sync_dir P.(fs / "d");
+    if parent then Eio.Path.sync_dir fs
   in
   check_image [ "d/ 755" ] (cut ~setup Drop_unsynced (run ~parent:false));
   check_image
@@ -88,15 +88,15 @@ let barriers_one_by_one () =
   check_live
     (cut ~setup:two_dirs keep_all (fun fs ->
          P.mkdir ~perm:0o755 P.(fs / "d/x");
-         Eio_fs_sync.sync_dir P.(fs / "d/x");
+         Eio.Path.sync_dir P.(fs / "d/x");
          P.rename P.(fs / "d/f") P.(fs / "d/x/f");
-         Eio_fs_sync.sync_dir P.(fs / "e");
+         Eio.Path.sync_dir P.(fs / "e");
          P.rename P.(fs / "d/x") P.(fs / "e/x");
-         Eio_fs_sync.sync_dir P.(fs / "d");
+         Eio.Path.sync_dir P.(fs / "d");
          save P.(fs / "e/g") "G";
-         Eio_fs_sync.sync_dir fs;
+         Eio.Path.sync_dir fs;
          P.rename P.(fs / "e") P.(fs / "d/e");
-         Eio_fs_sync.sync_dir P.(fs / "d")))
+         Eio.Path.sync_dir P.(fs / "d")))
 
 (* A file made and synced in a new directory, which is then renamed: the
    file's bytes are durable, so a cut that keeps every change keeps them. *)
@@ -113,7 +113,7 @@ let fails_at_old_name () =
   check_live
     (cut ~setup:two_dirs keep_all (fun fs ->
          P.mkdir ~perm:0o755 P.(fs / "e/x");
-         Eio_fs_sync.sync_dir P.(fs / "e");
+         Eio.Path.sync_dir P.(fs / "e");
          P.rename P.(fs / "e") P.(fs / "d/e");
          fails (fun () -> P.rename P.(fs / "e/x") P.(fs / "d/y"))))
 
@@ -125,8 +125,8 @@ let mode_of_moved_file () =
     (cut ~setup:two_dirs Drop_unsynced (fun fs ->
          P.chmod ~follow:false ~perm:0o600 P.(fs / "d/f");
          P.rename P.(fs / "d/f") P.(fs / "f");
-         Eio_fs_sync.sync_dir P.(fs / "d");
-         Eio_fs_sync.sync_dir fs))
+         Eio.Path.sync_dir P.(fs / "d");
+         Eio.Path.sync_dir fs))
 
 (* On macOS, fsync(2) of a directory stops in the drive's cache until an
    F_FULLFSYNC drains it: what it drains is that directory's entries, under
@@ -144,7 +144,7 @@ let renamed_before_drain () =
            (fun f ->
              Eio.Flow.copy_string "F" f;
              Eio_fs_unix.sync_file f);
-         Eio_fs_sync.sync_dir P.(fs / "d");
+         Eio.Path.sync_dir P.(fs / "d");
          P.rename P.(fs / "d") P.(fs / "e");
          P.with_open_out ~create:`Never P.(fs / "g") Eio_fs_unix.sync_file))
 

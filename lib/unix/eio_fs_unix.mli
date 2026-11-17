@@ -32,7 +32,7 @@ val sync_dir : _ Eio.Path.t -> unit
     directory is opened and {!full_fsync}ed on the descriptor that open returns,
     which resolves every component beneath [dir]'s capability, off the calling
     fiber's thread. A directory whose handle carries no descriptor takes
-    {!Eio_fs_sync.sync_dir}, and raises as it does.
+    [Eio.Path.sync_dir], and raises as it does.
 
     @raise Eio.Io
       if [dir] cannot be opened for its barrier, as [fsync] fails, or as a

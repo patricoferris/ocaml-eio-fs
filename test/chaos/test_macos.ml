@@ -9,7 +9,7 @@ type barrier = {
 }
 
 (* fsync(2), as [Eio.File.sync] and the portable barriers issue it. *)
-let plain = { file = Eio.File.sync; dir = Eio_fs_sync.sync_dir }
+let plain = { file = Eio.File.sync; dir = Eio.Path.sync_dir }
 
 (* F_FULLFSYNC on Darwin. *)
 let full = { file = Eio_fs_unix.sync_file; dir = Eio_fs_unix.sync_dir }
@@ -46,7 +46,7 @@ let drained () =
       match
         write "a" Eio.File.sync;
         write "b" Eio.File.sync;
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         write "c" Eio_fs_unix.sync_file
       with
       | () -> ack ()
@@ -67,7 +67,7 @@ let replay ?os () =
     (fun ~ack:_ env ->
       try
         P.unlink P.(env#fs / "old");
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         P.save ~create:(`Exclusive 0o644)
           P.(env#fs / "log")
           (String.make 1024 'N')

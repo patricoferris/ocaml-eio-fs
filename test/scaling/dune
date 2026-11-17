@@ -1,7 +1,7 @@
 (test
  (name test)
  (modules test test_scaling)
- (libraries eio eio.mock eio_fs eio-fs.sync alcotest cstruct fmt optint))
+ (libraries eio eio.mock eio_fs alcotest cstruct fmt optint))
 
 (executable
  (name by_hand)

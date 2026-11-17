@@ -281,8 +281,8 @@ let test_as_eio_posix () =
          if ok s then Some (List.hd (String.split_on_char ':' s)) else None)
        (snd mem))
 
-(* A file is no socket: eio_posix refuses a shutdown with ENOTSOCK, a bare
-   [Eio.Io], and so does the in-memory backend. *)
+(* A file is no socket: eio_posix's handle binds no shutdown, and neither
+   does the in-memory backend's. *)
 let test_shutdown_as_eio_posix () =
   (* Files are no flows of type [two_way_ty]: their shutdown is reached
      through the handler. *)
@@ -314,9 +314,9 @@ let test_shutdown_as_eio_posix () =
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / top))
   @@ fun () ->
   Eio.Path.mkdir ~perm:0o755 (fs / top);
-  Alcotest.(check string) "eio_posix" "Eio.Io" (outcome (fs / top));
+  Alcotest.(check string) "eio_posix" "no shutdown" (outcome (fs / top));
   Alcotest.(check string)
-    "the in-memory backend" "Eio.Io"
+    "the in-memory backend" "no shutdown"
     (outcome (Eio_fs.Fs.v () / "."))
 
 let suite =
@@ -330,7 +330,7 @@ let suite =
       Alcotest.test_case "relatime moves atime once a day" `Quick
         test_relatime_day;
       Alcotest.test_case "link and block counts" `Quick test_counts;
-      Alcotest.test_case "a shutdown of a file fails as on eio_posix" `Quick
+      Alcotest.test_case "a file binds no shutdown, as on eio_posix" `Quick
         test_shutdown_as_eio_posix;
       Alcotest.test_case "without a clock, time stands at 0" `Quick
         test_no_clock;

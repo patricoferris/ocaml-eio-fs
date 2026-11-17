@@ -29,6 +29,15 @@ jobs:
         with:
           ocaml-compiler: ${{ matrix.ocaml-compiler }}
 
+      # Eio 1.7 until ocaml/opam-repository#31253 merges.
+      - name: Pin Eio 1.7
+        run: |
+          pkgs="eio eio_posix eio_main"
+          if [ "$RUNNER_OS" = Linux ]; then pkgs="$pkgs eio_linux"; fi
+          for p in $pkgs; do
+            opam pin add -n -y "$p.1.7" "git+https://github.com/ocaml-multicore/eio.git#v1.7"
+          done
+
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build
       - run: opam exec -- dune test
@@ -43,6 +52,15 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: '5.4'
+
+      # Eio 1.7 until ocaml/opam-repository#31253 merges.
+      - name: Pin Eio 1.7
+        run: |
+          pkgs="eio eio_posix eio_main"
+          if [ "$RUNNER_OS" = Linux ]; then pkgs="$pkgs eio_linux"; fi
+          for p in $pkgs; do
+            opam pin add -n -y "$p.1.7" "git+https://github.com/ocaml-multicore/eio.git#v1.7"
+          done
 
       - run: opam install . --deps-only
       - run: opam exec -- dune build -p eio-fs @install
@@ -59,6 +77,15 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: '5.3'
+
+      # Eio 1.7 until ocaml/opam-repository#31253 merges.
+      - name: Pin Eio 1.7
+        run: |
+          pkgs="eio eio_posix eio_main"
+          if [ "$RUNNER_OS" = Linux ]; then pkgs="$pkgs eio_linux"; fi
+          for p in $pkgs; do
+            opam pin add -n -y "$p.1.7" "git+https://github.com/ocaml-multicore/eio.git#v1.7"
+          done
 
       # Resolve every dependency to the oldest version its lower bound allows,
       # so a call that only compiles against a newer API fails here rather than
@@ -77,6 +104,15 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: '5.4'
+
+      # Eio 1.7 until ocaml/opam-repository#31253 merges.
+      - name: Pin Eio 1.7
+        run: |
+          pkgs="eio eio_posix eio_main"
+          if [ "$RUNNER_OS" = Linux ]; then pkgs="$pkgs eio_linux"; fi
+          for p in $pkgs; do
+            opam pin add -n -y "$p.1.7" "git+https://github.com/ocaml-multicore/eio.git#v1.7"
+          done
 
       - run: opam install . --deps-only --with-doc
       - run: opam install odoc
@@ -111,6 +147,15 @@ jobs:
       - uses: ocaml/setup-ocaml@v3
         with:
           ocaml-compiler: '5.4'
+
+      # Eio 1.7 until ocaml/opam-repository#31253 merges.
+      - name: Pin Eio 1.7
+        run: |
+          pkgs="eio eio_posix eio_main"
+          if [ "$RUNNER_OS" = Linux ]; then pkgs="$pkgs eio_linux"; fi
+          for p in $pkgs; do
+            opam pin add -n -y "$p.1.7" "git+https://github.com/ocaml-multicore/eio.git#v1.7"
+          done
 
       - run: opam install . --deps-only --with-test
       - run: opam exec -- dune build @check

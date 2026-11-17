@@ -159,8 +159,8 @@ let exec ~sw ~fds ~mark fs op =
   | Unlink name -> Eio.Path.unlink (fs / name)
   | Symlink { target; name } -> Eio.Path.symlink ~link_to:target (fs / name)
   | Truncate (name, len) -> Eio.File.truncate (fd name).file (i63 len)
-  | Fsync_dir "" -> Eio_fs_sync.sync_dir fs
-  | Fsync_dir d -> Eio_fs_sync.sync_dir (fs / d)
+  | Fsync_dir "" -> Eio.Path.sync_dir fs
+  | Fsync_dir d -> Eio.Path.sync_dir (fs / d)
   | Fsync_fails name -> (
       match Eio.File.sync (fd name).file with
       | () -> failwith "the injected sync failure did not fire"

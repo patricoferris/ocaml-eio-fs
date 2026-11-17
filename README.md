@@ -91,7 +91,7 @@ temporary file, syncs it, renames it, then syncs the directory.
         Eio.Flow.copy_string v f;
         Eio.File.sync f);
     Eio.Path.rename tmp Eio.Path.(dir / "config");
-    if sync_dir then Eio_fs_sync.sync_dir dir;;
+    if sync_dir then Eio.Path.sync_dir dir;;
 val save : sync_dir:bool -> [> Eio.Fs.dir_ty ] Eio.Path.t -> string -> unit =
   <fun>
 ```

@@ -57,7 +57,7 @@ let images ?block_size workload =
     let ctl = Crash.v ?block_size ~policy:(Reorder_unsynced seed) () in
     with_crash ctl @@ fun ~raw:_ ~fs ->
     write_new ~sync:true (fs / "f") "";
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     workload fs;
     let post = Crash.post_crash ctl in
     Hashtbl.replace seen (Eio.Path.load (post / "f")) ()

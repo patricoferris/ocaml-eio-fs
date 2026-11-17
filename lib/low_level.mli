@@ -182,9 +182,6 @@ val symlinkat : link_to:string -> Dir.fd -> string -> unit
     [link_to]. *)
 
 module Flow : sig
-  val of_fd :
-    Fd.t ->
-    [ [ `Generic | `Unix ] Eio.Net.stream_socket_ty | Eio.File.rw_ty ]
-    Eio.Resource.t
-  (** [of_fd fd] is [fd] as an Eio flow and file resource. *)
+  val of_fd : Fd.t -> Eio.File.rw_ty Eio.Resource.t
+  (** [of_fd fd] is [fd] as an Eio file resource. *)
 end

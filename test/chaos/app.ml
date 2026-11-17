@@ -10,7 +10,7 @@ let save_config ?(bug = `None) dir contents =
       Eio.Flow.copy_string contents f;
       if bug <> `No_file_sync then Eio.File.sync f);
   P.rename tmp P.(dir / "config");
-  if bug <> `No_dir_sync then Eio_fs_sync.sync_dir dir
+  if bug <> `No_dir_sync then Eio.Path.sync_dir dir
 
 let load_config dir = P.load P.(dir / "config")
 
@@ -38,7 +38,7 @@ module Log = struct
     let f =
       P.open_out ~sw ~append:true ~create:(`If_missing 0o644) P.(dir / "log")
     in
-    Eio_fs_sync.sync_dir dir;
+    Eio.Path.sync_dir dir;
     f
 
   (* Returns once the record is durable. *)

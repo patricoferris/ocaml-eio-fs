@@ -204,7 +204,7 @@ let exec ~sw ~w ~wu ~dry hs i op =
   | Unlink p -> P.unlink P.(w / p)
   | Rename (a, b) -> P.rename P.(w / a) P.(w / b)
   | Symlink (l, t) -> P.symlink ~link_to:t P.(w / l)
-  | Sync_dir p -> Eio_fs_sync.sync_dir P.(w / p)
+  | Sync_dir p -> Eio.Path.sync_dir P.(w / p)
   | Sync_meta | Fake_barrier _ | Fake_fsync _ -> ()
   | Chmod (u, p, m) -> P.chmod ~follow:false ~perm:m P.(d u / p)
   | Chown (p, u) ->
@@ -226,7 +226,7 @@ let exec ~sw ~w ~wu ~dry hs i op =
       if hs.dh <> None then raise Exit;
       hs.dh <- Some (P.open_dir ~sw P.(w / p) :> Eio.Fs.dir_ty P.t)
   | Sync_dh -> (
-      match hs.dh with None -> raise Exit | Some d -> Eio_fs_sync.sync_dir d)
+      match hs.dh with None -> raise Exit | Some d -> Eio.Path.sync_dir d)
   | Open_in_d p ->
       if hs.dfh <> None then raise Exit;
       if P.kind ~follow:true P.(w / p) <> `Directory then raise Exit;

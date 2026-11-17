@@ -28,7 +28,7 @@ adapted from Patrick Ferris's eio_mem (https://git.sirref.org/eio_mem).")
  (depends
   (hermetic (>= 0.1.0))
   (ocaml (>= 5.3))
-  (eio (>= 1.6))
+  (eio (>= 1.7))
   fmt
   cstruct
   optint
@@ -38,9 +38,9 @@ adapted from Patrick Ferris's eio_mem (https://git.sirref.org/eio_mem).")
   uucp
   uunf
   (cmdliner (>= 1.1.0))
-  eio_main
+  (eio_main (>= 1.7))
   (conf-linux-libc-dev (= :os linux))
   (mdx (and :with-test (>= 2.3.0)))
   (alcotest (and :with-test (>= 1.7.0)))
   (alcobar :with-test)
-  (eio_posix :with-test)))
+  (eio_posix (and :with-test (>= 1.7)))))

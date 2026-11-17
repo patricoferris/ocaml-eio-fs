@@ -22,7 +22,7 @@ depends: [
   "dune" {>= "3.21"}
   "hermetic" {>= "0.1.0"}
   "ocaml" {>= "5.3"}
-  "eio" {>= "1.6"}
+  "eio" {>= "1.7"}
   "fmt"
   "cstruct"
   "optint"
@@ -32,12 +32,12 @@ depends: [
   "uucp"
   "uunf"
   "cmdliner" {>= "1.1.0"}
-  "eio_main"
+  "eio_main" {>= "1.7"}
   "conf-linux-libc-dev" {os = "linux"}
   "mdx" {with-test & >= "2.3.0"}
   "alcotest" {with-test & >= "1.7.0"}
   "alcobar" {with-test}
-  "eio_posix" {with-test}
+  "eio_posix" {with-test & >= "1.7"}
   "odoc" {with-doc}
 ]
 build: [

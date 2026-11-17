@@ -61,7 +61,7 @@ let exec_op ~sw ~ctl ~cw ~handles ~dhandles op =
   | Fsync_ro x ->
       Eio.Path.with_open_in (p x) (fun f ->
           Eio_fs_sync.Barrier.sync_file Eio_fs_sync.Barrier.portable f)
-  | Fsync_dir x -> Eio_fs_sync.sync_dir (p x)
+  | Fsync_dir x -> Eio.Path.sync_dir (p x)
   | Fsync_fail x ->
       let sched =
         Chaos.Schedule.scripted
@@ -82,7 +82,7 @@ let exec_op ~sw ~ctl ~cw ~handles ~dhandles op =
         [ Cstruct.of_string d ]
   | Hsync h -> Eio.File.sync (Hashtbl.find handles h)
   | Dopen (h, x) -> Hashtbl.replace dhandles h (Eio.Path.open_dir ~sw (p x))
-  | Dsync h -> Eio_fs_sync.sync_dir (Hashtbl.find dhandles h)
+  | Dsync h -> Eio.Path.sync_dir (Hashtbl.find dhandles h)
 
 let read_image base : image =
   let acc = ref [] in

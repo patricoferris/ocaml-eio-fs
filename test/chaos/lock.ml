@@ -18,7 +18,7 @@ let acquire ?(bug = `None) ~pid ~alive dir =
           Eio.Flow.copy_string (string_of_int pid ^ "\n") f;
           Eio.File.sync f)
     with
-    | () -> Eio_fs_sync.sync_dir dir
+    | () -> Eio.Path.sync_dir dir
     | exception Eio.Io (Eio.Fs.E (Eio.Fs.Already_exists _), _) -> (
         match read_pid lock with
         | `Gone -> attempt (n + 1)
@@ -38,7 +38,7 @@ let acquire ?(bug = `None) ~pid ~alive dir =
 
 let release dir =
   P.unlink P.(dir / "lock");
-  Eio_fs_sync.sync_dir dir
+  Eio.Path.sync_dir dir
 
 let read_counter dir =
   match P.load P.(dir / "counter") with
@@ -52,7 +52,7 @@ let write_counter dir n =
       Eio.Flow.copy_string (string_of_int n) f;
       Eio.File.sync f);
   P.rename P.(dir / "counter.tmp") P.(dir / "counter");
-  Eio_fs_sync.sync_dir dir
+  Eio.Path.sync_dir dir
 
 let boots = ref 100
 

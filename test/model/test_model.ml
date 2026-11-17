@@ -809,7 +809,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
               Ok ignore
           | Sync_dir p -> (
               let d = match who with Root -> dir | Alice -> alice_dir in
-              match Eio_fs_sync.sync_dir (if p = "" then d else d // p) with
+              match Eio.Path.sync_dir (if p = "" then d else d // p) with
               | () -> Ok ignore
               | exception Eio.Io _ -> Ok ignore)
           | op -> (

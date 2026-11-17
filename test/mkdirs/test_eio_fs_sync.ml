@@ -59,7 +59,7 @@ let test_an_existing_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b");
   Alcotest.(check (list string)) "the new entry is committed" [] (pending ctl);
   Crash.crash ctl;
@@ -121,7 +121,7 @@ let test_racing_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   let _, parent_path = fs / "a" in
   let raced = ref false in
   let module Chaos = Eio_fs.Chaos.Private in

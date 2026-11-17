@@ -91,6 +91,10 @@ let operations =
         "A fault refuses the change before the base makes it."
         (fun ~follow:_ ?uid:_ ?gid:_ -> absurd)
 
+    let sync_dir =
+      dir "sync_dir" (Intercepted `Sync)
+        "A fault refuses the barrier before the base's barrier runs." absurd
+
     let pp =
       dir "pp" Forwarded "A path through the wrapper is named as the base's."
         (fun _ -> absurd)
@@ -240,14 +244,14 @@ let sync_failed =
 
 let shutdown =
   file_handler "Eio.Flow.Pi.Shutdown" Unsupported
-    "A file is no socket: the in-memory backend's handle and eio_posix's \
-     refuse it with ENOTSOCK."
+    "A file is no socket: neither the in-memory backend's handle nor \
+     eio_posix's binds it."
 
 (* Eio hides this one, so [binding] cannot name it. *)
 let socket =
   file_handler "Eio.Net.Pi.Socket" Unsupported
-    "A file is no socket: the in-memory backend's handle and eio_posix's \
-     refuse it with ENOTSOCK."
+    "A file is no socket: neither the in-memory backend's handle nor \
+     eio_posix's binds it."
 
 let read_only_write =
   file_handler "write side of a file opened for reading" Unsupported

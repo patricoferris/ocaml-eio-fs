@@ -84,7 +84,7 @@ let freed_by_unlink () =
     (fun ~ack env ->
       try
         P.unlink P.(env#fs / "old");
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         ack ();
         P.with_open_out ~append:true ~create:`Never P.(env#fs / "new")
         @@ fun f -> Eio.Flow.copy_string (String.make 512 'x') f
@@ -110,7 +110,7 @@ let freed_elsewhere () =
     (fun ~ack env ->
       try
         P.unlink P.(env#fs / "old");
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         ack ();
         P.with_open_out ~append:true ~create:`Never P.(env#fs / "new")
         @@ fun f -> Eio.Flow.copy_string (String.make 512 'x') f
@@ -137,7 +137,7 @@ let freed_open () =
         Eio.Switch.run (fun sw ->
             let _old = P.open_in ~sw P.(env#fs / "old") in
             P.unlink P.(env#fs / "old");
-            Eio_fs_sync.sync_dir env#fs;
+            Eio.Path.sync_dir env#fs;
             P.with_open_out ~append:true ~create:`Never
               P.(env#fs / "new")
               (fun f -> Eio.Flow.copy_string (String.make 512 'x') f);
@@ -170,7 +170,7 @@ let freed_unsynced () =
           P.(env#fs / "tmp")
           (sectors [ 'A'; 'B'; 'C'; 'D'; 'E'; 'F'; 'G'; 'H'; 'I'; 'J' ]);
         P.unlink P.(env#fs / "tmp");
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         ack ();
         P.with_open_out ~append:true ~create:`Never P.(env#fs / "new")
         @@ fun f -> Eio.Flow.copy_string (String.make 512 'x') f
@@ -274,7 +274,7 @@ let truncate_order ~truncate_first ~barrier ~len () =
         in
         if truncate_first then truncate ();
         P.mkdir ~perm:0o755 P.(env#fs / "e" / "d");
-        if barrier then Eio_fs_sync.sync_dir P.(env#fs / "e");
+        if barrier then Eio.Path.sync_dir P.(env#fs / "e");
         if not truncate_first then truncate ()
       with Eio.Io _ -> ())
     ~recover:(fun ~acked:_ env ->

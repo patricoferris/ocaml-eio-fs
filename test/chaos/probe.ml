@@ -168,7 +168,7 @@ let log_varying n () =
           P.open_out ~sw ~append:true ~create:(`If_missing 0o644)
             P.(env#fs / "log")
         in
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         for i = 1 to n do
           Eio.Flow.copy_string (encode (rec_ i)) f;
           Eio.File.sync f;
@@ -197,7 +197,7 @@ let log_budget n () =
           P.open_out ~sw ~append:true ~create:(`If_missing 0o644)
             P.(env#fs / "log")
         in
-        Eio_fs_sync.sync_dir env#fs;
+        Eio.Path.sync_dir env#fs;
         for i = 1 to n do
           Eio.Flow.copy_string (rec_ i) f;
           Eio.File.sync f;
@@ -227,7 +227,7 @@ let fixed_records () =
         P.with_open_out ~create:(`Exclusive 0o644)
           P.(env#fs / "log")
           (fun f ->
-            Eio_fs_sync.sync_dir env#fs;
+            Eio.Path.sync_dir env#fs;
             for i = 0 to 2 do
               (* A record that fails is cut away again. *)
               (try

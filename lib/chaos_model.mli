@@ -102,8 +102,8 @@ module Op : sig
       (** A truncation of a file; its [file_offset] is the new length. It
           accepts {!Fault.t.Write_error}, which no seeded schedule injects. *)
     | `Sync
-      (** A sync: a file's, or a directory's through [Eio_fs_sync.sync_dir],
-          whose path is the directory. *)
+      (** A sync: a file's, or a directory's through [Eio.Path.sync_dir], whose
+          path is the directory. *)
     | `Open_read  (** An open for reading, of a file or a subdirectory. *)
     | `Open_write  (** An open that may write or create the file. *)
     | `Stat  (** A stat, of a path or of an open file. *)
@@ -513,7 +513,7 @@ module Crash : sig
   (** [sync_metadata t] commits the whole metadata journal: every pending
       directory operation becomes durable, as fsync(2) on every directory
       concerned would make it, a setuid or setgid clear included. A directory
-      barrier ({!Eio_fs_sync.sync_dir} on a wrapped directory) commits only the
+      barrier ([Eio.Path.sync_dir] on a wrapped directory) commits only the
       entries of that directory.
 
       @raise Eio.Io ("power lost") if [t] has crashed. *)

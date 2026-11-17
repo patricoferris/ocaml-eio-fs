@@ -759,7 +759,7 @@ let apply_op fs ctl (m : Model.t) b0 b1 b2 b3 =
       (* the barrier on one directory: its own entries only *)
       match pick (dirs m) b1 with
       | Some dir ->
-          Eio_fs_sync.sync_dir (if String.equal dir "" then fs else fs / dir);
+          Eio.Path.sync_dir (if String.equal dir "" then fs else fs / dir);
           Model.commit_dir m dir
       | None -> ())
 

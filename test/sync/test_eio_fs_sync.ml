@@ -29,7 +29,7 @@ let _ :
 let test_registered_backend () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  Eio_fs_sync.sync_dir env#fs;
+  Eio.Path.sync_dir env#fs;
   Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy_string "one" f);
   Alcotest.(check string) "published" "one" (Eio.Path.load (env#fs / "cfg"));
@@ -40,10 +40,8 @@ let test_registered_backend () =
     "temporary cleaned" true
     (Eio.Path.kind ~follow:false (env#fs / "cfg.tmp") = `Not_found)
 
-(* A plain POSIX directory needs no registration and no wrapper: the barrier
-   opens the directory read-only and fsyncs its handle. This pins the backend
-   behaviour the route rests on (a directory opens, its handle syncs), so an
-   eio upgrade that drops either fails here and not in a store. *)
+(* A plain POSIX directory needs no registration and no wrapper: the
+   portable barrier is the backend's own [Eio.Path.sync_dir]. *)
 let test_posix_needs_no_registration () =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
@@ -52,7 +50,7 @@ let test_posix_needs_no_registration () =
   Eio.Path.mkdir ~perm:0o755 (fs / dir);
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
-  Eio_fs_sync.sync_dir (fs / dir);
+  Eio_fs_sync.Barrier.(sync_dir portable) (fs / dir);
   Eio_fs_sync.publish ~max_bytes:1L
     (fs / dir / "cfg")
     (fun f -> Eio.Flow.copy_string "x" f);
@@ -81,59 +79,15 @@ let test_publish_honours_perm_under_umask () =
   let stat = Eio.Path.stat ~follow:false (fs / dir / "cfg") in
   Alcotest.(check int) "published mode is perm" 0o644 stat.perm
 
-(* A barrier that cannot be issued surfaces loudly, with context pointing at
-   the Dir_sync registration -- never a silent no-op. *)
+(* A barrier on a missing directory raises, never a silent no-op. *)
 let test_unissuable_barrier_raises () =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
-  match Eio_fs_sync.sync_dir (fs / "/no-such-dir-for-eio-fs-sync") with
+  match
+    Eio_fs_sync.Barrier.(sync_dir portable) (fs / "/no-such-dir-for-eio-fs-sync")
+  with
   | () -> Alcotest.fail "sync_dir accepted a missing directory"
-  | exception (Eio.Io _ as e) ->
-      Alcotest.(check bool)
-        "error context names Dir_sync" true
-        (contains ~affix:"Dir_sync" (Printexc.to_string e))
-
-(* [unsyncable dir] is [dir] with no Dir_sync barrier and with handles that
-   cannot sync: [dir]'s own operations, its files opened read-only. *)
-let unsyncable ((Eio.Resource.T (v, ops), path) : _ Eio.Path.t) =
-  let unsyncable (type a) (v : a) (ops : (a, _) Eio.Resource.handler) =
-    let module D = (val Eio.Resource.get ops Eio.Fs.Pi.Dir) in
-    let module Read_only = struct
-      include D
-
-      let open_in t ~sw ~follow path =
-        let (Eio.Resource.T (f, file)) = D.open_in t ~sw ~follow path in
-        let module R = (val Eio.Resource.get file Eio.File.Pi.Read) in
-        Eio.Resource.T (f, Eio.File.Pi.ro (module R))
-    end in
-    let barrier : type i g. (a, i, g) Eio.Resource.pi -> bool = function
-      | Eio_fs_sync.Dir_sync -> true
-      | _ -> false
-    in
-    let kept =
-      List.filter
-        (fun (Eio.Resource.H (pi, _)) -> not (barrier pi))
-        (Eio.Resource.bindings ops)
-    in
-    let handler : (a, Eio.Fs.dir_ty) Eio.Resource.handler =
-      Eio.Resource.handler
-        (Eio.Resource.H (Eio.Fs.Pi.Dir, (module Read_only)) :: kept)
-    in
-    (Eio.Resource.T (v, handler), path)
-  in
-  unsyncable v ops
-
-(* A backend that registers no barrier and whose directory handle cannot sync
-   is wired wrongly, an error in the program rather than in the filesystem. *)
-let test_unsyncable_backend_is_invalid () =
-  Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
-  match Eio_fs_sync.sync_dir (unsyncable env#fs) with
-  | () -> Alcotest.fail "sync_dir skipped the barrier"
-  | exception Invalid_argument reason ->
-      Alcotest.(check bool)
-        "names Dir_sync" true
-        (contains ~affix:"Dir_sync" reason)
+  | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ()
 
 (* A failed write cleans its temporary up and the failure propagates. *)
 let test_failed_save_cleans_temporary () =
@@ -295,9 +249,9 @@ let test_publish_durability_flag () =
 
    A commit protocol makes two things durable: the bytes it wrote and the
    directory entry that names them. [sync_file] is the first half, and it
-   dispatches the way [sync_dir] does -- through the operation the backend
-   registers, [File_sync]. A file is itself the resource, so that operation
-   takes no name where the directory's takes a [~path].
+   dispatches through the operation the backend registers, [File_sync]. A
+   file is itself the resource, so that operation takes no name where the
+   directory's [Dir_sync] takes a [~path].
 
    The registration is what makes the barrier visible to a wrapper, and a
    wrapper that models power loss has to see the barrier the protocol issued
@@ -404,7 +358,7 @@ let test_sync_file_reaches_the_crash_model () =
       Eio_fs_sync.sync_file file);
   (* The name the bytes live under is the metadata journal's business, as
      fsync(2) divides them, so the entry takes the directory barrier. *)
-  Eio_fs_sync.sync_dir fs;
+  Eio.Path.sync_dir fs;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the barriered bytes survived the cut" "payload"
@@ -1026,8 +980,6 @@ let suite =
         test_publish_honours_perm_under_umask;
       Alcotest.test_case "unissuable barrier raises" `Quick
         test_unissuable_barrier_raises;
-      Alcotest.test_case "unsyncable backend is invalid" `Quick
-        test_unsyncable_backend_is_invalid;
       Alcotest.test_case "failed save cleans temporary" `Quick
         test_failed_save_cleans_temporary;
       Alcotest.test_case "publish with a remote temporary" `Quick
@@ -1122,7 +1074,7 @@ module Links = struct
     fixture @@ fun fs ->
     let module Crash = Eio_fs.Chaos.Private.Crash in
     Eio.Path.symlink ~link_to:"../old" (fs / "portal");
-    Eio_fs_sync.sync_dir fs;
+    Eio.Path.sync_dir fs;
     let ctl = Crash.v () in
     let wrapped = Crash.wrap ctl fs in
     ignore

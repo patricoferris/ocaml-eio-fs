@@ -108,9 +108,9 @@ let test_crash_barriers_beside_a_pinned_entry () =
           let f = fs / "D" / Fmt.str "f%d" (i mod 64) in
           Eio.Path.save ~create:(`Or_truncate 0o644) f "abc";
           Eio.Path.with_open_out ~create:`Never f Eio.File.sync;
-          Eio_fs_sync.sync_dir (fs / "D");
+          Eio.Path.sync_dir (fs / "D");
           Eio.Path.unlink f;
-          Eio_fs_sync.sync_dir (fs / "D")
+          Eio.Path.sync_dir (fs / "D")
         done)
   in
   at_most "words per round, beside a pinned entry" ~bound:50_000. (w /. 8000.)
@@ -134,12 +134,12 @@ let test_crash_alternating_barriers () =
           let d = fs / "D" / Fmt.str "d%d" (i mod 64) in
           Eio.Path.save ~create:(`Or_truncate 0o644) x "abc";
           Eio.Path.save ~create:(`Or_truncate 0o644) d "abc";
-          Eio_fs_sync.sync_dir (fs / "D");
-          Eio_fs_sync.sync_dir (fs / "X");
+          Eio.Path.sync_dir (fs / "D");
+          Eio.Path.sync_dir (fs / "X");
           Eio.Path.unlink x;
           Eio.Path.unlink d;
-          Eio_fs_sync.sync_dir (fs / "D");
-          Eio_fs_sync.sync_dir (fs / "X")
+          Eio.Path.sync_dir (fs / "D");
+          Eio.Path.sync_dir (fs / "X")
         done)
   in
   at_most "words per round, alternating barriers" ~bound:50_000. (w /. 2000.)

@@ -329,7 +329,7 @@ let test_setup_directory () =
   Eio_fs.Chaos.Crash.check
     ~setup:(fun env ->
       P.mkdir ~perm:0o755 P.(env#fs / "objects");
-      Eio_fs_sync.sync_dir env#fs)
+      Eio.Path.sync_dir env#fs)
     (fun ~ack:_ env ->
       try P.save ~create:(`Exclusive 0o644) P.(env#fs / "objects" / "x") "x"
       with Eio.Io _ -> ())
@@ -854,19 +854,19 @@ let recover_syncs dirs =
       for i = 1 to dirs do
         P.mkdir ~perm:0o755 P.(env#fs / dir i)
       done;
-      Eio_fs_sync.sync_dir env#fs)
+      Eio.Path.sync_dir env#fs)
     (fun ~ack env ->
       incr runs;
       for i = 1 to 3 do
         try
           Eio_fs_sync.save P.(env#fs / "d1" / Fmt.str "f%d" i) "x";
-          Eio_fs_sync.sync_dir P.(env#fs / "d1");
+          Eio.Path.sync_dir P.(env#fs / "d1");
           ack i
         with Eio.Io _ -> ()
       done)
     ~recover:(fun ~acked env ->
       for i = 1 to dirs do
-        Eio_fs_sync.sync_dir P.(env#fs / dir i)
+        Eio.Path.sync_dir P.(env#fs / dir i)
       done;
       List.iter
         (fun i -> ignore (P.load P.(env#fs / "d1" / Fmt.str "f%d" i)))
@@ -922,7 +922,7 @@ let test_stamp () =
   in
   P.mkdir ~perm:0o755 P.(fs / "d");
   P.save ~create:(`Exclusive 0o644) P.(fs / "d" / "f") "x";
-  let d () = Eio_fs_sync.sync_dir P.(fs / "d") in
+  let d () = Eio.Path.sync_dir P.(fs / "d") in
   Alcotest.(check bool) "barrier" true (moved d);
   Alcotest.(check bool) "again" false (moved d);
   let f () = P.with_open_out ~create:`Never P.(fs / "d" / "f") Eio.File.sync in
@@ -943,7 +943,7 @@ let test_syncs_count_in_the_floor () =
           for i = 1 to 50 do
             try
               Eio_fs_sync.save P.(env#fs / Fmt.str "f%d" i) "x";
-              Eio_fs_sync.sync_dir env#fs;
+              Eio.Path.sync_dir env#fs;
               ack i
             with Eio.Io _ -> ()
           done)
@@ -1092,7 +1092,7 @@ let test_kept_going () =
                 P.save ~create:(`Or_truncate 0o644)
                   P.(env#fs / "f")
                   (string_of_int !n);
-                Eio_fs_sync.sync_dir env#fs;
+                Eio.Path.sync_dir env#fs;
                 ack !n;
                 incr n
               with Eio.Io _ | Eio.Cancel.Cancelled _ -> ()
@@ -1146,7 +1146,7 @@ let test_kept_loses_nothing () =
                 Eio.Flow.copy_string "half" f;
                 Eio.Flow.copy_string "-whole" f;
                 Eio.File.sync f);
-            Eio_fs_sync.sync_dir env#fs;
+            Eio.Path.sync_dir env#fs;
             ack ())
           ~recover:(fun ~acked env ->
             match P.load P.(env#fs / "f") with
@@ -1246,7 +1246,7 @@ let test_cut_in_recover () =
                 (fun f ->
                   Eio.Flow.copy_string "b" f;
                   Eio.File.sync f);
-              Eio_fs_sync.sync_dir env#fs
+              Eio.Path.sync_dir env#fs
             with
             | () -> ack ()
             | exception Eio.Io _ -> ())
@@ -1256,9 +1256,9 @@ let test_cut_in_recover () =
             (match P.load P.(env#fs / "f.new") with
             | "b" as v ->
                 P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") v;
-                Eio_fs_sync.sync_dir env#fs;
+                Eio.Path.sync_dir env#fs;
                 P.unlink P.(env#fs / "f.new");
-                Eio_fs_sync.sync_dir env#fs
+                Eio.Path.sync_dir env#fs
             | _ | (exception Eio.Io _) -> ());
             match (P.load P.(env#fs / "f"), acked) with
             | "b", _ | "a", [] -> ()

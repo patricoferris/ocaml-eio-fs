@@ -186,7 +186,7 @@ let sync_dir ((res, path) as p : _ Eio.Path.t) =
       Eio.Switch.run @@ fun sw ->
       let handle = Eio.Path.open_in ~sw ~follow:false p in
       match Eio_unix.Resource.fd_opt handle with
-      | None -> Eio_fs_sync.sync_dir p
+      | None -> Eio.Path.sync_dir p
       | Some fd ->
           Eio_unix.Fd.use_exn "eio-fs-sync-dir" fd @@ fun fd ->
           eio_unix_errors @@ fun () ->

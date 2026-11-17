@@ -55,14 +55,14 @@ let exec ?sw ?(dirs = Hashtbl.create 1) fs = function
   | Unlink p -> Eio.Path.unlink (fs / p)
   | Rmdir p -> Eio.Path.rmdir (fs / p)
   | Fsync p -> Eio.Path.with_open_out ~create:`Never (fs / p) Eio.File.sync
-  | Fsync_dir "" -> Eio_fs_sync.sync_dir fs
-  | Fsync_dir p -> Eio_fs_sync.sync_dir (fs / p)
+  | Fsync_dir "" -> Eio.Path.sync_dir fs
+  | Fsync_dir p -> Eio.Path.sync_dir (fs / p)
   | Chmod (p, m) -> Eio.Path.chmod ~follow:true ~perm:m (fs / p)
   | Dopen (h, p) -> (
       match sw with
       | Some sw -> Hashtbl.replace dirs h (Eio.Path.open_dir ~sw (fs / p))
       | None -> invalid_arg "Reference.exec: opendir needs a switch")
-  | Dsync h -> Eio_fs_sync.sync_dir (Hashtbl.find dirs h)
+  | Dsync h -> Eio.Path.sync_dir (Hashtbl.find dirs h)
 
 (* {1 Live trees, by inode} *)
 

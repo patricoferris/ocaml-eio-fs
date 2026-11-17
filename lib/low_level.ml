@@ -1542,7 +1542,6 @@ let truncate_fd t len =
 
 module Flow = struct
   module Impl = struct
-    type tag = [ `Generic | `Unix ]
     type t = Fd.t
 
     let stat = stat
@@ -1570,10 +1569,6 @@ module Flow = struct
     let single_read t buf =
       match readv t [ buf ] with 0 -> raise End_of_file | got -> got
 
-    (* ENOTSOCK, which eio_posix and eio_linux raise as a bare [Eio.Io]. *)
-    let shutdown _ _ = Error.err "shutdown: not a socket"
-    let getsockopt _ _ = Error.err "getsockopt: not a socket"
-    let setsockopt _ _ _ = Error.err "setsockopt: not a socket"
     let read_methods = []
     let pread = preadv
     let pwrite = pwritev
@@ -1586,20 +1581,7 @@ module Flow = struct
     let close = close
   end
 
-  module type FLOW = sig
-    include Eio.File.Pi.WRITE
-    include Eio.Net.Pi.STREAM_SOCKET with type t := t
-  end
-
-  let flow_handler (type t tag)
-      (module X : FLOW with type t = t and type tag = tag) :
-      ( t,
-        [ tag Eio.Net.stream_socket_ty | Eio.File.rw_ty ] )
-      Eio.Resource.handler =
-    Eio.Resource.handler
-    @@ Eio.Resource.bindings (Eio.Net.Pi.stream_socket (module X))
-    @ Eio.Resource.bindings (Eio.File.Pi.rw (module X))
-
-  let handler = flow_handler (module Impl)
+  (* A file and no socket, as eio_posix's. *)
+  let handler = Eio.File.Pi.rw (module Impl)
   let of_fd fd = Eio.Resource.T (fd, handler)
 end
