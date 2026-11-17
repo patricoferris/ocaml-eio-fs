@@ -1,233 +1,50 @@
-(** The fault wrapper and the crash model that [Eio_fs.Chaos] is built on, which
-    the tests reach as [Eio_fs.Chaos.Private].
+(** The fault wrapper and the crash model that [Eio_fs.Chaos] is built on; the
+    tests reach the crash model as [Eio_fs.Chaos.Private.Crash].
 
-    {!wrap} wraps a directory, in memory or on disk, and asks a {!Schedule.t}
+    {!wrap} wraps a directory, in memory or on disk, and asks a {!type-hook}
     about each read, write, sync, open, stat, listing and directory change. A
-    schedule is scripted (rules that pin one scenario), a hook, or seeded
-    (faults drawn from a seed). A fault is raised as an ordinary {!Eio.Io}, so
-    the code under test cannot tell it from a failure of the base.
+    fault is raised as an ordinary {!Eio.Io}, so the code under test cannot tell
+    it from a failure of the base.
 
     {!Crash} models power loss: it tracks which writes and directory changes a
     barrier has made durable, and rebuilds the base as a cut leaves it. *)
 
-type code = [ `Enoent | `Eacces | `Eperm | `Erofs | `Enospc | `Eio ]
-(** The type for the POSIX error codes an injected fault raises. An
-    {!Fault.t.Open_error}, a {!Fault.t.Change_error}, or a {!Fault.t.Stat_error}
-    on a stat of a path, raises {!Eio.Fs.Not_found} for [`Enoent] and
-    {!Eio.Fs.Permission_denied} for [`Eacces] and [`Eperm]; every other injected
-    error, a stat of an open file included, is an {!Eio.Io} whose message names
-    the code. [`Eacces], [`Eperm] and [`Erofs] (a read-only filesystem) are for
-    code that assumes it can always write: a directory it cannot create in, a
-    read-only mount, a file another user owns. *)
+type hook = space:bool -> Chaos_plan.Op.t -> Chaos_plan.Fault.t option
+(** The type for what a wrapper asks about each operation. [space] is whether
+    the operation may fail for want of room: a write, an open that makes its
+    file, a [mkdir], a [symlink] or a [rename]. *)
 
-(** The fault kinds the wrapper can inject. Byte counts on the short-read,
-    short-write and torn-write faults are relative to the current operation's
-    buffer. *)
-module Fault : sig
-  type kind =
-    [ `Short_read
-    | `Read_error
-    | `Short_write
-    | `Torn_write
-    | `Write_error
-    | `Sync_error
-    | `Sync_evict
-    | `Open_error
-    | `Stat_error
-    | `Change_error
-    | `Swap ]
-  (** The type for fault families: one per constructor of {!t}, named after it,
-      and [`Swap] for {!constructor-Swap_symlink}. A seeded schedule never
-      generates [`Swap]: a swap needs a target it cannot draw. *)
+type sched
+(** The type for schedules: a hook and the numbering of the operations it is
+    asked about, which every wrapper given the schedule shares. *)
 
-  (** The type for injected faults. A fault fires on one operation; one that
-      does not apply to that operation's kind injects nothing. *)
-  type t =
-    | Short_read of int
-        (** Deliver at most [max 1 n] bytes of the requested read, forcing the
-            caller to loop. A read of an empty buffer is left whole. *)
-    | Read_error of code
-        (** Deliver nothing and raise {!type-code}, on a read or a directory
-            read. *)
-    | Short_write of int
-        (** Accept at most [max 1 n] bytes of the offered write, forcing the
-            caller to loop. *)
-    | Torn_write of int
-        (** Commit the first [n] bytes of the write (none if [n <= 0], all of
-            them if [n] exceeds its length) to the base, then raise [`Enospc]:
-            bytes reach the store but the operation reports failure. *)
-    | Write_error of code  (** Commit nothing and raise {!type-code}. *)
-    | Sync_error of code  (** Fail a sync with {!type-code}. *)
-    | Sync_evict of code
-        (** As {!Sync_error}, and the page cache drops the pages the sync could
-            not write. Over a {!Crash} controller, a later read of them sees the
-            bytes the disk holds, as Linux may show after a failed fsync(2);
-            elsewhere it is {!Sync_error}. *)
-    | Open_error of code
-        (** Fail an open or a directory open with {!type-code}. *)
-    | Stat_error of code  (** Fail a stat with {!type-code}. *)
-    | Change_error of code
-        (** Fail a change to a directory's entries (a [mkdir], [symlink],
-            [unlink], [rmdir] or [rename]) or to an entry's mode or owner (a
-            [chmod] or [chown]) with {!type-code}, before it is made. A seeded
-            schedule draws [`Eacces], [`Eperm] or [`Erofs]. *)
-    | Swap_symlink of string
-        (** Perform an open or a stat, then replace its path with a symbolic
-            link to the given target: the check-to-use window a TOCTOU exploits.
-            On a stat, the stat sees the original file while the following open
-            resolves to the link; on an open, the caller keeps its handle while
-            the path afterwards answers about the target. *)
+val schedule : hook -> sched
+(** [schedule f] asks [f] about each operation, numbered from [1]. *)
 
-  val equal : t -> t -> bool
-  (** [equal f0 f1] is [true] iff [f0] and [f1] are the same constructor with
-      equal arguments. *)
+val applies : space:bool -> Chaos_plan.Op.t -> Chaos_plan.Fault.t -> bool
+(** [applies ~space op f] is [true] iff [f] does something to [op]: a fault of
+    another kind of operation does nothing, and neither does an [ENOSPC] on an
+    open or a change that makes nothing, as Linux never answers it there. *)
 
-  val compare : t -> t -> int
-  (** [compare] is a total order on faults compatible with {!equal}: by
-      constructor in declaration order, then by argument. *)
-
-  val pp : t Fmt.t
-  (** [pp] formats a fault for logs and test failures. *)
-end
-
-(** An operation the schedule is consulted about before it is performed. *)
-module Op : sig
-  type kind =
-    [ `Read  (** A read of a file's bytes, streaming or positioned. *)
-    | `Read_dir
-      (** A directory listing, by either enumeration entry point. It accepts
-          {!Fault.t.Read_error}, never a byte-oriented short read. *)
-    | `Write  (** A write of a file's bytes, streaming or positioned. *)
-    | `Truncate
-      (** A truncation of a file; its [file_offset] is the new length. It
-          accepts {!Fault.t.Write_error}, which no seeded schedule injects. *)
-    | `Sync
-      (** A sync: a file's, or a directory's through [Eio.Path.sync_dir], whose
-          path is the directory. *)
-    | `Open_read  (** An open for reading, of a file or a subdirectory. *)
-    | `Open_write  (** An open that may write or create the file. *)
-    | `Stat  (** A stat, of a path or of an open file. *)
-    | `Change
-      (** A change to a directory's entries ([mkdir], [symlink], [unlink],
-          [rmdir], [rename]) or to an entry's mode or owner ([chmod], [chown]).
-          Its path is the entry made, removed or changed, a rename's source. *)
-    ]
-  (** The type for operation kinds. *)
-
-  type t = {
-    kind : kind;  (** What the operation does. *)
-    path : string;
-        (** The path the operation names, as given to the wrapped directory it
-            went through; for a file operation, the path the file was opened by.
-            A scripted rule matches it exactly as spelt: through the root
-            {!Eio_fs.Fs.v} returns, whose path is ["/"], a file is ["/f"]. *)
-    file_offset : int;
-        (** The byte offset of a read or a write, and [0] otherwise. *)
-    length : int;
-        (** The bytes a read requests or a write offers, and [0] otherwise. *)
-    space : bool;
-        (** Whether the operation may fail for want of room: a write, an open
-            that makes its file, a [mkdir], a [symlink] or a [rename]. An
-            [`Enospc] fault on another open or change injects nothing, as Linux
-            never answers it there. *)
-    dest : string option;
-        (** A rename's destination, as given to the directory it lands in. *)
-  }
-  (** The type for operations. *)
-
-  val pp : t Fmt.t
-  (** [pp] formats an operation for logs and test failures. *)
-end
-
-(** The fault schedule: an inspectable value driving fault injection. *)
-module Schedule : sig
-  (** The type for the conditions under which a scripted rule fires. *)
-  type trigger =
-    | Nth_op of int
-        (** Fire on the [n]th operation the schedule is consulted for (1-based,
-            counting reads, directory reads, writes, syncs, opens, stats and
-            directory changes). *)
-    | Op_on_path of { kind : Op.kind; path : string }
-        (** Fire on the first [kind] operation on [path]. *)
-    | Nth_op_on_path of { n : int; kind : Op.kind; path : string }
-        (** Fire on the [n]th [kind] operation on [path] (1-based), counting
-            from the schedule's first operation whether or not a rule fired on
-            the earlier ones: the fault falls on a chosen later open or read of
-            a file the code under test also opens before it. *)
-    | Write_covering of { path : string; file_offset : int }
-        (** Fire on the first write on [path] whose byte range covers
-            [file_offset]. Best paired with a write that starts at a known
-            offset, since the fault's byte count is operation-relative. *)
-
-  type rule = {
-    trigger : trigger;  (** When the rule fires. *)
-    fault : Fault.t;  (** What it injects when it fires. *)
-  }
-  (** The type for scripted rules. *)
-
-  type t
-  (** The type for fault schedules. A schedule is stateful: it counts the
-      operations it is consulted about, consumes the rules that fire and draws
-      from its generator, so every wrapper given one schedule shares that state.
-  *)
-
-  val empty : t
-  (** [empty] injects nothing: a pure pass-through wrapper. *)
-
-  val scripted : rule list -> t
-  (** [scripted rules] fires each rule the first time an operation matches its
-      trigger. A fired rule is consumed; unmatched rules never fire. When
-      several pending rules match one operation, the first in [rules] fires and
-      the others stay pending. This pins an exact scenario: for example, a
-      single {!Write_covering} rule carrying a {!Fault.t.Torn_write} fault tears
-      a write at a chosen offset. *)
-
-  val observing : (Op.t -> unit) -> t -> t
-  (** [observing f t] is [t] with [f] called on every operation the wrapper
-      consults the schedule about, before the schedule decides what to inject.
-      It injects nothing of its own, so [observing f empty] is a pass-through
-      wrapper that reports what the code under test asked the filesystem for.
-
-      A test counts with it what a caller asks of the filesystem, such as the
-      reads a scan issues, which does not depend on the machine. *)
-
-  val hook : (Op.t -> Fault.t option) -> t
-  (** [hook f] injects the fault [f] answers for each operation. *)
-
-  val seeded :
-    ?probability:float -> ?kinds:Fault.kind list -> seed:int -> unit -> t
-  (** [seeded ~probability ~kinds ~seed ()] injects deterministic pseudo-random
-      faults. On each operation it fires a fault with probability [probability]
-      (defaults to [0.5]; never at [0.] or below, always at [1.] or above),
-      choosing uniformly among the kinds in [kinds] (defaults to every kind but
-      [`Swap] and [`Sync_evict]) that apply to that operation, and firing
-      nothing when none does. [`Swap] in [kinds] is ignored. The same [seed] and
-      operation sequence always yield the same fault sequence. *)
-
-  val pp : t Fmt.t
-  (** [pp] formats a schedule for logs. A seeded schedule prints as the OCaml
-      expression that rebuilds it; a scripted one prints how many of its rules
-      are pending. *)
-end
-
-val wrap : Schedule.t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [wrap schedule base] is [base] with operations perturbed by [schedule];
-    opened files and subdirectories stay wrapped and share [schedule].
+val wrap : sched -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
+(** [wrap sched base] is [base] with each operation meeting the fault [sched]'s
+    hook answers, when it {!applies}; opened files and subdirectories stay
+    wrapped and share [sched].
 
     The wrapper and every file and subdirectory it opens hold [base] out of
     reach: each is a value of its own bound to the wrapper's interfaces only, so
     code handed the wrapper cannot rebuild a handler that reaches [base] and
-    steps around [schedule]. It answers {!Eio_fs_sync.Process_local} and
+    steps around [sched]. It answers {!Eio_fs_sync.Process_local} and
     {!Eio_fs_sync.Modeless} as [base] does, and every opened file, a read-only
     one included, registers {!Eio_fs_sync.File_sync} so a barrier through it
-    reaches the schedule's own sync. A backend's own interfaces are not carried
+    reaches the wrapper's own sync. A backend's own interfaces are not carried
     over: a wrapper over a host directory is no native working directory for a
     child process, and its files hand out no host descriptor, except to
     [eio-fs.unix], which takes a lock on the descriptor beneath. A rename from
     an in-memory directory of {!Eio_fs.Fs} into a wrapper over the same tree is
-    the in-memory rename, outside [schedule]; one from a host directory of
-    another backend into a wrapper is refused by that backend, which finds no
-    directory of its own there. *)
+    the in-memory rename, outside [sched]; one from a host directory of another
+    backend into a wrapper is refused by that backend, which finds no directory
+    of its own there. *)
 
 (** A power-loss durability model over a base directory capability.
 
@@ -401,25 +218,6 @@ module Crash : sig
             into it, as ext4 allocates it with the length. With 512-byte blocks,
             a disk's sectors, that is ext4 with [data=writeback]. *)
 
-  (** The type for when a crash fires while the workload runs. *)
-  type trigger =
-    | Manual  (** Only an explicit {!crash} (or {!post_crash}) fires it. *)
-    | After_write of { path : string; file_offset : int }
-        (** Crash right after the write covering that offset in that file
-            commits, before any following sync. *)
-    | Nth_op of int
-        (** Crash on the [n]th durability op (1-based): a write or a truncation,
-            a file's sync, or a directory operation, a change of mode or owner
-            included. A directory barrier and {!sync_metadata} are not counted.
-        *)
-    | After_dir_op of { kind : op_kind; path : string }
-        (** Crash once the directory operation of that {!type-op_kind} on that
-            path has entered the metadata journal, and before any following
-            operation can commit it: the window a directory operation with no
-            barrier of its own leaves open. [kind] and [path] are matched
-            structurally, exactly as {!type-unsynced} records them, so a
-            {!Rename} names its destination and a {!Symlink} its target. *)
-
   type t
   (** The type for crash controllers. A controller tracks durability across the
       files opened through its wrapper and holds the crashed image after a
@@ -439,18 +237,16 @@ module Crash : sig
   val v :
     ?os:[< `Linux | `Macos ] ->
     ?policy:policy ->
-    ?trigger:trigger ->
     ?outside:outside ->
     ?block_size:int ->
     ?pause:(unit -> unit) ->
     unit ->
     t
-  (** [v ~os ~policy ~trigger ~outside ~block_size ~pause ()] is a fresh
-      controller for [os]'s durability (defaults to [`Linux]) that rebuilds the
-      post-crash image by [policy] (defaults to {!Drop_unsynced}, a single
-      state) and [outside] (defaults to {!Dropped}), and crashes on [trigger]
-      (defaults to {!Manual}). [block_size] (defaults to [4096]) is the byte
-      size of the blocks {!Reorder_unsynced} writes back.
+  (** [v ~os ~policy ~outside ~block_size ~pause ()] is a fresh controller for
+      [os]'s durability (defaults to [`Linux]) that rebuilds the post-crash
+      image by [policy] (defaults to {!Drop_unsynced}, a single state) and
+      [outside] (defaults to {!Dropped}). [block_size] (defaults to [4096]) is
+      the byte size of the blocks {!Reorder_unsynced} writes back.
 
       A sync of a file or a directory covers the changes made before it, runs
       [pause ()] (defaults to doing nothing), then makes them durable. A change
@@ -553,9 +349,6 @@ module Law = Chaos_law
 (** What {!wrap} does with each operation of each interface it binds. *)
 
 module Internal : sig
-  val next : Schedule.t -> Op.t -> Fault.t option
-  (** [next t op] advances [t] by one operation and is the fault to inject. *)
-
   val crash_image :
     Crash.t ->
     (string * int64 * [ `File of string | `Dir | `Link of string ]) list

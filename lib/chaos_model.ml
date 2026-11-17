@@ -1,11 +1,9 @@
-(* The fault wrapper and the crash model behind Chaos. The wrapper asks its
-   schedule about each operation on a base directory; the crash model tracks
+(* The fault wrapper and the crash model behind Chaos. The wrapper asks a
+   hook about each operation on a base directory; the crash model tracks
    what a barrier made durable and rebuilds the base as a cut leaves it. *)
 
 open! Hermetic
 open Eio.Std
-
-type code = [ `Enoent | `Eacces | `Eperm | `Erofs | `Enospc | `Eio ]
 
 let code_name = function
   | `Enoent -> "ENOENT"
@@ -38,353 +36,55 @@ let raise_open code path =
 
 let raise_io code ctx = raise (Eio.Exn.create (Eio.Exn.X (backend code ctx)))
 
-module Fault = struct
-  type kind =
-    [ `Short_read
-    | `Read_error
-    | `Short_write
-    | `Torn_write
-    | `Write_error
-    | `Sync_error
-    | `Sync_evict
-    | `Open_error
-    | `Stat_error
-    | `Change_error
-    | `Swap ]
+module Op = Chaos_plan.Op
+module Fault = Chaos_plan.Fault
 
-  type t =
-    | Short_read of int
-        (** Deliver at most [n] bytes of the requested read ([n >= 1]). *)
-    | Read_error of code  (** Deliver nothing, raise a read error. *)
-    | Short_write of int
-        (** Accept at most [n] bytes of the offered write ([n >= 1]). *)
-    | Torn_write of int
-        (** Commit [n] bytes to the base, then raise: the durability hazard. *)
-    | Write_error of code  (** Commit nothing, raise a write error. *)
-    | Sync_error of code  (** Fail a flush/sync. *)
-    | Sync_evict of code
-        (** Fail a sync, and evict the pages it could not write. *)
-    | Open_error of code  (** Fail an open/open_dir. *)
-    | Stat_error of code  (** Fail a stat. *)
-    | Change_error of code  (** Fail a directory change. *)
-    | Swap_symlink of string
-        (** Perform the operation, then replace its path with a symlink to the
-            given target: the check-to-use window a TOCTOU exploits. Scripted on
-            a [`Stat] op, it lets the stat see the original file and the
-            following open see a symlink, so a builder that reads the same
-            pathname twice reads what was swapped in. Only meaningful in a
-            scripted schedule. *)
+type hook = space:bool -> Op.t -> Fault.t option
 
-  let equal a b =
-    match (a, b) with
-    | Short_read x, Short_read y
-    | Short_write x, Short_write y
-    | Torn_write x, Torn_write y ->
-        x = y
-    | Read_error x, Read_error y
-    | Write_error x, Write_error y
-    | Sync_error x, Sync_error y
-    | Sync_evict x, Sync_evict y
-    | Open_error x, Open_error y
-    | Stat_error x, Stat_error y
-    | Change_error x, Change_error y ->
-        x = y
-    | Swap_symlink x, Swap_symlink y -> String.equal x y
-    | _ -> false
+(* The hook and what numbers the operations it is asked about: every
+   wrapper given one schedule shares the numbering. *)
+type sched = {
+  hook : hook;
+  mutable index : int;
+  nths : (Op.kind * string, int) Hashtbl.t;
+}
 
-  let code_rank = function
-    | `Enoent -> 0
-    | `Eacces -> 1
-    | `Eperm -> 2
-    | `Erofs -> 3
-    | `Enospc -> 4
-    | `Eio -> 5
+let schedule hook = { hook; index = 0; nths = Hashtbl.create 16 }
 
-  let rank = function
-    | Short_read _ -> 0
-    | Read_error _ -> 1
-    | Short_write _ -> 2
-    | Torn_write _ -> 3
-    | Write_error _ -> 4
-    | Sync_error _ -> 5
-    | Open_error _ -> 6
-    | Stat_error _ -> 7
-    | Change_error _ -> 8
-    | Swap_symlink _ -> 9
-    | Sync_evict _ -> 10
+(* An [ENOSPC] on an operation that needs no room is none: Linux never
+   answers it there. *)
+let applies ~space (op : Op.t) : Fault.t -> bool = function
+  | Fail `Enospc when (not space) && (op.kind = `Change || op.kind = `Open_write)
+    ->
+      false
+  | Fail _ -> true
+  | Evict _ -> op.kind = `Sync
+  | Short _ -> op.kind = `Read || op.kind = `Write
+  | Torn _ -> op.kind = `Write
+  | Swap_symlink _ -> (
+      match op.kind with `Open_read | `Open_write | `Stat -> true | _ -> false)
 
-  let compare a b =
-    match (a, b) with
-    | Short_read x, Short_read y
-    | Short_write x, Short_write y
-    | Torn_write x, Torn_write y ->
-        Int.compare x y
-    | Read_error x, Read_error y
-    | Write_error x, Write_error y
-    | Sync_error x, Sync_error y
-    | Sync_evict x, Sync_evict y
-    | Open_error x, Open_error y
-    | Stat_error x, Stat_error y
-    | Change_error x, Change_error y ->
-        Int.compare (code_rank x) (code_rank y)
-    | Swap_symlink x, Swap_symlink y -> String.compare x y
-    | _ -> Int.compare (rank a) (rank b)
-
-  let pp ppf = function
-    | Short_read n -> Fmt.pf ppf "short-read(%d)" n
-    | Read_error c -> Fmt.pf ppf "read-error(%s)" (code_name c)
-    | Short_write n -> Fmt.pf ppf "short-write(%d)" n
-    | Torn_write n -> Fmt.pf ppf "torn-write(%d)" n
-    | Write_error c -> Fmt.pf ppf "write-error(%s)" (code_name c)
-    | Sync_error c -> Fmt.pf ppf "sync-error(%s)" (code_name c)
-    | Sync_evict c -> Fmt.pf ppf "sync-evict(%s)" (code_name c)
-    | Open_error c -> Fmt.pf ppf "open-error(%s)" (code_name c)
-    | Stat_error c -> Fmt.pf ppf "stat-error(%s)" (code_name c)
-    | Change_error c -> Fmt.pf ppf "change-error(%s)" (code_name c)
-    | Swap_symlink t -> Fmt.pf ppf "swap-symlink(%s)" t
-end
-
-module Op = struct
-  type kind =
-    [ `Read
-    | `Read_dir
-    | `Write
-    | `Truncate
-    | `Sync
-    | `Open_read
-    | `Open_write
-    | `Stat
-    | `Change ]
-
-  let equal_kind (a : kind) (b : kind) = a = b
-
-  type t = {
-    kind : kind;
-    path : string;
-    file_offset : int;  (** byte offset for reads/writes, [0] otherwise *)
-    length : int;  (** bytes requested/offered, [0] otherwise *)
-    space : bool;
-    dest : string option;  (** a rename's destination *)
-  }
-
-  let pp_kind ppf = function
-    | `Read -> Fmt.string ppf "read"
-    | `Read_dir -> Fmt.string ppf "read-dir"
-    | `Write -> Fmt.string ppf "write"
-    | `Truncate -> Fmt.string ppf "truncate"
-    | `Sync -> Fmt.string ppf "sync"
-    | `Open_read -> Fmt.string ppf "open"
-    | `Open_write -> Fmt.string ppf "open-write"
-    | `Stat -> Fmt.string ppf "stat"
-    | `Change -> Fmt.string ppf "change"
-
-  let pp ppf t =
-    Fmt.pf ppf "%a %s @%d+%d" pp_kind t.kind t.path t.file_offset t.length
-
-  let v ?(space = false) ?(offset = 0) ?(len = 0) ?dest kind path =
-    { kind; path; file_offset = offset; length = len; space; dest }
-
-  let read path ~offset ~len = v ~offset ~len `Read path
-  let write path ~offset ~len = v ~space:true ~offset ~len `Write path
-  let truncate path ~len = v ~offset:len `Truncate path
-  let read_dir path = v `Read_dir path
-  let sync path = v `Sync path
-  let open_read path = v `Open_read path
-  let open_write ~space path = v ~space `Open_write path
-  let stat path = v `Stat path
-  let change ?dest ~space path = v ?dest ~space `Change path
-end
-
-module Schedule = struct
-  type trigger =
-    | Nth_op of int
-        (** Fire on the [n]th operation the schedule is consulted for. *)
-    | Op_on_path of { kind : Op.kind; path : string }
-        (** Fire on the first [kind] operation on [path]. *)
-    | Nth_op_on_path of { n : int; kind : Op.kind; path : string }
-        (** Fire on the [n]th [kind] operation on [path]. *)
-    | Write_covering of { path : string; file_offset : int }
-        (** Fire on the first write on [path] whose byte range covers
-            [file_offset]. *)
-
-  type rule = { trigger : trigger; fault : Fault.t }
-  type config = { probability : float; kinds : Fault.kind list }
-
-  type t =
-    | Empty
-    | Scripted of {
-        mutable rules : rule list;
-        mutable n : int;
-        seen : (Op.kind * string, int) Hashtbl.t;
-            (* How many operations of each kind each path has had. *)
-      }
-    | Seeded of { seed : int; config : config; rng : Random.State.t }
-    | Observed of { f : Op.t -> unit; inner : t }
-    | Hook of (Op.t -> Fault.t option)
-
-  let empty = Empty
-  let scripted rules = Scripted { rules; n = 0; seen = Hashtbl.create 8 }
-  let observing f t = Observed { f; inner = t }
-  let hook f = Hook f
-
-  let all_kinds =
-    [
-      `Short_read;
-      `Read_error;
-      `Short_write;
-      `Torn_write;
-      `Write_error;
-      `Sync_error;
-      `Open_error;
-      `Stat_error;
-      `Change_error;
-    ]
-
-  let seeded ?(probability = 0.5) ?(kinds = all_kinds) ~seed () =
-    Seeded
-      {
-        seed;
-        config = { probability; kinds };
-        rng = Random.State.make [| seed |];
-      }
-
-  let trigger_matches ~n ~on_path (op : Op.t) = function
-    | Nth_op k -> k = n
-    | Op_on_path { kind; path } ->
-        Op.equal_kind op.kind kind && String.equal op.path path
-    | Nth_op_on_path { n = k; kind; path } ->
-        Op.equal_kind op.kind kind && String.equal op.path path && k = on_path
-    | Write_covering { path; file_offset } ->
-        Op.equal_kind op.kind `Write
-        && String.equal op.path path
-        && op.file_offset <= file_offset
-        && file_offset < op.file_offset + op.length
-
-  let applies_to (kind : Op.kind) (fk : Fault.kind) =
-    match (kind, fk) with
-    | `Read, (`Short_read | `Read_error) -> true
-    | `Read_dir, `Read_error -> true
-    | `Write, (`Short_write | `Torn_write | `Write_error) -> true
-    | `Sync, (`Sync_error | `Sync_evict) -> true
-    | (`Open_read | `Open_write), `Open_error -> true
-    | `Stat, `Stat_error -> true
-    | `Change, `Change_error -> true
-    | _ -> false
-
-  (* A count in [1, len-1] so the operation is split rather than passed through
-     whole (or [1] when the operation is too small to split). *)
-  let split_count rng len =
-    if len <= 1 then 1 else 1 + Random.State.full_int rng (len - 1)
-
-  let some_code rng = if Random.State.bool rng then `Enoent else `Eacces
-
-  let build_fault rng (op : Op.t) : Fault.kind -> Fault.t = function
-    | `Short_read -> Short_read (split_count rng op.length)
-    | `Read_error -> Read_error `Eio
-    | `Short_write -> Short_write (split_count rng op.length)
-    | `Torn_write -> Torn_write (split_count rng op.length)
-    | `Write_error -> Write_error `Enospc
-    | `Sync_error -> Sync_error `Eio
-    | `Sync_evict -> Sync_evict `Eio
-    | `Open_error -> Open_error (some_code rng)
-    | `Stat_error -> Stat_error (some_code rng)
-    | `Change_error ->
-        Change_error
-          (match Random.State.int rng 3 with
-          | 0 -> `Eacces
-          | 1 -> `Eperm
-          | _ -> `Erofs)
-    | `Swap ->
-        (* A swap needs a concrete symlink target, so it has no random form; it is
-           driven by a scripted rule, never a seed. [all_kinds] omits it, and
-           [applies_to] excludes it, so a seeded schedule never reaches here. *)
-        invalid_arg
-          "Eio_fs.Chaos.Private.Schedule.seeded: kind is `Swap, a fault only a \
-           scripted rule injects"
-
-  let rec next t (op : Op.t) =
-    match t with
-    | Empty -> None
-    | Observed { f; inner } ->
-        f op;
-        next inner op
-    | Hook f -> f op
-    | Scripted s ->
-        s.n <- s.n + 1;
-        let key = (op.kind, op.path) in
-        let on_path =
-          1 + Option.value ~default:0 (Hashtbl.find_opt s.seen key)
-        in
-        Hashtbl.replace s.seen key on_path;
-        let rec pick acc = function
-          | [] -> None
-          | r :: rest when trigger_matches ~n:s.n ~on_path op r.trigger ->
-              s.rules <- List.rev_append acc rest;
-              Some r.fault
-          | r :: rest -> pick (r :: acc) rest
-        in
-        pick [] s.rules
-    | Seeded s -> (
-        let roll = Random.State.float s.rng 1.0 in
-        if roll >= s.config.probability then None
-        else
-          let applicable = List.filter (applies_to op.kind) s.config.kinds in
-          match applicable with
-          | [] -> None
-          | ks ->
-              let k = List.nth ks (Random.State.int s.rng (List.length ks)) in
-              Some (build_fault s.rng op k))
-
-  let kind_name : Fault.kind -> string = function
-    | `Short_read -> "`Short_read"
-    | `Read_error -> "`Read_error"
-    | `Short_write -> "`Short_write"
-    | `Torn_write -> "`Torn_write"
-    | `Write_error -> "`Write_error"
-    | `Sync_error -> "`Sync_error"
-    | `Sync_evict -> "`Sync_evict"
-    | `Open_error -> "`Open_error"
-    | `Stat_error -> "`Stat_error"
-    | `Change_error -> "`Change_error"
-    | `Swap -> "`Swap"
-
-  (* The shortest literal that reads back as [f], and [infinity],
-     [neg_infinity] or [nan] by name. *)
-  let float_literal f =
-    match Float.classify_float f with
-    | FP_infinite -> if f > 0. then "infinity" else "neg_infinity"
-    | FP_nan -> "nan"
-    | _ ->
-        let s =
-          List.find
-            (fun s -> Float.equal (float_of_string s) f)
-            [ Fmt.str "%.15g" f; Fmt.str "%.16g" f; Fmt.str "%.17g" f ]
-        in
-        if String.exists (fun c -> c = '.' || c = 'e') s then s else s ^ "."
-
-  (* A negative literal needs parentheses as a labelled argument. *)
-  let pp_float ppf f =
-    let s = float_literal f in
-    if s.[0] = '-' then Fmt.pf ppf "(%s)" s else Fmt.string ppf s
-
-  let pp_int ppf i = if i < 0 then Fmt.pf ppf "(%d)" i else Fmt.int ppf i
-
-  (* A seeded schedule prints as the expression that rebuilds it. *)
-  let rec pp ppf = function
-    | Empty -> Fmt.string ppf "empty"
-    | Scripted s -> Fmt.pf ppf "scripted(%d rules)" (List.length s.rules)
-    | Seeded s ->
-        Fmt.pf ppf
-          "Eio_fs.Chaos.Private.Schedule.seeded ~probability:%a ~kinds:%s \
-           ~seed:%a ()"
-          pp_float s.config.probability
-          (match s.config.kinds with
-          | [] -> "[]"
-          | kinds -> "[ " ^ String.concat "; " (List.map kind_name kinds) ^ " ]")
-          pp_int s.seed
-    | Observed { inner; _ } -> Fmt.pf ppf "observed(%a)" pp inner
-    | Hook _ -> Fmt.string ppf "hook"
-end
+(* The fault [t]'s hook answers for the next operation, if it applies. *)
+let next ?(space = false) ?(offset = 0) ?(len = 0) ?dest t kind path =
+  t.index <- t.index + 1;
+  let nth =
+    1 + Option.value ~default:0 (Hashtbl.find_opt t.nths (kind, path))
+  in
+  Hashtbl.replace t.nths (kind, path) nth;
+  let op : Op.t =
+    {
+      index = t.index;
+      kind;
+      path;
+      nth;
+      file_offset = offset;
+      length = len;
+      dest;
+    }
+  in
+  match t.hook ~space op with
+  | Some f when applies ~space op f -> Some f
+  | Some _ | None -> None
 
 (* Take at most [n] bytes from the front of [bufs], sharing the underlying
    storage so a read still lands in the caller's buffers. *)
@@ -449,11 +149,10 @@ let sync_failed ~evict (Eio.Resource.T (v, ops)) =
    file coerces to read-only for these. [pos] is the shared streaming cursor. *)
 let do_single_read sched path ~pos (base : Eio.File.ro_ty r) buf =
   let len = Cstruct.length buf in
-  let op = Op.read path ~offset:!pos ~len in
   let buf =
-    match Schedule.next sched op with
-    | Some (Fault.Read_error c) -> raise_io c path
-    | Some (Fault.Short_read n) -> Cstruct.sub buf 0 (clamp 1 len n)
+    match next sched ~offset:!pos ~len `Read path with
+    | Some (Fail c) -> raise_io c path
+    | Some (Short n) -> Cstruct.sub buf 0 (clamp 1 len n)
     | _ -> buf
   in
   let got = Eio.Flow.single_read base buf in
@@ -462,11 +161,11 @@ let do_single_read sched path ~pos (base : Eio.File.ro_ty r) buf =
 
 let do_pread sched path (base : Eio.File.ro_ty r) ~file_offset bufs =
   let len = Cstruct.lenv bufs in
-  let op = Op.read path ~offset:(Optint.Int63.to_int file_offset) ~len in
+  let offset = Optint.Int63.to_int file_offset in
   let bufs =
-    match Schedule.next sched op with
-    | Some (Fault.Read_error c) -> raise_io c path
-    | Some (Fault.Short_read n) -> take_v (clamp 1 len n) bufs
+    match next sched ~offset ~len `Read path with
+    | Some (Fail c) -> raise_io c path
+    | Some (Short n) -> take_v (clamp 1 len n) bufs
     | _ -> bufs
   in
   Eio.File.pread base ~file_offset bufs
@@ -486,18 +185,17 @@ let do_seek ~pos base off cmd =
 let do_single_write sched path ~append ~pos (base : Eio.File.rw_ty r) bufs =
   let len = Cstruct.lenv bufs in
   let off = write_offset ~append ~pos base in
-  let op = Op.write path ~offset:off ~len in
-  match Schedule.next sched op with
-  | Some (Fault.Short_write n) ->
+  match next sched ~space:true ~offset:off ~len `Write path with
+  | Some (Short n) ->
       let got = Eio.Flow.single_write base (take_v (clamp 1 len n) bufs) in
       pos := off + got;
       got
-  | Some (Fault.Torn_write n) ->
+  | Some (Torn n) ->
       let n = clamp 0 len n in
       if n > 0 then Eio.Flow.write base (take_v n bufs);
       pos := off + n;
       Fmt.kstr (raise_io `Enospc) "%s torn@%d" path !pos
-  | Some (Fault.Write_error c) -> raise_io c path
+  | Some (Fail c) -> raise_io c path
   | _ ->
       let got = Eio.Flow.single_write base bufs in
       pos := off + got;
@@ -509,15 +207,14 @@ let do_pwrite sched path ~append (base : Eio.File.rw_ty r) ~file_offset bufs =
     if append then write_offset ~append ~pos:(ref 0) base
     else Optint.Int63.to_int file_offset
   in
-  let op = Op.write path ~offset:off ~len in
-  match Schedule.next sched op with
-  | Some (Fault.Short_write n) ->
+  match next sched ~space:true ~offset:off ~len `Write path with
+  | Some (Short n) ->
       Eio.File.pwrite_single base ~file_offset (take_v (clamp 1 len n) bufs)
-  | Some (Fault.Torn_write n) ->
+  | Some (Torn n) ->
       let n = clamp 0 len n in
       if n > 0 then Eio.File.pwrite_all base ~file_offset (take_v n bufs);
       Fmt.kstr (raise_io `Enospc) "%s torn@%d" path (off + n)
-  | Some (Fault.Write_error c) -> raise_io c path
+  | Some (Fail c) -> raise_io c path
   | _ -> Eio.File.pwrite_single base ~file_offset bufs
 
 (* A barrier passed on to the file beneath, through the cache of the drive
@@ -528,25 +225,25 @@ let barrier_base ~full (base : Eio.File.rw_ty r) =
   | None -> Eio.File.sync base
 
 let do_sync ?(full = false) sched path (base : Eio.File.rw_ty r) =
-  match Schedule.next sched (Op.sync path) with
-  | Some (Fault.Sync_error c) ->
+  match next sched `Sync path with
+  | Some (Fail c) ->
       sync_failed ~evict:false base;
       raise_io c path
-  | Some (Fault.Sync_evict c) ->
+  | Some (Evict c) ->
       sync_failed ~evict:true base;
       raise_io c path
   | _ -> barrier_base ~full base
 
 let do_stat sched path (base : Eio.File.ro_ty r) =
-  match Schedule.next sched (Op.stat path) with
-  | Some (Fault.Stat_error c) -> raise_io c path
+  match next sched `Stat path with
+  | Some (Fail c) -> raise_io c path
   | _ -> Eio.File.stat base
 
 (* One record backs both wrappers. [ro] is always present (reads work on either
    kind); [rw] is present exactly when the file was opened read-write, and is
    the same underlying resource as [ro]. *)
 type file = {
-  sched : Schedule.t;
+  sched : sched;
   path : string;
   append : bool;
   pos : int ref;
@@ -584,11 +281,11 @@ let sync_base ~full (Eio.Resource.T (v, ops) as base) =
              register Eio_fs_sync.File_sync on them")
 
 let sync_ro t ~full =
-  match Schedule.next t.sched (Op.sync t.path) with
-  | Some (Fault.Sync_error c) ->
+  match next t.sched `Sync t.path with
+  | Some (Fail c) ->
       sync_failed ~evict:false t.ro;
       raise_io c t.path
-  | Some (Fault.Sync_evict c) ->
+  | Some (Evict c) ->
       sync_failed ~evict:true t.ro;
       raise_io c t.path
   | _ -> sync_base ~full t.ro
@@ -623,10 +320,8 @@ module Rw_impl = struct
   let sync t = do_sync t.sched t.path (writable t)
 
   let truncate t len =
-    match
-      Schedule.next t.sched (Op.truncate t.path ~len:(Optint.Int63.to_int len))
-    with
-    | Some (Fault.Write_error c) -> raise_io c t.path
+    match next t.sched ~offset:(Optint.Int63.to_int len) `Truncate t.path with
+    | Some (Fail c) -> raise_io c t.path
     | _ -> Eio.File.truncate (writable t) len
 end
 
@@ -655,15 +350,14 @@ let wrap_rw sched ~path ~append base : Eio.File.rw_ty r =
 type base_dir =
   | Base_dir : (module Eio.Fs.Pi.DIR with type t = 'a) * 'a -> base_dir
 
-type dir = { base : Eio.Fs.dir_ty r; boxed : base_dir; sched : Schedule.t }
+type dir = { base : Eio.Fs.dir_ty r; boxed : base_dir; sched : sched }
 
 (* A rename target that is itself a chaos directory is unwrapped before it
    reaches the base backend. *)
 let base_dir = Eio_fs_internal.base_dir
 
 let wrap_dir_hook :
-    (base:Eio.Fs.dir_ty r -> sched:Schedule.t -> [ `Close | Eio.Fs.dir_ty ] r)
-    ref =
+    (base:Eio.Fs.dir_ty r -> sched:sched -> [ `Close | Eio.Fs.dir_ty ] r) ref =
   ref (fun ~base:_ ~sched:_ -> assert false)
 
 (* Free the name at [path], whatever holds it. A directory is emptied first and
@@ -703,10 +397,8 @@ module Dir_impl = struct
   type t = dir
 
   let open_in t ~sw ~follow path =
-    let fault = Schedule.next t.sched (Op.open_read path) in
-    (match fault with
-    | Some (Fault.Open_error c) -> raise_open c path
-    | _ -> ());
+    let fault = next t.sched `Open_read path in
+    (match fault with Some (Fail c) -> raise_open c path | _ -> ());
     let (Base_dir ((module B), bv)) = t.boxed in
     let file = B.open_in bv ~sw ~follow path in
     swap_after t.boxed fault path;
@@ -722,30 +414,23 @@ module Dir_impl = struct
       | _ -> false
       | exception Eio.Io _ -> true
     in
-    let fault = Schedule.next t.sched (Op.open_write ~space path) in
-    (match fault with
-    | Some (Fault.Open_error `Enospc) when not space -> ()
-    | Some (Fault.Open_error c) -> raise_open c path
-    | _ -> ());
+    let fault = next t.sched ~space `Open_write path in
+    (match fault with Some (Fail c) -> raise_open c path | _ -> ());
     let file = B.open_out bv ~sw ~follow ~append ~create path in
     swap_after t.boxed fault path;
     wrap_rw t.sched ~path ~append file
 
   let open_subtree t ~sw path =
-    let fault = Schedule.next t.sched (Op.open_read path) in
-    (match fault with
-    | Some (Fault.Open_error c) -> raise_open c path
-    | _ -> ());
+    let fault = next t.sched `Open_read path in
+    (match fault with Some (Fail c) -> raise_open c path | _ -> ());
     let (Base_dir ((module B), bv)) = t.boxed in
     let sub = B.open_subtree bv ~sw path in
     swap_after t.boxed fault path;
     !wrap_dir_hook ~base:(sub :> Eio.Fs.dir_ty r) ~sched:t.sched
 
   let stat t ~follow path =
-    let fault = Schedule.next t.sched (Op.stat path) in
-    (match fault with
-    | Some (Fault.Stat_error c) -> raise_open c path
-    | _ -> ());
+    let fault = next t.sched `Stat path in
+    (match fault with Some (Fail c) -> raise_open c path | _ -> ());
     let (Base_dir ((module B), bv)) = t.boxed in
     let result = B.stat bv ~follow path in
     swap_after t.boxed fault path;
@@ -754,9 +439,8 @@ module Dir_impl = struct
   (* A change to a directory's entries, named by the entry it makes or
      removes; only one that makes an entry needs room. *)
   let change ?(space = false) ?dest t path =
-    match Schedule.next t.sched (Op.change ?dest ~space path) with
-    | Some (Fault.Change_error `Enospc) when not space -> ()
-    | Some (Fault.Change_error c) -> raise_open c path
+    match next t.sched ?dest ~space `Change path with
+    | Some (Fail c) -> raise_open c path
     | _ -> ()
 
   let mkdir t ~perm path =
@@ -765,15 +449,15 @@ module Dir_impl = struct
     B.mkdir bv ~perm path
 
   let read_dir t path =
-    (match Schedule.next t.sched (Op.read_dir path) with
-    | Some (Fault.Read_error c) -> raise_io c path
+    (match next t.sched `Read_dir path with
+    | Some (Fail c) -> raise_io c path
     | _ -> ());
     let (Base_dir ((module B), bv)) = t.boxed in
     B.read_dir bv path
 
   let with_dir_entries t path fn =
-    (match Schedule.next t.sched (Op.read_dir path) with
-    | Some (Fault.Read_error c) -> raise_io c path
+    (match next t.sched `Read_dir path with
+    | Some (Fail c) -> raise_io c path
     | _ -> ());
     let (Base_dir ((module B), bv)) = t.boxed in
     B.with_dir_entries bv path fn
@@ -829,8 +513,8 @@ module Dir_impl = struct
     B.native bv path
 
   let barrier ~full t path =
-    (match Schedule.next t.sched (Op.sync path) with
-    | Some (Fault.Sync_error c | Fault.Sync_evict c) -> raise_io c path
+    (match next t.sched `Sync path with
+    | Some (Fail c | Evict c) -> raise_io c path
     | _ -> ());
     match Eio_fs_sync.dir_barrier t.base with
     | Some barrier -> barrier ~path ~full
@@ -1099,19 +783,6 @@ module Crash = struct
     | Chmod of { perm : int }
     | Chown of { uid : int64; gid : int64 }
 
-  let equal_op_kind (a : op_kind) b =
-    match (a, b) with
-    | Data, Data | Truncate, Truncate | Create, Create | Mkdir, Mkdir -> true
-    | Unlink, Unlink | Rmdir, Rmdir -> true
-    | Symlink a, Symlink b -> String.equal a.target b.target
-    | Rename a, Rename b -> String.equal a.dest b.dest
-    | Chmod a, Chmod b -> Int.equal a.perm b.perm
-    | Chown a, Chown b -> Int64.equal a.uid b.uid && Int64.equal a.gid b.gid
-    | ( ( Data | Truncate | Create | Mkdir | Unlink | Rmdir | Symlink _
-        | Rename _ | Chmod _ | Chown _ ),
-        _ ) ->
-        false
-
   type unsynced = {
     path : string;
     kind : op_kind;
@@ -1242,12 +913,6 @@ module Crash = struct
     | Survive of (unsynced -> bool)
     | Choose of (int -> int)
 
-  type trigger =
-    | Manual
-    | After_write of { path : string; file_offset : int }
-    | Nth_op of int
-    | After_dir_op of { kind : op_kind; path : string }
-
   (* Documented in chaos.mli. *)
   type outside = Dropped | Kept
 
@@ -1272,7 +937,6 @@ module Crash = struct
 
   type t = {
     policy : policy;
-    trigger : trigger;
     outside : outside;
     block_size : int;
     mutable base : base_dir option;
@@ -1312,7 +976,6 @@ module Crash = struct
         (* The commits, barriers and failures of syncs, and the files and
            modes opens met, so far: with [seq], what tells a sync or an open
            that changed nothing a cut leaves. *)
-    mutable ops : int;
     opened : (int64, int) Hashtbl.t;
         (* The handles open on each inode: ext4 frees a removed file's blocks
            at its last close. *)
@@ -2758,37 +2421,6 @@ module Crash = struct
           [] tree []
     end
 
-  (* Advance the durability op counter and fire the configured auto-trigger. *)
-  let bump ctl fs ~kind ~offset ~len =
-    ctl.ops <- ctl.ops + 1;
-    let fire =
-      match ctl.trigger with
-      | Manual -> false
-      | Nth_op n -> ctl.ops >= n
-      (* A write records no journal entry, so the entry [After_dir_op] names
-         cannot be this op. *)
-      | After_dir_op _ -> false
-      | After_write { path; file_offset } ->
-          (match kind with `Write -> true | `Sync -> false)
-          && String.equal path fs.rel && offset <= file_offset
-          && file_offset < offset + len
-    in
-    if fire && not ctl.crashed then do_crash ctl
-
-  (* [After_dir_op] fires here -- after [record_metadata], before anything can
-     commit the entry -- inside the window a directory operation with no barrier
-     leaves open. Kind and path are matched as the journal records them. *)
-  let bump_metadata ctl ~path ~kind =
-    ctl.ops <- ctl.ops + 1;
-    let fire =
-      match ctl.trigger with
-      | Manual | After_write _ -> false
-      | Nth_op n -> ctl.ops >= n
-      | After_dir_op { kind = k; path = p } ->
-          equal_op_kind k kind && String.equal p path
-    in
-    if fire && not ctl.crashed then do_crash ctl
-
   (* [path] and [kind] as the caller spelt them, [resolved] the paths the
      operation touched, resolved: its own first. [gone] gives the inode a
      path held before an operation that took it away, and [victim] the node
@@ -2931,8 +2563,7 @@ module Crash = struct
            delta;
            paths = List.filter_map (tree_path ~root) resolved;
            recorded;
-         });
-    bump_metadata ctl ~path ~kind
+         })
 
   (* One record backs both file wrappers. [cfs] is present exactly for a
      read-write file (the tracked durability state); reads work on either. *)
@@ -3185,8 +2816,7 @@ module Crash = struct
     lose ctl fs;
     keep_young ctl fs young;
     fs.synced <- Some stat;
-    commit_attrs ~upto ctl ~ino:stat.ino;
-    bump ctl fs ~kind:`Sync ~offset:0 ~len:0
+    commit_attrs ~upto ctl ~ino:stat.ino
 
   let apply_commit ctl = function
     | Commit.File { fs; upto; stat } -> commit_file ctl fs ~upto ~stat
@@ -3341,7 +2971,6 @@ module Crash = struct
       clog_write cf.ctl fs ~offset:off (capture bufs got);
       note_clear cf fs;
       cf.cpos := off + got;
-      bump cf.ctl fs ~kind:`Write ~offset:off ~len:got;
       got
 
     let copy cf ~src = Eio.Flow.Pi.simple_copy ~single_write cf ~src
@@ -3356,7 +2985,6 @@ module Crash = struct
       let got = Eio.File.pwrite_single (writable cf) ~file_offset bufs in
       clog_write cf.ctl fs ~offset:off (capture bufs got);
       note_clear cf fs;
-      bump cf.ctl fs ~kind:`Write ~offset:off ~len:got;
       got
 
     (* The sync barrier: the live content becomes durable and the file's pending
@@ -3377,8 +3005,7 @@ module Crash = struct
       let fs = fstate_of cf in
       Eio.File.truncate (writable cf) len;
       clog_change cf.ctl fs (Resize (Optint.Int63.to_int len));
-      note_clear cf fs;
-      bump cf.ctl fs ~kind:`Write ~offset:0 ~len:0
+      note_clear cf fs
   end
 
   let wrap_cfile_rw ~sw ctl fs ~append base : Eio.File.rw_ty r =
@@ -3870,8 +3497,8 @@ module Crash = struct
 
   let () = crash_dir_hook := wrap_cdir
 
-  let v ?os ?(policy = Drop_unsynced) ?(trigger = Manual) ?(outside = Dropped)
-      ?(block_size = 4096) ?(pause = ignore) () =
+  let v ?os ?(policy = Drop_unsynced) ?(outside = Dropped) ?(block_size = 4096)
+      ?(pause = ignore) () =
     if block_size <= 0 then
       Fmt.invalid_arg
         "Eio_fs.Chaos.Private.Crash.v: block_size is %d, must be positive"
@@ -3883,7 +3510,6 @@ module Crash = struct
       os;
       queued = [];
       policy;
-      trigger;
       outside;
       block_size;
       base = None;
@@ -3905,7 +3531,6 @@ module Crash = struct
       effects = 0;
       logged = 0;
       pending_changes = 0;
-      ops = 0;
       opened = Hashtbl.create 8;
       file_inos = Hashtbl.create 8;
       pause;
@@ -3971,7 +3596,6 @@ end
 module Law = Chaos_law
 
 module Internal = struct
-  let next = Schedule.next
   let replay_copied () = Atomic.get Chaos_blocks.copied
   let crash_image (ctl : Crash.t) = List.rev ctl.image
   let descriptors = Memfs.descriptors

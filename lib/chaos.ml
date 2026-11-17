@@ -13,59 +13,9 @@ module Fault = Plan.Fault
 
 (* {1 Wrapper} *)
 
-let numberer () =
-  let index = ref 0 and nths = Hashtbl.create 16 in
-  fun (op : M.Op.t) : Op.t ->
-    incr index;
-    let kind = (op.kind :> Op.kind) in
-    let nth =
-      1 + Option.value ~default:0 (Hashtbl.find_opt nths (kind, op.path))
-    in
-    Hashtbl.replace nths (kind, op.path) nth;
-    {
-      index = !index;
-      kind;
-      path = op.path;
-      nth;
-      file_offset = op.file_offset;
-      length = op.length;
-      dest = op.dest;
-    }
-
-(* An [ENOSPC] on an operation that needs no room is none: Linux never
-   answers it there. *)
-let model_fault ~space (op : Op.t) : Fault.t -> M.Fault.t option = function
-  | Fail `Enospc when (not space) && (op.kind = `Change || op.kind = `Open_write)
-    ->
-      None
-  | Fail c ->
-      Some
-        (match op.kind with
-        | `Read | `Read_dir -> Read_error c
-        | `Write | `Truncate -> Write_error c
-        | `Sync -> Sync_error c
-        | `Open_read | `Open_write -> Open_error c
-        | `Stat -> Stat_error c
-        | `Change -> Change_error c)
-  | Evict c -> ( match op.kind with `Sync -> Some (Sync_evict c) | _ -> None)
-  | Short n -> (
-      match op.kind with
-      | `Read -> Some (Short_read n)
-      | `Write -> Some (Short_write n)
-      | _ -> None)
-  | Torn n -> ( match op.kind with `Write -> Some (Torn_write n) | _ -> None)
-  | Swap_symlink s -> (
-      match op.kind with
-      | `Open_read | `Open_write | `Stat -> Some (Swap_symlink s)
-      | _ -> None)
-
 let wrap f base =
-  let num = numberer () in
-  let hook (mop : M.Op.t) =
-    let op = num mop in
-    Option.bind (f op) (model_fault ~space:mop.space op)
-  in
-  (M.wrap (M.Schedule.hook hook) base :> Eio.Fs.dir_ty Eio.Path.t)
+  let hook ~space:_ op = f op in
+  (M.wrap (M.schedule hook) base :> Eio.Fs.dir_ty Eio.Path.t)
 
 (* {1 Runs} *)
 
@@ -714,9 +664,8 @@ let run_scenario ~halted ~os ~setup ~hook ~st run (s : Plan.check) =
       then (M.Crash.wrap (M.Crash.v ~os ()) base :> Eio.Fs.dir_ty Eio.Path.t)
       else base
     in
-    let wrap d =
-      (M.wrap (M.Schedule.hook hook) d :> Eio.Fs.dir_ty Eio.Path.t)
-    in
+    let sched = M.schedule hook in
+    let wrap d = (M.wrap sched d :> Eio.Fs.dir_ty Eio.Path.t) in
     match with_env ~wrap clock mono base run with
     | () -> Passed
     | exception x -> Raised x
@@ -729,33 +678,32 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
     List.exists (fun (p, _) -> Plan.at p op) s.faults
     || match s.lasting with Some (_, p) -> Plan.at p op | None -> false
   in
-  let trace = record ?cap ~marked () and num = numberer () in
+  let trace = record ?cap ~marked () in
   let pending = ref s.faults and on = ref false and st = streak first in
   let halted = ref None and floor = ref 0 and ops = ref 0 in
   let sure = Plan.Sure.v () in
-  let hook (mop : M.Op.t) =
-    let op = num mop in
+  let hook ~space (op : Op.t) =
     count_op halted ops;
     Option.iter
       (fun budget ->
         add_floor halted ~budget ~floor ~at:op.index
-          (Plan.check_floor ~space:mop.space ~sure:(Plan.Sure.add sure op) op))
+          (Plan.check_floor ~space ~sure:(Plan.Sure.add sure op) op))
       budget;
     Option.iter
       (fun t ->
         Hashtbl.replace t
           { Plan.kind = op.kind; path = op.path; nth = op.nth }
-          mop.space)
+          space)
       spaces;
     let fault =
       Option.bind (scheduled_fault s ~on ~pending op) (fun f ->
-          Option.map (fun m -> (f, m)) (model_fault ~space:mop.space op f))
+          if M.applies ~space op f then Some f else None)
     in
-    note trace (op, Option.map fst fault);
+    note trace (op, fault);
     match fault with
-    | Some (_, m) ->
+    | Some _ ->
         failed st op;
-        Some m
+        fault
     | None ->
         met_no_fault st op;
         take_time st op;
@@ -938,8 +886,7 @@ module Crash = struct
 
   (* A controller built by hand may wrap a directory other processes write,
      so its cut keeps their changes. A check reaches its directory through
-     the wrapper alone and builds its own on [Dropped], the same states for
-     less work. *)
+     the wrapper alone and builds its own on [Dropped]. *)
   let v ?os = function
     | Drop_unsynced -> M.Crash.v ?os ~policy:Drop_unsynced ~outside:Kept ()
     | Survive p -> M.Crash.v ?os ~policy:(Survive p) ~outside:Kept ()
@@ -1010,7 +957,7 @@ module Crash = struct
      [pause], which the controller runs. *)
   let phase ?(guard = ignore) ~kept_going ~trace ~ctl ~pause ~mono ~faults ~cut
       ~cut_op ~seqs ~changed ~stop fs f =
-    let num = numberer () and pending = ref faults in
+    let pending = ref faults in
     let after = ref 0 and lost = ref [] and run_sw = ref None in
     (* The last sync or open, and the controller's stamp before its effect,
        which follows with no other operation in between. *)
@@ -1051,8 +998,7 @@ module Crash = struct
          syncing := None;
          ignore (spend mono sync_time : int);
          Option.iter (landing ~tracked:true) op);
-    let hook (mop : M.Op.t) =
-      let op = num mop in
+    let hook ~space (op : Op.t) =
       if not (M.Crash.is_crashed ctl) then synced ();
       guard op;
       if not (M.Crash.is_crashed ctl) then
@@ -1069,8 +1015,8 @@ module Crash = struct
       match List.partition (fun (p, _) -> Plan.at p op) !pending with
       | (_, f) :: _, rest ->
           pending := rest;
-          let m = model_fault ~space:mop.space op f in
-          note trace (op, Option.map (fun _ -> f) m);
+          let m = if M.applies ~space op f then Some f else None in
+          note trace (op, m);
           landing op ~tracked;
           m
       | [], _ ->
@@ -1085,12 +1031,13 @@ module Crash = struct
           end;
           None
     in
-    let wrapped = M.wrap (M.Schedule.hook hook) fs in
+    let sched = M.schedule hook in
+    let wrapped = M.wrap sched fs in
     let outcome =
       match
         Eio.Switch.run (fun sw ->
             run_sw := Some sw;
-            f wrapped (M.wrap (M.Schedule.hook hook) (confined ~sw fs));
+            f wrapped (M.wrap sched (confined ~sw fs));
             if not (M.Crash.is_crashed ctl) then synced ())
       with
       | () ->
@@ -1634,4 +1581,8 @@ module Crash = struct
              made."
 end
 
-module Private = Chaos_model
+module Private = struct
+  module Crash = M.Crash
+  module Law = M.Law
+  module Internal = M.Internal
+end

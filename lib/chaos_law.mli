@@ -27,7 +27,7 @@ type kind =
   | `Stat
   | `Change ]
 (** The type for the operation kinds the schedule is asked about, those of
-    {!Chaos_model.Op.kind}. *)
+    {!Chaos_plan.Op.kind}. *)
 
 (** The type for the classes of operations. *)
 type cls =

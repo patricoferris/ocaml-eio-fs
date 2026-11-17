@@ -515,6 +515,12 @@ val wrap : (Op.t -> Fault.t option) -> _ Eio.Path.t -> Eio.Fs.dir_ty Eio.Path.t
 
 (**/**)
 
-module Private = Chaos_model
+(* For this package's tests: the crash model's own policies and controls,
+   the law of the wrapper, and counters. *)
+module Private : sig
+  module Crash = Chaos_model.Crash
+  module Law = Chaos_model.Law
+  module Internal = Chaos_model.Internal
+end
 
 (**/**)
