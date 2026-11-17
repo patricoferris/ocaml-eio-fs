@@ -17,14 +17,14 @@
 
 (package
  (name eio-fs)
- (synopsis "In-memory filesystem for Eio, with fault and power-cut injection for tests")
+ (synopsis "In-memory filesystem for Eio, to test code under filesystem errors and power cuts")
  (tags (eio filesystem in-memory))
  (description
-  "eio-fs is an in-memory filesystem for Eio, with wrappers that inject
-faults and simulate power loss for crash-consistency tests. It also writes
-files atomically on any backend, and durably with the barriers it is given,
-binds POSIX calls that Eio lacks, and embeds a directory tree in a program. The in-memory backend is
-adapted from Patrick Ferris's eio_mem (https://git.sirref.org/eio_mem).")
+  "eio-fs is an in-memory filesystem for Eio, to test code under
+filesystem errors and power cuts. Each test gets a fresh filesystem of its
+own, used through the ordinary Eio.Path API, so the code under test does not
+change. The checks of Eio_fs.Chaos run that code again and again, each time
+with a different filesystem error or power cut.")
  (depends
   (hermetic (>= 0.1.0))
   (ocaml (>= 5.4))

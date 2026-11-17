@@ -64,6 +64,18 @@ val root : user
     [Eio.Fs.Permission_denied], whose message names the path asked for and not
     where the directory sits.
 
+    {b eio_posix.} The filesystem answers as the kernel does, and eio_posix
+    differs from the kernel on a few paths. Code that runs on both should not
+    depend on them:
+
+    - a path that ends in a ["."] or [".."] component, which eio_posix rewrites
+      lexically ({{:https://github.com/ocaml-multicore/eio/issues/976}eio#976});
+    - a creating open of a name with a trailing slash, which eio_posix fails
+      with another error than the kernel's;
+    - on macOS, a path through a directory with no read bit, which eio_posix
+      refuses, and a stat through more than 32 symbolic links, which it follows
+      up to 40.
+
     {b Permissions.} Each operation runs as a {!type-user} and meets the POSIX
     rules:
 
@@ -198,7 +210,19 @@ val run :
 (** Compile-time file embedding for the in-memory filesystem, in the style of
     ocaml-crunch. The [eio-fs-crunch] binary serialises a directory tree into an
     OCaml module of {!Crunch.entry} values; at runtime the generated module's
-    [load ()] rebuilds the tree in a new in-memory filesystem. *)
+    [load ()] rebuilds the tree in a new in-memory filesystem.
+
+    With [-o assets.ml] the binary writes the module and its interface,
+    [assets.mli]. This dune rule regenerates them when the [static] directory
+    changes:
+    {v
+    (rule
+     (targets assets.ml assets.mli)
+     (deps
+      (source_tree static))
+     (action
+      (run %{bin:eio-fs-crunch} -o assets.ml static)))
+    v} *)
 module Crunch : sig
   (** The type for nodes of an embedded file tree. Paths are absolute within the
       image and use ["/"] as separator. *)
