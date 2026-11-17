@@ -365,4 +365,20 @@ module Nofollow : sig
       @raise Eio.Io
         when the open or read fails, including when the final component is a
         symbolic link. *)
+
+  val with_regular :
+    _ Eio.Path.t ->
+    (Eio.File.ro_ty Eio.Resource.t -> Eio.File.Stat.t -> 'a) ->
+    ('a, [ `Invalid of string ]) result
+  (** [with_regular path f] is [Ok (f file stat)], [file] the file at [path]
+      opened as [Eio.Path.open_in ~follow:false] opens it and [stat] its stat
+      once opened, when [path] is a regular file of one link. It is
+      [Error (`Invalid why)] otherwise, [why] saying what [path] is, such as
+      ["a symbolic link, not a regular file"] or ["a file of 2 links"], and [f]
+      is not called. [path] is stated before the open, so a FIFO, which an open
+      or a read waits on, and a device, which a read never ends, are refused
+      unopened. The opened file is checked again: a rename over [path] once it
+      is opened leaves it with no name, and it is read as it was opened.
+
+      @raise Eio.Io when the stat or the open fails, or as [f] raises. *)
 end

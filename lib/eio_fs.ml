@@ -38,6 +38,27 @@ module Nofollow = struct
     let file = Eio.Path.open_in ~sw ~follow:false path in
     Eio_fs_internal.bounded_read ~max_bytes ~validate ~stat:(Eio.File.stat file)
       ~read:(Eio.Flow.single_read file)
+
+  (* Once opened, a file may have lost its last name to a rename over it,
+     which leaves the descriptor reading the file it opened. *)
+  let refused ~opened (s : Eio.File.Stat.t) =
+    match s.kind with
+    | `Regular_file when Int64.equal s.nlink 1L -> None
+    | `Regular_file when opened && Int64.equal s.nlink 0L -> None
+    | `Regular_file -> Fmt.kstr Option.some "a file of %Ld links" s.nlink
+    | kind ->
+        Fmt.kstr Option.some "a %a, not a regular file" Eio.File.Stat.pp_kind
+          kind
+
+  let with_regular path f =
+    match refused ~opened:false (Eio.Path.stat ~follow:false path) with
+    | Some why -> Error (`Invalid why)
+    | None -> (
+        Eio.Path.with_open_in ~follow:false path @@ fun file ->
+        let stat = Eio.File.stat file in
+        match refused ~opened:true stat with
+        | Some why -> Error (`Invalid why)
+        | None -> Ok (f file stat))
 end
 
 module Tree = struct
