@@ -153,6 +153,60 @@ let test_read_nofollow_validates_a_fifo_before_reading () =
       Cstruct.memset bytes 0;
       Alcotest.fail "a FIFO was read"
 
+(* [with_regular] opens a regular file of one link and refuses, before any
+   open, a symbolic link, a second link and a FIFO. *)
+let test_with_regular () =
+  with_real_dir @@ fun dir ->
+  Eio.Path.save ~create:(`Exclusive 0o600) (dir / "one") "four";
+  Unix.symlink (snd (dir / "one")) (snd (dir / "link"));
+  Eio.Path.save ~create:(`Exclusive 0o600) (dir / "shared") "";
+  Unix.link (snd (dir / "shared")) (snd (dir / "other"));
+  Unix.mkfifo (snd (dir / "fifo")) 0o600;
+  let size name =
+    Eio_fs.Nofollow.with_regular (dir / name) (fun _ stat ->
+        Optint.Int63.to_int stat.Eio.File.Stat.size)
+    |> Result.map_error (fun (`Invalid why) -> why)
+  in
+  Alcotest.(check (list (result int string)))
+    "the size of the one regular file, the others refused"
+    [
+      Ok 4;
+      Error "a symbolic link, not a regular file";
+      Error "a file of 2 links";
+      Error "a fifo, not a regular file";
+    ]
+    (List.map size [ "one"; "link"; "shared"; "fifo" ])
+
+(* A rename over the name between the check and the open's stat leaves the
+   opened file with no name: it is read as it was opened, as POSIX keeps an
+   open file whose last name went. *)
+let test_with_regular_reads_a_replaced_file () =
+  with_real_dir @@ fun dir ->
+  Eio.Path.save ~create:(`Exclusive 0o600) (dir / "one") "held";
+  Eio.Path.save ~create:(`Exclusive 0o600) (dir / "next") "replacement";
+  let stats = ref 0 in
+  let replace (op : Eio_fs.Chaos.Op.t) =
+    if op.kind = `Stat && String.ends_with ~suffix:"one" op.path then begin
+      incr stats;
+      if !stats = 2 then Eio.Path.rename (dir / "next") (dir / "one")
+    end;
+    None
+  in
+  let wrapped = Eio_fs.Chaos.wrap replace dir in
+  let read =
+    Eio_fs.Nofollow.with_regular (wrapped / "one") (fun file stat ->
+        (Eio.Flow.read_all file, Optint.Int63.to_int stat.Eio.File.Stat.size))
+    |> Result.map_error (fun (`Invalid why) -> why)
+  in
+  Alcotest.(check int) "the name was replaced before the opened stat" 2 !stats;
+  Alcotest.(check (result (pair string int) string))
+    "the opened file's bytes"
+    (Ok ("held", 4))
+    read;
+  Alcotest.(check string)
+    "the name's bytes" "replacement"
+    (Eio.Path.load (dir / "one"))
+
 let test_read_nofollow_wipes_a_failed_read () =
   with_real_dir @@ fun dir ->
   Eio.Path.save ~create:(`Exclusive 0o600) (dir / "private") "secret";
@@ -247,6 +301,10 @@ let test_read_nofollow_follows_growth_to_the_bound () =
 let suite =
   ( "nofollow",
     [
+      Alcotest.test_case "opens only a regular file of one link" `Quick
+        test_with_regular;
+      Alcotest.test_case "reads a file whose name was replaced" `Quick
+        test_with_regular_reads_a_replaced_file;
       Alcotest.test_case "bounded read" `Quick
         test_read_nofollow_reads_a_bounded_regular_file;
       Alcotest.test_case "refuses the final link" `Quick
