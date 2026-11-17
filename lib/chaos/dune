@@ -1,0 +1,47 @@
+(library
+ (name eio_fs_chaos)
+ (public_name eio-fs.chaos)
+ (flags
+  (:standard -open Eio_fs_mem))
+ (private_modules
+  quiet_mock
+  chaos_plan
+  chaos_blocks
+  chaos_journal
+  chaos_law
+  chaos_model
+  device
+  device_traces)
+ (libraries
+  hermetic
+  eio
+  eio.utils
+  eio-fs
+  eio-fs.path
+  eio-fs.sync
+  eio_fs_internal
+  eio_fs_mem
+  eio_fs_kernel
+  fmt
+  cstruct
+  optint
+  mtime
+  psq
+  domain-local-await))
+
+(rule
+ (target device_traces.ml)
+ (deps ../kernel/fs.csv)
+ (action
+  (with-stdout-to
+   %{target}
+   (progn
+    (echo "let csv = {fs_csv|")
+    (cat ../kernel/fs.csv)
+    (echo "|fs_csv}\n")))))
+
+(mdx
+ (package eio-fs)
+ (files eio_fs_chaos.mli)
+ (preludes prelude.txt)
+ (libraries eio-fs eio-fs.chaos eio eio_main))

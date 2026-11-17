@@ -465,7 +465,7 @@ let check_text ?at s =
         (pos_text ?at p)
   | None -> faults_text ?at s.faults
 
-(* {1 Crash.check} *)
+(* {1 Power cuts} *)
 
 type state = Drop | Keep | Enum of int list | Seed of int | Shape of int list
 

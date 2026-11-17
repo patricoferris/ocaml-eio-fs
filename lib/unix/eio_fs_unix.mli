@@ -28,7 +28,7 @@ val sync_dir : _ Eio.Path.t -> unit
 (** [sync_dir dir] makes [dir]'s entries durable: the barrier a commit protocol
     issues after renaming a file into place. A backend that registers a
     {!Eio_fs_sync.Dir_sync} answers through it, asked for a full barrier, so
-    [Eio_fs.Chaos.Crash] under [~os:`Macos] keeps what it commits; a plain POSIX
+    [Eio_fs_chaos.Power] under [~os:`Macos] keeps what it commits; a plain POSIX
     directory is opened and {!full_fsync}ed on the descriptor that open returns,
     which resolves every component beneath [dir]'s capability, off the calling
     fiber's thread. A directory whose handle carries no descriptor takes
@@ -847,8 +847,8 @@ module Batch : sig
 
   val v : sw:Eio.Switch.t -> _ Eio.Path.t -> t
   (** [v ~sw dir] opens [dir], resolved by {!Eio.Path}'s own confinement, and
-      holds it until [sw] finishes. A wrapper such as {!Eio_fs.Chaos} observes
-      the open and the batch then runs beneath the directory it wraps. An
+      holds it until [sw] finishes. A wrapper of [Eio_fs_chaos] observes the
+      open and the batch then runs beneath the directory it wraps. An
       already-open directory is held through its dot entry, without an empty
       open pathname. Descriptorless backends use Eio operations through held
       parent capabilities.

@@ -2,12 +2,13 @@
 
     [Eio_fs] provides a filesystem ({!Fs}) that lives entirely in the process, a
     way to embed a directory tree into an OCaml module at compile time
-    ({!Crunch}), and chaos tests ({!Chaos}). Each call to {!Fs.v}, {!Fs.load},
-    {!Crunch.load} or {!run} makes a filesystem of its own: two of them share no
-    file.
+    ({!Crunch}), and walks over a tree ({!Tree}). Each call to {!Fs.v},
+    {!Fs.load}, {!Crunch.load} or {!run} makes a filesystem of its own: two of
+    them share no file. The library [eio-fs.chaos] tests programs and
+    filesystems with it.
 
-    {!Nofollow}, {!Tree} and {!Chaos} work on any {!Eio} backend, the in-memory
-    one included.
+    {!Nofollow} and {!Tree} work on any {!Eio} backend, the in-memory one
+    included.
 
     Where Linux and macOS differ, a filesystem follows one, chosen by [?os]:
     [`Linux], the default, or [`Macos]. The choice comes from the argument,
@@ -28,17 +29,18 @@ val root : user
 (** An in-memory filesystem for {!Eio}.
 
     An entry's stat carries what Linux gives on tmpfs. Its times come from the
-    clock given to {!Fs.v}, and stay at [0.] without one; under {!Chaos.check}
-    they come from the run's clock. A write, a truncation and an open that
-    truncates move a file's [mtime] and [ctime]. A chmod, a chown and a rename
-    move the entry's [ctime]. Making, removing or renaming an entry moves its
-    directory's [mtime] and [ctime]. [atime] follows relatime, Linux's default:
-    a read, a listing or a link read moves it when it is not past [mtime] or
-    [ctime], or a day after it last moved. [dev] is the filesystem's own, shared
-    with no other filesystem and no host device. [nlink] is [2] plus the number
-    of subdirectories for a directory, [1] for anything else, and [0] once its
-    last name is gone. [blocks] counts the 512-byte blocks of the 4096-byte
-    pages writes put bytes in: a hole, a directory and a link hold none.
+    clock given to {!Fs.v}, and stay at [0.] without one; under
+    [Eio_fs_chaos.run] they come from the run's clock. A write, a truncation and
+    an open that truncates move a file's [mtime] and [ctime]. A chmod, a chown
+    and a rename move the entry's [ctime]. Making, removing or renaming an entry
+    moves its directory's [mtime] and [ctime]. [atime] follows relatime, Linux's
+    default: a read, a listing or a link read moves it when it is not past
+    [mtime] or [ctime], or a day after it last moved. [dev] is the filesystem's
+    own, shared with no other filesystem and no host device. [nlink] is [2] plus
+    the number of subdirectories for a directory, [1] for anything else, and [0]
+    once its last name is gone. [blocks] counts the 512-byte blocks of the
+    4096-byte pages writes put bytes in: a hole, a directory and a link hold
+    none.
 
     A file's bytes live in memory, holes included, and a file holds at most 4
     GiB: a write or a truncation past that raises {!Eio.Fs.File_too_large}.
@@ -120,8 +122,9 @@ module Fs : sig
   (** [as_user user path] is [path], an in-memory directory, with its operations
       run as [user]. A test sets a tree up as {!root} and runs the code under
       test as a user. A directory opened from the result shares its descriptor
-      with [path]'s. A wrapper of {!Chaos} over an in-memory directory, such as
-      a check's [env#fs], stays the same wrapper, over the directory as [user].
+      with [path]'s. A wrapper of [Eio_fs_chaos] over an in-memory directory,
+      such as a run's [env#fs], stays the same wrapper, over the directory as
+      [user].
 
       @raise Invalid_argument
         if [path] is neither an in-memory directory nor such a wrapper. *)
@@ -284,60 +287,6 @@ module Crunch : sig
       the generated module's entry list and its loading function. *)
 end
 
-module Chaos = Chaos
-(** Filesystem faults and power cuts, for tests of Eio programs. *)
-
-(** Where a directory answers differently from Linux or macOS.
-
-    A scenario is a few operations through {!Eio.Path}, such as a write of [a]
-    then a stat of [A], or a rename over a non-empty directory. Linux, on a
-    tmpfs, and macOS, on its default case-insensitive APFS volume, answered each
-    operation of each scenario when this package was recorded, as a user other
-    than root, with the umask [0o022] and a supplementary group. A directory
-    that agrees with them passes; {!Fs.v} does, for the [os] it is given. *)
-module Conformance : sig
-  val scenarios : string list
-  (** [scenarios] is the name of each scenario, in the order {!check} runs them.
-  *)
-
-  val check :
-    ?os:[< `Linux | `Macos ] ->
-    ?only:string list ->
-    user:user ->
-    (unit -> _ Eio.Path.t) ->
-    unit
-  (** [check ~os ~only ~user f] runs each scenario named in [only] (defaults to
-      {!scenarios}) and compares each answer with the one [os] (defaults to
-      [`Linux]) gave. [f ()] is a fresh, empty directory whose operations run as
-      [user]; [check] calls it once per scenario and runs the scenario in a
-      directory of mode [0o755] it makes there, as the recording did. [user]
-      names the groups a scenario changes a file to and reads back.
-
-      An answer is an error's errno, such as [ENOENT] or [denied] for [EACCES]
-      and [EPERM], or what the operation returned: a file's kind and length, a
-      listing, a mode. Where Eio defines the answer and the kernel does not give
-      it, as for a path resolved one component at a time, the answer is the one
-      eio_posix gave on that kernel, and a report says why. A directory that
-      eio_posix confines does not pass: eio_posix resolves a trailing slash,
-      ["."] and [".."] itself, where the kernel answers otherwise.
-
-      @raise Failure
-        with a report of the first answer that differs: the scenario, the
-        operation, both answers, the operations up to it with the directory's
-        answers, and the [~only] argument that runs that scenario alone.
-      @raise Invalid_argument
-        if [user] is root, its umask is not [0o022], it has no group other than
-        its primary one, or [only] names a scenario {!scenarios} lacks. *)
-
-  (**/**)
-
-  val eio_posix_differs : [< `Linux | `Macos ] -> string list
-  (** [eio_posix_differs os] is the scenarios where the answers eio_posix gave
-      on [os] differ from those {!check} expects. *)
-
-  (**/**)
-end
-
 (** Trees and directories on any {!Eio} backend:
 
     - walks over the tree under a path, which measure it ({!val-usage}), visit
@@ -491,7 +440,7 @@ module Nofollow : sig
       Prefix components keep ordinary {!Eio.Path} resolution and confinement;
       only the final component is refused when it is a symbolic link. Every
       backend that honours [~follow:false] gets the same refusal, and a wrapper
-      such as {!Chaos} observes the one open.
+      of [Eio_fs_chaos] observes the one open.
 
       @raise Invalid_argument if [max_bytes] is negative or [max_int].
       @raise Eio.Io

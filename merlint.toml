@@ -45,13 +45,13 @@ exclude = ["E606"]
 # The law's table: one entry per operation, made where a module of Eio's
 # interface signature defines it, so an operation Eio adds fails to compile.
 [[rules]]
-files = ["lib/chaos_law.ml"]
+files = ["lib/chaos/chaos_law.ml"]
 exclude = ["E005"]
 
 # A copy of Eio_mock's scheduler, kept as close to it as the changes allow,
 # as eio-net's copy is.
 [[rules]]
-files = ["lib/quiet_mock.ml"]
+files = ["lib/chaos/quiet_mock.ml"]
 exclude = ["E005"]
 
 # Eio_fs_unix includes this module: its names are the library's own, such as
@@ -65,5 +65,16 @@ exclude = ["E330"]
 # the bound without exporting that state. Chaos_blocks and Chaos_journal hold
 # the parts that stand alone.
 [[rules]]
-files = ["lib/chaos_model.ml"]
+files = ["lib/chaos/chaos_model.ml"]
 exclude = ["E015"]
+
+# The in-memory core is a private library of eio-fs: these tests reach it
+# through Eio_fs.Fs, its public face.
+[[rules]]
+files = ["test/test_low_level.ml", "test/test_memfs.ml"]
+exclude = ["E606"]
+
+# The fuzzer compiles a copy of the private Extents: it links no eio_fs_mem.
+[[rules]]
+files = ["fuzz/fuzz_extents.ml"]
+exclude = ["E710"]

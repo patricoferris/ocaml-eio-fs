@@ -1,47 +1,14 @@
 (library
  (name eio_fs)
  (public_name eio-fs)
- (private_modules
-  extents
-  low_level
-  memfs
-  quiet_mock
-  chaos_plan
-  chaos_blocks
-  chaos_journal
-  chaos_law
-  conformance
-  conformance_traces)
+ (flags
+  (:standard -open Eio_fs_mem))
  (libraries
   hermetic
   eio
-  eio.utils
   eio-fs.path
-  eio-fs.sync
   eio_fs_internal
-  eio_fs_kernel
+  eio_fs_mem
   fmt
   cstruct
-  optint
-  mtime
-  psq
-  domain-local-await
-  uucp
-  uunf))
-
-(rule
- (target conformance_traces.ml)
- (deps kernel/fs.csv)
- (action
-  (with-stdout-to
-   %{target}
-   (progn
-    (echo "let csv = {fs_csv|")
-    (cat kernel/fs.csv)
-    (echo "|fs_csv}\n")))))
-
-(mdx
- (package eio-fs)
- (files chaos.mli)
- (preludes prelude.txt)
- (libraries eio-fs eio))
+  optint))

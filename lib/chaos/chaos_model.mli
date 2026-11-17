@@ -1,5 +1,5 @@
-(** The fault wrapper and the crash model that [Eio_fs.Chaos] is built on; the
-    tests reach the crash model as [Eio_fs.Chaos.Private.Crash].
+(** The fault wrapper and the crash model that [Eio_fs_chaos] is built on; the
+    tests reach the crash model as [Eio_fs_chaos.Private.Crash].
 
     {!wrap} wraps a directory, in memory or on disk, and asks a {!type-hook}
     about each read, write, sync, open, stat, listing and directory change. A
@@ -232,7 +232,7 @@ module Crash : sig
     | Dropped  (** Nothing: the image is rebuilt from the model alone. *)
     | Kept
         (** All of it, as durable, where the model holds no change; see
-            [Chaos.Crash.wrap], whose controllers all keep it. *)
+            [Eio_fs_chaos.Power.wrap], whose controllers all keep it. *)
 
   val v :
     ?os:[< `Linux | `Macos ] ->

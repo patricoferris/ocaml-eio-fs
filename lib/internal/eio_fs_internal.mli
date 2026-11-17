@@ -3,7 +3,7 @@
 
     A wrapper binds its own interfaces and nothing of its base's, so a caller
     holding it cannot step around it. Two of this package's libraries still need
-    the base: {!Eio_fs.Chaos} itself, to hand a rename target that is a wrapper
+    the base: [Eio_fs_chaos] itself, to hand a rename target that is a wrapper
     to the base backend, and [eio-fs.unix], to reach the host descriptor a lock
     or a native batch is taken on. They reach it through the interfaces below,
     which no library outside the package can name. *)
@@ -17,8 +17,8 @@ type (_, _, _) Eio.Resource.pi +=
         (** The file a file wrapper wraps. *)
   | Admin :
       ('t, 't -> Eio.Fs.dir_ty Eio.Resource.t, [> `Admin ]) Eio.Resource.pi
-        (** The same directory with root's rights, which {!Eio_fs.Chaos.Crash}
-            reads and rebuilds a tree through. *)
+        (** The same directory with root's rights, which the power cut of
+            [Eio_fs_chaos] reads and rebuilds a tree through. *)
   | Sync_failed :
       ('t, 't -> evict:bool -> unit, [> `Sync_failed ]) Eio.Resource.pi
         (** A sync a wrapper failed on purpose, told to the file beneath it, so

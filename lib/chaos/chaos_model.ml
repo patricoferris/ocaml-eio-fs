@@ -277,7 +277,7 @@ let sync_base ~full (Eio.Resource.T (v, ops) as base) =
       | Some (module W) -> W.sync v
       | None ->
           invalid_arg
-            "Eio_fs.Chaos.wrap: base opens read-only files that cannot sync, \
+            "Eio_fs_chaos.wrap: base opens read-only files that cannot sync, \
              register Eio_fs_sync.File_sync on them")
 
 let sync_ro t ~full =
@@ -594,11 +594,11 @@ module Crash = struct
 
   let err_not_wrapped () =
     invalid_arg
-      "Eio_fs.Chaos.Crash.cut: t wraps no directory, so it has nothing to cut"
+      "Eio_fs_chaos.Power.cut: t wraps no directory, so it has nothing to cut"
 
   let err_base_not_dir () =
     invalid_arg
-      "Eio_fs.Chaos.Crash.wrap: base is not a directory, so a cut has no tree \
+      "Eio_fs_chaos.Power.wrap: base is not a directory, so a cut has no tree \
        to rebuild"
 
   (* An independent copy of the first [n] bytes offered by [bufs]. The caller's
@@ -1138,7 +1138,7 @@ module Crash = struct
           { target = B.read_link bv path; uid; gid; ino; times = times_of st }
     | _ ->
         Fmt.invalid_arg
-          "Eio_fs.Chaos.Crash.wrap: base's entry %S is neither a regular file, \
+          "Eio_fs_chaos.Power.wrap: base's entry %S is neither a regular file, \
            a directory nor a symbolic link, so a cut cannot rebuild it"
           path
 
@@ -3518,7 +3518,7 @@ module Crash = struct
       ?(pause = ignore) () =
     if block_size <= 0 then
       Fmt.invalid_arg
-        "Eio_fs.Chaos.Private.Crash.v: block_size is %d, must be positive"
+        "Eio_fs_chaos.Private.Crash.v: block_size is %d, must be positive"
         block_size;
     let os =
       match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
@@ -3560,7 +3560,7 @@ module Crash = struct
        and split the files' state between the two. *)
     if Option.is_some ctl.base then
       invalid_arg
-        "Eio_fs.Chaos.Crash.wrap: t already wraps a directory, and a \
+        "Eio_fs_chaos.Power.wrap: t already wraps a directory, and a \
          controller tracks one";
     let base = (base :> Eio.Fs.dir_ty r) in
     ctl.base <- Some (base, path);

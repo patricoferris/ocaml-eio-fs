@@ -387,9 +387,6 @@ module Crunch = struct
     \    {!entries}, as {!Eio_fs.Crunch.load} makes it. *)\n"
 end
 
-module Chaos = Chaos
-module Conformance = Conformance
-
 type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 
 (* Root owns the tree and makes the current directory, which it gives to

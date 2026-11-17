@@ -14,7 +14,7 @@ type row = {
 
 let rows =
   lazy
-    (String.split_on_char '\n' Conformance_traces.csv
+    (String.split_on_char '\n' Device_traces.csv
     |> List.filter (fun l -> l <> "" && not (String.starts_with ~prefix:"#" l))
     |> List.tl
     |> List.map (fun line ->
@@ -92,9 +92,26 @@ let answers (os : os) name ops =
     ops
 
 let scenarios = List.map fst K.scenarios
-let name = "Eio_fs.Conformance.check"
+let name = "Eio_fs_chaos.device"
 
-let ids (user : Low_level.User.t) =
+(* The answers of these were a user's: root passes every permission check,
+   and the others change a file's group to a supplementary one. *)
+let needs_user =
+  [
+    "dir no write";
+    "dir write and search";
+    "dir no read";
+    "dir no search";
+    "dir search only";
+    "file no read";
+    "file no write";
+    "group inherited";
+    "setgid dir";
+    "write clears setuid";
+    "chgrp";
+  ]
+
+let ids (user : Eio_fs.user) =
   if Int64.equal user.uid 0L then
     Fmt.invalid_arg
       "%s: the user is root, who needs no permission bit; the answers are a \
@@ -111,70 +128,64 @@ let ids (user : Low_level.User.t) =
         name
   | Some g -> { K.gid = Int64.to_int user.gid; other_gid = Int64.to_int g }
 
-let report ~os ~scenario ~ops ~got j (a : answer) =
-  let op = String.escaped (List.nth ops j) in
-  let lines =
-    [
-      ("scenario", scenario);
-      ("operation", Fmt.str "%d, %s" (j + 1) op);
-      (a.from, a.want);
-      ("directory", List.nth got j);
-    ]
-    @ Option.fold ~none:[] ~some:(fun w -> [ ("why", w) ]) a.why
+(* A scenario that differs: its operations up to the first answer outside
+   what [os] gave, that answer, and the one expected. *)
+let differs ~scenario ~ops ~got j (a : answer) =
+  let upto = List.filteri (fun i _ -> i <= j) (List.map String.escaped ops) in
+  let line =
+    Fmt.str "  %s: %s: expected one of {%s}, got %s" scenario
+      (String.concat "; " upto) a.want (List.nth got j)
   in
-  let upto =
-    List.filteri
-      (fun i _ -> i <= j)
-      (List.combine (List.map String.escaped ops) got)
-  in
-  let width =
-    List.fold_left (fun n (op, _) -> max n (String.length op)) 0 upto
-  in
-  let trace =
-    upto
-    |> List.mapi (fun i (op, got) ->
-        Fmt.str "    %d %-*s  %s" (i + 1) width op got)
-  in
-  let line (k, v) = Fmt.str "  %-10s %s" (k ^ ":") v in
-  Fmt.failwith
-    "%s: %S differs from %s at operation %d@\n\
-     %s@\n\
-    \  trace:@\n\
-     %s@\n\
-    \  replay:    ~only:[%S]"
-    name scenario (os_name os) (j + 1)
-    (String.concat "\n" (List.map line lines))
-    (String.concat "\n" trace) scenario
+  match a.why with
+  | None -> line
+  | Some why -> Fmt.str "%s@\n    (%s: %s)" line a.from why
 
-let check ?os ?only ~user f =
+let check ?os ?user f =
   let os : os =
     match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
   in
-  let ids = ids user in
-  let selected =
-    match only with
-    | None -> fun _ -> true
-    | Some l ->
-        List.iter
-          (fun s ->
-            if not (List.mem s scenarios) then
-              Fmt.invalid_arg "%s: no scenario is named %S" name s)
-          l;
-        fun s -> List.mem s l
+  let ids, run =
+    match user with
+    | Some u -> (ids u, fun _ -> true)
+    | None ->
+        ({ K.gid = 0; other_gid = 0 }, fun s -> not (List.mem s needs_user))
   in
-  List.iteri
-    (fun i (scenario, ops) ->
-      if selected scenario then begin
-        let answers = answers os scenario ops in
-        let dir = Eio.Path.(f () / string_of_int i) in
-        Eio.Path.mkdir ~perm:0o755 dir;
-        let got = K.run ids dir ops in
-        List.iteri
-          (fun j (a : answer) ->
-            if List.nth got j <> a.want then report ~os ~scenario ~ops ~got j a)
-          answers
-      end)
-    K.scenarios
+  let differed =
+    List.concat
+      (List.mapi
+         (fun i (scenario, ops) ->
+           if not (run scenario) then []
+           else
+             let answers = answers os scenario ops in
+             let got =
+               Eio.Switch.run @@ fun sw ->
+               let dir = Eio.Path.(f ~sw / string_of_int i) in
+               Eio.Path.mkdir ~perm:0o755 dir;
+               K.run ids dir ops
+             in
+             let rec first j = function
+               | [] -> []
+               | (a : answer) :: rest ->
+                   if List.nth got j <> a.want then
+                     [ differs ~scenario ~ops ~got j a ]
+                   else first (j + 1) rest
+             in
+             first 0 answers)
+         K.scenarios)
+  in
+  if differed <> [] then begin
+    let left = if user = None then List.length needs_user else 0 in
+    let failed = List.length differed in
+    let ran = List.length K.scenarios - left in
+    Fmt.failwith
+      "%s: %d of %d scenarios differ from %s@\n\
+       %s@\n\
+      \  %d passed, %d differed, %d left out%s"
+      name failed ran (os_name os)
+      (String.concat "\n" differed)
+      (ran - failed) failed left
+      (if left > 0 then Fmt.str "; %d that need ~user" left else "")
+  end
 
 let eio_posix_differs os =
   let os : os = match os with `Macos -> `Macos | `Linux -> `Linux in

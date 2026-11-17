@@ -196,7 +196,7 @@ val check_key : check -> string
 val check_text : ?at:(pos -> Op.t option) -> check -> string
 (** [check_text s] says what [s] does, for a report. *)
 
-(** {1 Crash.check} *)
+(** {1 Power cuts} *)
 
 (** The type for the state a cut leaves. *)
 type state =
@@ -221,7 +221,7 @@ type crash = {
   state : state;
   rcut : (pos option * state) option;  (** A cut during recover. *)
 }
-(** The type for a scenario of [Crash.check]. *)
+(** The type for a scenario of power cuts. *)
 
 val base : crash
 (** [base] is the cut at the end that loses every unsynced change. *)
@@ -241,7 +241,7 @@ val crash_cuts : changed:(Op.t -> bool) -> trace -> crash list
     it leaves, as nothing a cut reads changed. *)
 
 val crash_floor : sure:bool -> changed:bool -> Op.t -> int
-(** [crash_floor ~sure ~changed op] is the runs the linear tier of [Crash.check]
+(** [crash_floor ~sure ~changed op] is the runs the linear tier of power cuts
     has for [op] in every trace where an operation follows it, as {!check_floor}
     is for {!type-check} scenarios. It is none unless [op] is sure to be
     structural. Otherwise it is six if [op] changes the disk, as {!crash_cuts}
