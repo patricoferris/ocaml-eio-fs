@@ -300,371 +300,11 @@ end
 module Rename_backend = Eio_fs_sync.Rename.Make (Exclusive_rename)
 
 let exclusive_rename = Rename_backend.v ()
-
-(* System calls on descriptors and beneath directory descriptors, each the
-   one call its name says, with the runtime released around it. They block, so
-   a fiber makes them from a system thread; they perform no effect, so any Eio
-   backend runs them. *)
-module At = struct
-  type stat = {
-    dev : int64;
-    ino : int64;
-    mode : int64;
-    nlink : int64;
-    uid : int64;
-    gid : int64;
-    rdev : int64;
-    size : int64;
-    blksize : int64;
-    blocks : int64;
-    atime : float;
-    mtime : float;
-    ctime : float;
-  }
-
-  (* [openat(O_RDONLY | O_DIRECTORY | O_NOFOLLOW)]. *)
-  external open_dir : Unix.file_descr -> string -> Unix.file_descr
-    = "caml_eio_fs_batch_open_dir"
-
-  (* [openat(O_RDONLY | O_NOFOLLOW | O_NONBLOCK)]. *)
-  external open_leaf : Unix.file_descr -> string -> Unix.file_descr
-    = "caml_eio_fs_open_leaf"
-
-  external mkdir : Unix.file_descr -> string -> int -> unit
-    = "caml_eio_fs_batch_mkdir"
-
-  external symlink : string -> Unix.file_descr -> string -> unit
-    = "caml_eio_fs_batch_symlink"
-
-  external read_link : Unix.file_descr -> string -> string
-    = "caml_eio_fs_readlinkat"
-
-  (* [fstatat(AT_SYMLINK_NOFOLLOW)]. *)
-  external lstat : Unix.file_descr -> string -> stat = "caml_eio_fs_batch_lstat"
-
-  (* [fstat], its times to the nanosecond as Eio's own stat has them. *)
-  external fstat : Unix.file_descr -> stat = "caml_eio_fs_fstat"
-
-  let kind_of_mode mode =
-    match mode land 0o170000 with
-    | 0o040000 -> `Directory
-    | 0o100000 -> `Regular_file
-    | 0o120000 -> `Symbolic_link
-    | 0o010000 -> `Fifo
-    | 0o020000 -> `Character_special
-    | 0o060000 -> `Block_device
-    | 0o140000 -> `Socket
-    | _ -> `Unknown
-
-  let to_stat (r : stat) : Eio.File.Stat.t =
-    let mode = Int64.to_int r.mode in
-    {
-      dev = r.dev;
-      ino = r.ino;
-      kind = kind_of_mode mode;
-      perm = mode land 0o7777;
-      nlink = r.nlink;
-      uid = r.uid;
-      gid = r.gid;
-      rdev = r.rdev;
-      size = Optint.Int63.of_int64 r.size;
-      blksize = r.blksize;
-      blocks = r.blocks;
-      atime = r.atime;
-      mtime = r.mtime;
-      ctime = r.ctime;
-    }
-end
-
-(* {2 Calls on the calling thread} *)
-
-external inline_stat_native : string -> bool -> At.stat
-  = "caml_eio_fs_inline_fstatat"
-
-external inline_openat : string -> int -> int -> Unix.file_descr
-  = "caml_eio_fs_inline_openat"
-
-external inline_readdir : Unix.dir_handle -> Eio.File.Stat.kind * string
-  = "caml_eio_fs_inline_readdir"
-
-let inline_stat ~follow path =
-  At.to_stat (eio_unix_errors (fun () -> inline_stat_native path follow))
-
-(* The bits caml_eio_fs_inline_openat reads. *)
-let inline_flags ~write ~append ~follow (create : Eio.Fs.create) =
-  let bit b n = if b then n else 0 in
-  let create =
-    match create with
-    | `Never -> 0
-    | `If_missing _ -> 4
-    | `Or_truncate _ -> 4 lor 8
-    | `Exclusive _ -> 4 lor 16
-  in
-  bit write 1 lor bit append 2 lor create lor bit (not follow) 32
-
-let inline_perm : Eio.Fs.create -> int = function
-  | `Never -> 0
-  | `If_missing p | `Or_truncate p | `Exclusive p -> p
-
-let inline_open ~write ~append ~follow ~create path =
-  eio_unix_errors (fun () ->
-      inline_openat path
-        (inline_flags ~write ~append ~follow create)
-        (inline_perm create))
-
-module Inline = struct
-  let fs ((Eio.Resource.T (bv, bops), root) : Eio.Fs.dir_ty Eio.Path.t) =
-    let module B = (val Eio.Resource.get bops Eio.Fs.Pi.Dir) in
-    (* The path the unconfined root resolves from the working directory, as
-       its own calls resolve it. *)
-    let resolve path =
-      match B.native bv path with
-      | Some p -> p
-      | None -> invalid_arg "Eio_fs_unix.inline_fs: a path with no native form"
-    in
-    let module O = struct
-      include B
-
-      let stat _ ~follow path = inline_stat ~follow (resolve path)
-
-      let open_in _ ~sw ~follow path =
-        let fd =
-          inline_open ~write:false ~append:false ~follow ~create:`Never
-            (resolve path)
-        in
-        match Unix.fstat fd with
-        | { st_kind = S_FIFO; _ } ->
-            (* A FIFO is read as the root reads one, awaiting its writer. *)
-            Unix.close fd;
-            B.open_in bv ~sw ~follow path
-        | _ ->
-            (Eio_unix.File.import_ro ~sw ~close_unix:true fd
-              :> Eio.File.ro_ty Eio.Resource.t)
-        | exception e ->
-            Unix.close fd;
-            raise e
-
-      let open_out _ ~sw ~follow ~append ~create path =
-        let fd =
-          inline_open ~write:true ~append ~follow ~create (resolve path)
-        in
-        (Eio_unix.File.import_rw ~sw ~close_unix:true fd
-          :> Eio.File.rw_ty Eio.Resource.t)
-
-      (* A name in directory syntax is resolved by the root, which strips
-         its slash as the backend does. *)
-      let read_link _ path =
-        if String.ends_with ~suffix:"/" path then B.read_link bv path
-        else eio_unix_errors (fun () -> Unix.readlink (resolve path))
-
-      (* The names but [.] and [..], as eio_posix lists them before
-         Eio.Path.read_dir sorts them. *)
-      let read_dir _ path =
-        let path = match resolve path with "" -> "." | p -> p in
-        eio_unix_errors @@ fun () ->
-        let h = Unix.opendir path in
-        let rec names acc =
-          match Unix.readdir h with
-          | "." | ".." -> names acc
-          | name -> names (name :: acc)
-          | exception End_of_file -> acc
-        in
-        Fun.protect ~finally:(fun () -> Unix.closedir h) (fun () -> names [])
-
-      (* [fn] of the entries but [.] and [..], each with the kind the
-         directory records for it, read as [fn] takes them. *)
-      let with_dir_entries _ path fn =
-        let path = match resolve path with "" -> "." | p -> p in
-        let h = eio_unix_errors (fun () -> Unix.opendir path) in
-        let rec next () =
-          match eio_unix_errors (fun () -> inline_readdir h) with
-          | _, ("." | "..") -> next ()
-          | entry -> Some entry
-          | exception End_of_file -> None
-        in
-        Fun.protect
-          ~finally:(fun () -> Unix.closedir h)
-          (fun () -> fn (Seq.of_dispenser next))
-    end in
-    let ops =
-      Eio.Resource.handler
-        (Eio.Resource.H (Eio.Fs.Pi.Dir, (module O))
-        :: Eio.Resource.bindings bops)
-    in
-    ((Eio.Resource.T (bv, ops) :> Eio.Fs.dir_ty Eio.Resource.t), root)
-end
-
 let inline_fs = Inline.fs
 
-(* Why a [with_parent] refused a path: it names nothing beneath its
-   directory, or a parent on the way is not a directory it may descend. *)
-type Eio.Exn.Backend.t += Unsafe_parent of string
+type Eio.Exn.Backend.t += Unsafe_parent = At.Unsafe_parent
 
-let () =
-  Eio.Exn.Backend.register_pp (fun f -> function
-    | Unsafe_parent reason ->
-        Fmt.string f reason;
-        true
-    | _ -> false)
-
-let unsafe_parent reason =
-  raise (Eio.Fs.err (Eio.Fs.Permission_denied (Unsafe_parent reason)))
-
-module Link = struct
-  type t = { parent : Eio_unix.Fd.t; name : string; path : string }
-  type publication = Created | Present
-
-  let err_refused path reason =
-    Error
-      (`Invalid
-         (Fmt.str
-            "cannot publish symbolic link %s: %s; repair or remove the \
-             conflicting entry before retrying"
-            path reason))
-
-  let components path =
-    if Eio_fs_path.is_abs path then Error "expected a relative path"
-    else
-      match Eio_fs_path.canonical ("/" ^ path) with
-      | Ok parts -> Ok parts
-      | Error _ -> Error "expected a non-empty canonical path without NUL"
-
-  (* [fn] applied to [dir]'s descriptor on a system thread, [dir] kept open
-     meanwhile. *)
-  let at dir fn =
-    Eio_unix.Fd.use_exn "Eio_fs_unix.Link" dir @@ fun dir ->
-    Eio_unix.run_in_systhread ~label:"eio-fs-link" (fun () -> fn dir)
-
-  (* A missing parent is made as [create] says, and one another caller made
-     meanwhile is opened all the same. *)
-  let rec open_parent ~create fd name =
-    match at fd (fun dir -> At.open_dir dir name) with
-    | opened -> opened
-    | exception (Unix.Unix_error (Unix.ENOENT, _, _) as e) -> (
-        match create with
-        | `Never -> raise e
-        | `If_missing perm ->
-            (try at fd (fun dir -> At.mkdir dir name perm)
-             with Unix.Unix_error (Unix.EEXIST, _, _) -> ());
-            open_parent ~create:`Never fd name)
-
-  let with_parent ?(create = `Never) (input : _ Eio.Path.t) fn =
-    let dir, path = (input :> Eio.Fs.dir_ty Eio.Path.t) in
-    let original = Eio_fs.Tree.name input in
-    let components =
-      match components path with
-      | Ok components -> components
-      | Error reason ->
-          Fmt.kstr unsafe_parent "%s: %s; name a path beneath the directory"
-            original reason
-    in
-    Eio.Switch.run @@ fun sw ->
-    let rec descend fd = function
-      | [] -> assert false
-      | [ name ] -> { parent = fd; name; path = original }
-      | name :: rest ->
-          let next = open_parent ~create fd name in
-          descend (Eio_unix.Fd.of_unix ~sw ~close_unix:true next) rest
-    in
-    let parent =
-      try
-        let directory = Eio.Path.open_dir ~sw (dir, ".") in
-        let descriptor =
-          match Eio_unix.Resource.fd_opt (Eio.Path.open_in ~sw directory) with
-          | Some fd -> fd
-          | None ->
-              Fmt.invalid_arg
-                "Eio_fs_unix.Link.with_parent: path is %s, in a directory with \
-                 no Unix descriptor"
-                original
-        in
-        eio_unix_errors (fun () -> descend descriptor components)
-      with Eio.Io _ as ex ->
-        let bt = Printexc.get_raw_backtrace () in
-        Eio.Exn.reraise_with_context ex bt "opening the parents of %s" original
-    in
-    fn parent
-
-  let publish t ~target =
-    let existing () =
-      let stat = at t.parent (fun dir -> At.lstat dir t.name) in
-      match At.kind_of_mode (Int64.to_int stat.mode) with
-      | `Symbolic_link ->
-          let held = at t.parent (fun dir -> At.read_link dir t.name) in
-          if String.equal held target then Ok Present
-          else Error (`Changed (Some held))
-      | `Regular_file -> err_refused t.path "regular file already exists"
-      | `Directory -> err_refused t.path "directory already exists"
-      | _ -> err_refused t.path "foreign filesystem entry already exists"
-    in
-    if String.equal target "" || String.contains target '\000' then
-      err_refused t.path "target must be non-empty and contain no NUL"
-    else
-      match
-        match at t.parent (fun dir -> At.symlink target dir t.name) with
-        | () -> Ok Created
-        | exception Unix.Unix_error (Unix.EEXIST, _, _) -> existing ()
-      with
-      | result -> result
-      | exception Unix.Unix_error (code, operation, argument) ->
-          err_refused t.path
-            (Fmt.str "%s %s: %s" operation argument (Unix.error_message code))
-      | exception (Eio.Io _ as ex) -> err_refused t.path (Printexc.to_string ex)
-
-  let rec read_into fd (buffer : Cstruct.t) =
-    match Unix.read_bigarray fd buffer.buffer buffer.off buffer.len with
-    | got -> got
-    | exception Unix.Unix_error (Unix.EINTR, _, _) -> read_into fd buffer
-
-  (* The leaf is opened, weighed and read on system threads, one per call, so
-     a cancel is seen between reads; it is closed before the result. *)
-  type regular = { contents : string; perm : Eio.File.Unix_perm.t }
-
-  let read_regular ~max_bytes t =
-    if max_bytes < 0 || max_bytes = max_int then
-      Fmt.invalid_arg
-        "Eio_fs_unix.Link.read_regular: max_bytes is %d, must be between 0 and \
-         max_int - 1"
-        max_bytes;
-    let err_read fmt = Fmt.kstr (fun msg -> Error (`Invalid msg)) fmt in
-    let opened =
-      match at t.parent (fun dir -> At.open_leaf dir t.name) with
-      | fd -> Ok (Some fd)
-      | exception Unix.Unix_error (Unix.ENOENT, _, _) -> Ok None
-      | exception Unix.Unix_error (code, operation, argument) ->
-          err_read "%s: %s %s: %s" t.path operation argument
-            (Unix.error_message code)
-      | exception (Eio.Io _ as ex) ->
-          err_read "%s: %s" t.path (Printexc.to_string ex)
-    in
-    match opened with
-    | Error _ as error -> error
-    | Ok None -> Ok None
-    | Ok (Some fd) -> (
-        Fun.protect ~finally:(fun () ->
-            try Unix.close fd with Unix.Unix_error _ -> ())
-        @@ fun () ->
-        let in_systhread fn =
-          eio_unix_errors @@ fun () ->
-          Eio_unix.run_in_systhread ~label:"eio-fs-link-read" fn
-        in
-        let stat = At.to_stat (in_systhread (fun () -> At.fstat fd)) in
-        let size = Optint.Int63.to_int64 stat.size in
-        if stat.kind <> `Regular_file then
-          err_read "%s is not a regular file" t.path
-        else if size < 0L || size > Int64.of_int max_bytes then Error `Too_large
-        else
-          match
-            Eio_fs_internal.bounded_read ~max_bytes:(Int64.to_int size)
-              ~validate:(fun _ -> Ok ())
-              ~stat
-              ~read:(fun buffer -> in_systhread (fun () -> read_into fd buffer))
-          with
-          | Ok bytes ->
-              Ok (Some { contents = Cstruct.to_string bytes; perm = stat.perm })
-          | Error `Too_large -> Error `Too_large
-          | Error (`Invalid reason) -> err_read "%s: %s" t.path reason)
-end
+module Link = Link
 
 (* {1 Extended attributes} *)
 
@@ -853,7 +493,7 @@ module Batch = struct
         Done
     | Lstat path ->
         let dir, leaf = parent run path in
-        Stat (At.to_stat (At.lstat dir leaf))
+        Stat (At.stat_of_raw (At.lstat dir leaf))
 
   let attempt run op =
     match perform run op with
@@ -867,7 +507,7 @@ module Batch = struct
     let parents, leaf =
       match split path with
       | parts -> parts
-      | exception Refused reason -> unsafe_parent reason
+      | exception Refused reason -> At.unsafe_parent reason
     in
     let rec descend (dir : Eio.Fs.dir_ty Eio.Path.t) = function
       | [] -> fn Eio.Path.(dir / leaf)
@@ -875,7 +515,7 @@ module Batch = struct
           let next = Eio.Path.(dir / name) in
           let before = Eio.Path.stat ~follow:false next in
           if before.kind <> `Directory then
-            Fmt.kstr unsafe_parent "%S has a non-directory parent" path;
+            Fmt.kstr At.unsafe_parent "%S has a non-directory parent" path;
           Eio.Path.with_open_dir next (fun held ->
               let after = Eio.Path.stat ~follow:false held in
               if
@@ -884,7 +524,7 @@ module Batch = struct
                   && Int64.equal before.ino after.ino
                   && after.kind = `Directory)
               then
-                Fmt.kstr unsafe_parent "%S changed while opening its parent"
+                Fmt.kstr At.unsafe_parent "%S changed while opening its parent"
                   path;
               descend (held :> Eio.Fs.dir_ty Eio.Path.t) rest)
     in

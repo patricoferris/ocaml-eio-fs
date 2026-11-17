@@ -1222,7 +1222,7 @@ CAMLprim value caml_eio_fs_batch_link(value srcfd_v, value src_v,
   CAMLreturn(Val_unit);
 }
 
-/* [st] as a block of 13 fields in the order of At.stat: ten boxed int64
+/* [st] as a block of 13 fields in the order of At.raw_stat: ten boxed int64
    (dev, ino, mode, nlink, uid, gid, rdev, size, blksize, blocks) and three
    boxed doubles, the times [at], [mt] and [ct]. */
 static value eio_fs_stat_value(const struct stat *st, double at, double mt,
