@@ -25,6 +25,54 @@ let test_v_roots_share_no_file () =
     "the second root does not see the first root's file" true
     (Eio.Path.kind ~follow:false (second / "first.txt") = `Not_found)
 
+(* stat(2) names a file by its device and inode, so two filesystems, and the
+   first file of each, never share both, whatever their names and bytes. *)
+let test_v_roots_are_distinct_files () =
+  Eio_mock.Backend.run @@ fun () ->
+  let first = Eio_fs.Fs.v () and second = Eio_fs.Fs.v () in
+  let distinct what a b =
+    let a = Eio.Path.stat ~follow:false a
+    and b = Eio.Path.stat ~follow:false b in
+    Alcotest.(check bool)
+      what false
+      (Int64.equal a.dev b.dev && Int64.equal a.ino b.ino)
+  in
+  distinct "the two roots" first second;
+  write first "same" "same bytes";
+  write second "same" "same bytes";
+  distinct "their first files" (first / "same") (second / "same")
+
+(* [same_file] follows links and never matches a path that names nothing. *)
+let test_same_file () =
+  Eio_mock.Backend.run @@ fun () ->
+  let fs = Eio_fs.Fs.v () in
+  write fs "file" "same bytes";
+  write fs "copy" "same bytes";
+  Eio.Path.symlink ~link_to:"file" (fs / "alias");
+  Eio.Path.symlink ~link_to:"absent" (fs / "broken");
+  let same a b = Eio_fs.Tree.same_file (fs / a) (fs / b) in
+  Alcotest.(check (list bool))
+    "a file, its alias, a copy, an absent path, a dangling link"
+    [ true; true; false; false; false ]
+    [
+      same "file" "file";
+      same "file" "alias";
+      same "file" "copy";
+      same "absent" "absent";
+      same "broken" "broken";
+    ];
+  Alcotest.(check bool)
+    "two roots" false
+    (Eio_fs.Tree.same_file fs (Eio_fs.Fs.v ()));
+  let failing =
+    Eio_fs.Chaos.wrap
+      (fun op -> if op.kind = `Stat then Some (Fail `Eio) else None)
+      fs
+  in
+  match Eio_fs.Tree.same_file (failing / "file") (fs / "file") with
+  | _ -> Alcotest.fail "a failed stat was not raised"
+  | exception Eio.Io _ -> ()
+
 (* [Fs.v ()] is the root of an empty filesystem whatever another root holds. *)
 let test_v_is_empty () =
   Eio_mock.Backend.run @@ fun () ->
@@ -688,6 +736,9 @@ let test_run_refuses_a_relative_cwd () =
 let suite =
   ( "eio_fs",
     [
+      Alcotest.test_case "two roots are distinct files" `Quick
+        test_v_roots_are_distinct_files;
+      Alcotest.test_case "same_file" `Quick test_same_file;
       Alcotest.test_case "load asks its filter about the root first" `Quick
         test_load_filter_refuses_the_root;
       Alcotest.test_case "load refuses a regular file" `Quick
