@@ -73,6 +73,39 @@ let test_same_file () =
   | _ -> Alcotest.fail "a failed stat was not raised"
   | exception Eio.Io _ -> ()
 
+(* Nothing standing at a directory lists as no name; one standing lists its
+   own. *)
+let test_entries () =
+  with_fs @@ fun fs ->
+  Alcotest.(check (list string)) "absent" [] (Eio_fs.Tree.entries (fs / "none"));
+  Eio.Path.mkdir ~perm:0o700 (fs / "d");
+  write fs "d/a" "";
+  write fs "d/b" "";
+  Alcotest.(check (list string))
+    "present" [ "a"; "b" ]
+    (List.sort String.compare (Eio_fs.Tree.entries (fs / "d")))
+
+(* The chain is removed nearest first while empty: the first directory that
+   holds anything ends it and stays, with those after it; one that is gone
+   ends it too. *)
+let test_remove_empty () =
+  with_fs @@ fun fs ->
+  Eio.Path.mkdirs ~perm:0o700 (fs / "a/b/c");
+  write fs "a/kept" "";
+  let chain = [ fs / "a/b/c"; fs / "a/b"; fs / "a" ] in
+  let kind p = Eio.Path.kind ~follow:false p in
+  let removed () =
+    match Eio_fs.Tree.remove_empty chain with
+    | Ok () -> ()
+    | Error (_, e) -> Alcotest.failf "%a" Eio.Exn.pp e
+  in
+  removed ();
+  Alcotest.(check bool) "c gone" true (kind (fs / "a/b/c") = `Not_found);
+  Alcotest.(check bool) "b gone" true (kind (fs / "a/b") = `Not_found);
+  Alcotest.(check bool) "a stays" true (kind (fs / "a") = `Directory);
+  removed ();
+  Alcotest.(check bool) "a still stays" true (kind (fs / "a") = `Directory)
+
 (* [Fs.v ()] is the root of an empty filesystem whatever another root holds. *)
 let test_v_is_empty () =
   Eio_mock.Backend.run @@ fun () ->
@@ -739,6 +772,8 @@ let suite =
       Alcotest.test_case "two roots are distinct files" `Quick
         test_v_roots_are_distinct_files;
       Alcotest.test_case "same_file" `Quick test_same_file;
+      Alcotest.test_case "entries" `Quick test_entries;
+      Alcotest.test_case "remove_empty" `Quick test_remove_empty;
       Alcotest.test_case "load asks its filter about the root first" `Quick
         test_load_filter_refuses_the_root;
       Alcotest.test_case "load refuses a regular file" `Quick
