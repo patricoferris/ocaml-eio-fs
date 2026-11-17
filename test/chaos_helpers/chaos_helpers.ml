@@ -1,9 +1,9 @@
-module Crash = Eio_fs.Chaos.Private.Crash
+module Crash = Eio_fs_chaos.Private.Crash
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
-let at ?(nth = 1) kind path fault (op : Eio_fs.Chaos.Op.t) =
+let at ?(nth = 1) kind path fault (op : Eio_fs_chaos.Op.t) =
   if op.kind = kind && String.equal op.path path && op.nth = nth then Some fault
   else None
 
@@ -11,7 +11,7 @@ let with_chaos f fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
   let raw = env#fs in
-  let chaos = Eio_fs.Chaos.wrap f raw in
+  let chaos = Eio_fs_chaos.wrap f raw in
   fn ~raw ~chaos
 
 (* The whole of a file, read through the handle rather than through its name. *)

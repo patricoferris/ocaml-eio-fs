@@ -1,4 +1,4 @@
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 module Crash = Chaos.Private.Crash
 
 type op =

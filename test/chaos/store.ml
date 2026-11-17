@@ -21,7 +21,7 @@ let check_first env =
    acknowledged value already holds after setup, which the check cannot tell
    from a recover that ignores [acked]. *)
 let kv_reopen ?bug () =
-  Eio_fs.Chaos.Crash.check ~setup:setup_store
+  Eio_fs_chaos.Private.check_cuts ~setup:setup_store
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -32,7 +32,7 @@ let kv_reopen ?bug () =
 
 (* The same, with a fresh put acknowledged. *)
 let kv_reopen2 ?bug () =
-  Eio_fs.Chaos.Crash.check ~setup:setup_store
+  Eio_fs_chaos.Private.check_cuts ~setup:setup_store
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -46,7 +46,7 @@ let kv_reopen2 ?bug () =
 
 (* The same with no ack: recover checks what setup made. *)
 let kv_reopen3 ?bug () =
-  Eio_fs.Chaos.Crash.check ~setup:setup_store
+  Eio_fs_chaos.Private.check_cuts ~setup:setup_store
     (fun ~ack:_ env ->
       try Eio.Switch.run @@ fun sw -> ignore (Kv.open_ ?bug ~sw env#fs)
       with Eio.Io _ -> ())
@@ -59,7 +59,7 @@ let big_puts =
 let big ?bug () =
   Kv.every := 30;
   Fun.protect ~finally:(fun () -> Kv.every := 4) @@ fun () ->
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -77,12 +77,12 @@ let big ?bug () =
 let retry_pinned ?bug () =
   Eio_mock.Backend.run @@ fun () ->
   let fs = Eio_fs.Fs.v () in
-  let faults (op : Eio_fs.Chaos.Op.t) : Eio_fs.Chaos.Fault.t option =
+  let faults (op : Eio_fs_chaos.Op.t) : Eio_fs_chaos.Fault.t option =
     match (op.kind, op.nth) with
     | `Write, 1 -> Some (Fail `Eio)
     | `Write, 2 -> Some (Short 3)
     | _ -> None
   in
-  Retry.save ?bug (Eio_fs.Chaos.wrap faults fs) After.value;
+  Retry.save ?bug (Eio_fs_chaos.wrap faults fs) After.value;
   let v = Retry.load fs in
   if v <> After.value then Fmt.failwith "saved %S" v

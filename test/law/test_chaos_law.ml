@@ -7,7 +7,7 @@
    the end of its switch. *)
 
 open Eio.Std
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 module Law = Chaos.Private.Law
 
 let ( / ) = Eio.Path.( / )

@@ -57,7 +57,7 @@ let write_counter dir n =
 let boots = ref 100
 
 let test ?bug () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       let dir = env#fs and me = 1 in
       try
@@ -87,7 +87,7 @@ let test ?bug () =
 let runs = ref 0
 
 let test_errors ?bug () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       incr runs;
       let me = 1 + (!runs mod 9) in
       match acquire ?bug ~pid:me ~alive:(fun p -> p = me) env#fs with

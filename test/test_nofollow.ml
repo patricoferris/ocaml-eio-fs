@@ -3,7 +3,7 @@
    the validation hold before a byte is returned, and a failed read wipes its
    buffer. *)
 
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 
 let ( / ) = Eio.Path.( / )
 
@@ -184,14 +184,14 @@ let test_with_regular_reads_a_replaced_file () =
   Eio.Path.save ~create:(`Exclusive 0o600) (dir / "one") "held";
   Eio.Path.save ~create:(`Exclusive 0o600) (dir / "next") "replacement";
   let stats = ref 0 in
-  let replace (op : Eio_fs.Chaos.Op.t) =
+  let replace (op : Eio_fs_chaos.Op.t) =
     if op.kind = `Stat && String.ends_with ~suffix:"one" op.path then begin
       incr stats;
       if !stats = 2 then Eio.Path.rename (dir / "next") (dir / "one")
     end;
     None
   in
-  let wrapped = Eio_fs.Chaos.wrap replace dir in
+  let wrapped = Eio_fs_chaos.wrap replace dir in
   let read =
     Eio_fs.Nofollow.with_regular (wrapped / "one") (fun file stat ->
         (Eio.Flow.read_all file, Optint.Int63.to_int stat.Eio.File.Stat.size))

@@ -6,13 +6,13 @@
    over a pointer is the one switch a tree can take atomically. Durability is
    the crash model's: a file's bytes survive only up to its last sync, a
    directory's entries only up to its last barrier, and uncommitted directory
-   operations survive as a prefix of program order (Chaos.Crash).
+   operations survive as a prefix of program order (Private.Crash).
 
    Each case crashes at every durability operation of one publication in turn
    and reads the post-crash tree back through the pointer: it is the whole old
    generation or the whole new one. *)
 
-module Crash = Eio_fs.Chaos.Private.Crash
+module Crash = Eio_fs_chaos.Private.Crash
 
 let ( / ) = Eio.Path.( / )
 
@@ -82,7 +82,7 @@ let every_crash_point ~policy ~setup ~before =
     setup @@ fun base ->
     let ctl = Crash.v ~policy () in
     let seen = ref 0 in
-    let cut (op : Eio_fs.Chaos.Op.t) =
+    let cut (op : Eio_fs_chaos.Op.t) =
       (match op.kind with
       | `Write | `Truncate | `Sync | `Change | `Open_write ->
           incr seen;
@@ -90,7 +90,7 @@ let every_crash_point ~policy ~setup ~before =
       | `Read | `Read_dir | `Stat | `Open_read -> ());
       None
     in
-    (try publish (Eio_fs.Chaos.wrap cut (Crash.wrap ctl base)) new_tree
+    (try publish (Eio_fs_chaos.wrap cut (Crash.wrap ctl base)) new_tree
      with Eio.Io _ when Crash.is_crashed ctl -> ());
     let completed = not (Crash.is_crashed ctl) in
     let seen = read_back (Crash.post_crash ctl / "out") in
@@ -374,7 +374,7 @@ let test_posix_readonly_failed_populate () =
    durable publication through it syncs each file all the same. *)
 let test_durable_through_a_fault_wrapper () =
   with_empty @@ fun fs ->
-  let wrapped = Eio_fs.Chaos.wrap (fun _ -> None) fs in
+  let wrapped = Eio_fs_chaos.wrap (fun _ -> None) fs in
   publish wrapped new_tree;
   Alcotest.check tree "published" (Some new_tree) (read_back (fs / "out"))
 

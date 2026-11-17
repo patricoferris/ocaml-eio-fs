@@ -139,7 +139,7 @@ let build fs =
 (* A source edited after its target is built is seen newer, under faults:
    an error ends the run, which then checks nothing. *)
 let test_freshness_under_check () =
-  Eio_fs.Chaos.check
+  Eio_fs_chaos.run
     ~setup:(fun env ->
       Eio.Path.save ~create:(`Exclusive 0o644) (env#fs / "src") "a")
     (fun env ->
@@ -159,10 +159,10 @@ let test_freshness_under_check () =
    the disk kept. *)
 let test_crash_times () =
   with_fs @@ fun t root ->
-  let module Crash = Eio_fs.Chaos.Crash in
+  let module Crash = Eio_fs_chaos.Power in
   t := 1.;
   Eio.Path.save ~create:(`Exclusive 0o644) (root / "f") "a";
-  let c = Crash.v Drop_unsynced in
+  let c = Crash.v Lose_unsynced in
   let d = Crash.wrap c root in
   let times p =
     let s = stat p in
@@ -334,7 +334,7 @@ let suite =
         test_shutdown_as_eio_posix;
       Alcotest.test_case "without a clock, time stands at 0" `Quick
         test_no_clock;
-      Alcotest.test_case "a freshness check under Chaos.check" `Quick
+      Alcotest.test_case "a freshness check under Chaos.run" `Quick
         test_freshness_under_check;
       Alcotest.test_case "a power cut keeps the times the disk kept" `Quick
         test_crash_times;

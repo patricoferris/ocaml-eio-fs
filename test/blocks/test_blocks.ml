@@ -6,9 +6,9 @@
    no new image comes; each image must be one the reference allows. Directed
    cases check that states the reference allows are drawn. *)
 
-module Crash = Eio_fs.Chaos.Private.Crash
+module Crash = Eio_fs_chaos.Private.Crash
 
-let wrap = Eio_fs.Chaos.wrap
+let wrap = Eio_fs_chaos.wrap
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
 
@@ -36,9 +36,9 @@ let pp_injection ppf = function
   | Stacked -> Fmt.string ppf "stacked"
 
 (* The syncs of "/f" whose rank among them is in [ns] fail. *)
-let fail_syncs ns (op : Eio_fs.Chaos.Op.t) =
+let fail_syncs ns (op : Eio_fs_chaos.Op.t) =
   if op.kind = `Sync && String.equal op.path "/f" && List.mem op.nth ns then
-    Some (Eio_fs.Chaos.Fault.Fail `Eio)
+    Some (Eio_fs_chaos.Fault.Fail `Eio)
   else None
 
 (* The [k]th write of [wl] writes its letter. *)

@@ -1,7 +1,7 @@
 (* The crash model's writeback: which blocks, sectors and lengths a power cut
    keeps of the writes no sync made durable. *)
 
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 module Crash = Chaos.Private.Crash
 open Chaos_helpers
 

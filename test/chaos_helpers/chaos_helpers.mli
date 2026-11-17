@@ -5,26 +5,26 @@ val i63 : int -> Optint.Int63.t
 
 val at :
   ?nth:int ->
-  Eio_fs.Chaos.Op.kind ->
+  Eio_fs_chaos.Op.kind ->
   string ->
-  Eio_fs.Chaos.Fault.t ->
-  Eio_fs.Chaos.Op.t ->
-  Eio_fs.Chaos.Fault.t option
+  Eio_fs_chaos.Fault.t ->
+  Eio_fs_chaos.Op.t ->
+  Eio_fs_chaos.Fault.t option
 (** [at ~nth kind path fault] answers [fault] for the [nth] (defaults to [1])
     operation of [kind] on [path], and nothing for the others. *)
 
 val with_chaos :
-  (Eio_fs.Chaos.Op.t -> Eio_fs.Chaos.Fault.t option) ->
+  (Eio_fs_chaos.Op.t -> Eio_fs_chaos.Fault.t option) ->
   (raw:Eio.Fs.dir_ty Eio.Path.t -> chaos:Eio.Fs.dir_ty Eio.Path.t -> 'a) ->
   'a
 (** [with_chaos f fn] calls [fn] with an in-memory tree, [raw], and the same
-    tree wrapped by {!Eio_fs.Chaos.wrap} with [f], [chaos]. *)
+    tree wrapped by {!Eio_fs_chaos.wrap} with [f], [chaos]. *)
 
 val contents : [> Eio.File.ro_ty ] Eio.File.ro -> string
 (** [contents file] is the whole of [file], read through the handle. *)
 
 val with_crash :
-  Eio_fs.Chaos.Private.Crash.t ->
+  Eio_fs_chaos.Private.Crash.t ->
   (raw:Eio.Fs.dir_ty Eio.Path.t ->
   fs:[ `Close | Eio.Fs.dir_ty ] Eio.Path.t ->
   'a) ->
@@ -41,7 +41,7 @@ val with_real_dir : (Eio.Fs.dir_ty Eio.Path.t -> 'a) -> 'a
     filesystem, removed once [fn] returns. *)
 
 val with_real_crash :
-  Eio_fs.Chaos.Private.Crash.t ->
+  Eio_fs_chaos.Private.Crash.t ->
   ([ `Close | Eio.Fs.dir_ty ] Eio.Path.t -> unit) ->
   check:(Eio.Fs.dir_ty Eio.Path.t -> 'a) ->
   'a

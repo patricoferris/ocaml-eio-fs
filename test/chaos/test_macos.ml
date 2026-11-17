@@ -16,7 +16,7 @@ let full = { file = Eio_fs_unix.sync_file; dir = Eio_fs_unix.sync_dir }
 
 (* A value made durable with [b], then acknowledged: recover must find it. *)
 let save ?os b () =
-  Eio_fs.Chaos.Crash.check ?os
+  Eio_fs_chaos.Private.check_cuts ?os
     (fun ~ack env ->
       match
         P.with_open_out ~create:(`Exclusive 0o644)
@@ -34,7 +34,7 @@ let save ?os b () =
 (* Two files synced with fsync(2), then a third with F_FULLFSYNC, which
    drains the drive's queue: the first two are durable. *)
 let drained () =
-  Eio_fs.Chaos.Crash.check ~os:`Macos
+  Eio_fs_chaos.Private.check_cuts ~os:`Macos
     (fun ~ack env ->
       let write name sync =
         P.with_open_out ~create:(`Exclusive 0o644)
@@ -62,7 +62,7 @@ let drained () =
    it reads replays. Copy-on-write does not rule it out on APFS. *)
 let replay ?os () =
   let record = String.make 512 'R' in
-  Eio_fs.Chaos.Crash.check ?os
+  Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "old") record)
     (fun ~ack:_ env ->
       try
@@ -86,7 +86,7 @@ let replayed os () =
 (* A file made, written and renamed under other spellings of its names,
    each step synced: it is one file, as on APFS. *)
 let spellings () =
-  Eio_fs.Chaos.Crash.check ~os:`Macos
+  Eio_fs_chaos.Private.check_cuts ~os:`Macos
     (fun ~ack env ->
       match
         P.mkdir ~perm:0o755 P.(env#fs / "D");
@@ -111,7 +111,7 @@ let spellings () =
    the first fsync flushed is durable, whatever the second did. With
    [more], a write between the two is lost when the second fails. *)
 let flushed ?os ~more () =
-  Eio_fs.Chaos.Crash.check ?os
+  Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env ->
       Eio_fs_sync.save P.(env#fs / "v") "";
       Eio_fs_sync.save P.(env#fs / "g") "")
@@ -137,7 +137,7 @@ let flushed ?os ~more () =
 (* A failed fsync, then one that succeeds and F_FULLFSYNC of another file:
    the write the failure lost is not durable, as Linux loses it. *)
 let retried ?os () =
-  Eio_fs.Chaos.Crash.check ?os
+  Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env ->
       Eio_fs_sync.save P.(env#fs / "v") "";
       Eio_fs_sync.save P.(env#fs / "g") "")
@@ -166,7 +166,7 @@ let config () =
     P.rename tmp P.(dir / "config");
     Eio_fs_unix.sync_dir dir
   in
-  Eio_fs.Chaos.Crash.check ~os:`Macos
+  Eio_fs_chaos.Private.check_cuts ~os:`Macos
     ~setup:(fun env -> save env#fs "old")
     (fun ~ack env ->
       match save env#fs "new" with () -> ack () | exception Eio.Io _ -> ())

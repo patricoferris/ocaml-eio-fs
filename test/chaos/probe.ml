@@ -3,7 +3,7 @@ module P = Eio.Path
 (* Guard: a convergent "apply this config" step whose value setup already
    holds. With [`In_place], it rewrites the file in place. *)
 let guard_idempotent ?bug () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "conf") "v1")
     (fun ~ack env ->
       try
@@ -27,7 +27,7 @@ let guard_idempotent ?bug () =
    then synced. A nonzero length with no magic is a state a disk cannot
    produce. *)
 let sector () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       Eio_fs_sync.save P.(env#fs / "hdr") (String.make 16 '\000'))
     (fun ~ack env ->
@@ -70,7 +70,7 @@ let write_out ~bug fs =
   with Eio.Io _ -> ()
 
 let toctou ?(bug = true) () =
-  Eio_fs.Chaos.check ~setup:toctou_setup (fun env ->
+  Eio_fs_chaos.run ~setup:toctou_setup (fun env ->
       write_out ~bug env#fs;
       try
         if P.load P.(env#fs / "secret" / "key") <> "k" then
@@ -86,18 +86,18 @@ let toctou_swapped ?(bug = true) () =
     object
       method fs = (fs :> Eio.Fs.dir_ty P.t)
     end;
-  let swap (op : Eio_fs.Chaos.Op.t) : Eio_fs.Chaos.Fault.t option =
+  let swap (op : Eio_fs_chaos.Op.t) : Eio_fs_chaos.Fault.t option =
     if op.kind = `Stat && op.path = "/out" then Some (Swap_symlink "secret/key")
     else None
   in
-  write_out ~bug (Eio_fs.Chaos.wrap swap fs);
+  write_out ~bug (Eio_fs_chaos.wrap swap fs);
   if P.load P.(fs / "secret" / "key") <> "k" then
     failwith "wrote through a swapped link"
 
 (* Reinitialise on any read error: a transient EIO wipes the data. Only
    [check] can see it; [Crash.check] never fails a read. *)
 let reinit_crash () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "db") "precious")
     (fun ~ack:_ env ->
       try
@@ -113,7 +113,7 @@ let reinit_crash () =
       if P.load P.(env#fs / "db") <> "precious" then failwith "data wiped")
 
 let reinit_check () =
-  Eio_fs.Chaos.check
+  Eio_fs_chaos.run
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "db") "precious")
     (fun env ->
       (try
@@ -131,7 +131,7 @@ let reinit_check () =
 (* A file in a new subdirectory: the file and the subdirectory are synced,
    the root is not, so the subdirectory's entry is not durable. *)
 let mkdir_no_parent_sync () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       try
         P.mkdir ~perm:0o755 P.(env#fs / "data");
@@ -160,7 +160,7 @@ let log_varying n () =
           else List.rev acc
       | _ -> List.rev acc
   in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -189,7 +189,7 @@ let log_budget n () =
   let parse s =
     String.split_on_char '\n' s |> List.filter (fun l -> String.length l = 5)
   in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -220,7 +220,7 @@ let log_budget n () =
    number of records. *)
 let fixed_records () =
   let record i = Fmt.str "rec%04d:%s" i (String.make 56 'x') in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "hdr") "v1")
     (fun ~ack env ->
       try

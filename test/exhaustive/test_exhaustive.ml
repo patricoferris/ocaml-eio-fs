@@ -2,7 +2,7 @@
    Drop_unsynced, every Survive cut of the metadata times every subset of
    the data, and Reorder_unsynced at blocks of 2 bytes until 100 seeds in a
    row bring no new image. Each image must keep the invariants of
-   oracle.ml. Chaos.Crash runs over a fault wrapper, which fails a sync
+   oracle.ml. Private.Crash runs over a fault wrapper, which fails a sync
    beneath it; a sync also fails above it, alone or through a second
    wrapper. *)
 
@@ -139,7 +139,7 @@ let scopes =
         ];
     };
     (* one file at blocks of 2 bytes: boundaries, holes, append, truncations
-       that cut a block mid-way, syncs failed above Chaos.Crash, through a
+       that cut a block mid-way, syncs failed above Private.Crash, through a
        second wrapper or beneath it *)
     {
       name = "blocks";
@@ -160,7 +160,7 @@ let scopes =
           Fsync_fail_b "f";
         ];
     };
-    (* failed syncs with a second file, one beneath Chaos.Crash, rename over,
+    (* failed syncs with a second file, one beneath Private.Crash, rename over,
        handles *)
     {
       name = "failed syncs";

@@ -1,4 +1,4 @@
-(** An exhaustive small-scope check of {!Eio_fs.Chaos.Private.Crash} against
+(** An exhaustive small-scope check of {!Eio_fs_chaos.Private.Crash} against
     invariants that follow from its documentation. *)
 
 val suite : string * unit Alcotest.test_case list

@@ -1,15 +1,24 @@
 (copy_files#
- (files ../lib/extents.{ml,mli}))
+ (files ../lib/mem/extents.{ml,mli}))
 
 (copy_files#
- (files ../lib/chaos_blocks.{ml,mli}))
+ (files ../lib/chaos/chaos_blocks.{ml,mli}))
 
 (copy_files#
- (files ../lib/chaos_journal.{ml,mli}))
+ (files ../lib/chaos/chaos_journal.{ml,mli}))
 
 (executable
  (name fuzz)
- (libraries eio eio.mock eio_fs eio-fs.sync alcobar fmt cstruct optint))
+ (libraries
+  eio
+  eio.mock
+  eio_fs
+  eio-fs.chaos
+  eio-fs.sync
+  alcobar
+  fmt
+  cstruct
+  optint))
 
 (rule
  (alias runtest)

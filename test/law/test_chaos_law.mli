@@ -1,4 +1,4 @@
-(** The law of [Eio_fs.Chaos.wrap]: what it does with each operation. *)
+(** The law of [Eio_fs_chaos.wrap]: what it does with each operation. *)
 
 val suite : string * unit Alcotest.test_case list
 (** [suite] checks that every interface a wrapped directory or file binds has an

@@ -16,7 +16,8 @@ let hash s = String.sub (Digest.to_hex (Digest.string s)) 0 8
 
 (* An A/B updater: slot A and slot B hold images, flag names the slot that
    boots. An update writes the new image into the other slot, then flips
-   the flag. With [`Default_slot], a flag it fails to read names slot A, so
+   the flag, durably, as a power cut must leave one of the two flags. With
+   [`Default_slot], a flag it fails to read names slot A, so
    it may overwrite the slot that boots. *)
 module Ab = struct
   let image v =
@@ -61,15 +62,18 @@ module Ab = struct
         done;
         Eio.File.sync f);
     if verify (P.load P.(fs / slot target)) = Some v then begin
-      P.save ~create:(`Or_truncate 0o644)
+      P.with_open_out ~create:(`Or_truncate 0o644)
         P.(fs / "flag.tmp")
-        (Fmt.str "%c %d" target v);
-      P.rename P.(fs / "flag.tmp") P.(fs / "flag")
+        (fun f ->
+          Eio.Flow.copy_string (Fmt.str "%c %d" target v) f;
+          Eio.File.sync f);
+      P.rename P.(fs / "flag.tmp") P.(fs / "flag");
+      P.sync_dir fs
     end
 
   (* Updates every 30 s, and a monitor that boots every 10 s. *)
   let test ?budget ?(bug = `None) () =
-    Eio_fs.Chaos.check ?budget
+    Eio_fs_chaos.run ?budget
       ~setup:(fun env ->
         P.save ~create:(`Exclusive 0o644) P.(env#fs / "slotA") (image 1);
         P.save ~create:(`Exclusive 0o644) P.(env#fs / "flag") "A 1")
@@ -122,7 +126,7 @@ module Seqlock = struct
 
   (* A writer every second, and three readers. *)
   let test ?(bug = `None) () =
-    Eio_fs.Chaos.check
+    Eio_fs_chaos.run
       ~setup:(fun env ->
         P.with_open_out ~create:(`Exclusive 0o644) P.(env#fs / "state")
         @@ fun f ->

@@ -506,7 +506,7 @@ let test_pwrite_appends () =
 (* So does the crash model. *)
 let test_crash_pwrite_appends () =
   with_env @@ fun env ->
-  let module Crash = Eio_fs.Chaos.Private.Crash in
+  let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v ~policy:(Crash.Survive (fun _ -> true)) () in
   let fs = Crash.wrap ctl env#fs in
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "f") "abc";
@@ -1042,7 +1042,7 @@ let test_sync_dir_checks () =
   Eio.Path.mkdir ~perm:0o311 (fs / "x");
   let a = Eio_fs.Fs.as_user alice fs in
   let crash =
-    Eio_fs.Chaos.Private.Crash.wrap (Eio_fs.Chaos.Private.Crash.v ()) a
+    Eio_fs_chaos.Private.Crash.wrap (Eio_fs_chaos.Private.Crash.v ()) a
   in
   List.iter
     (fun (what, dir) ->

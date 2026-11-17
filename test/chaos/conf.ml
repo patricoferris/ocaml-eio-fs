@@ -62,7 +62,7 @@ let setup ?(bug = `None) env =
       write_sync dir "CURRENT" "1"
 
 let test ?bug () =
-  Eio_fs.Chaos.Crash.check ~setup:(setup ?bug)
+  Eio_fs_chaos.Private.check_cuts ~setup:(setup ?bug)
     (fun ~ack env ->
       try
         for g = 2 to 3 do

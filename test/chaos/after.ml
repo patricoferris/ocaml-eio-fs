@@ -2,7 +2,7 @@
 
 (* (a) An atomic save of a config. *)
 let test_a ?replay ~save () =
-  Eio_fs.Chaos.Crash.check ?replay
+  Eio_fs_chaos.Private.check_cuts ?replay
     ~setup:(fun env -> save env#fs "old")
     (fun ~ack env ->
       match save env#fs "new" with () -> ack () | exception Eio.Io _ -> ())
@@ -15,7 +15,7 @@ let test_a ?replay ~save () =
    that it is durable, and the check cannot tell it from one whose
    acknowledged values hold after setup. *)
 let test_a_weak ~save () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> save env#fs "old")
     (fun ~ack env ->
       match save env#fs "new" with () -> ack () | exception Eio.Io _ -> ())
@@ -48,7 +48,7 @@ let log_records ?(append = fun f r -> App.Log.append f r) ~ack dir =
 let names l = List.map (fun r -> String.sub r 0 (String.index r ':')) l
 
 let test_b ?budget ?replay ~append ~recover () =
-  Eio_fs.Chaos.Crash.check ?budget ?replay
+  Eio_fs_chaos.Private.check_cuts ?budget ?replay
     (fun ~ack env -> try log_records ~append ~ack env#fs with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
       let found = recover env#fs in
@@ -70,26 +70,26 @@ let read_back dir =
 
 (* The log, read back by the program once a fault stops it. *)
 let test_b_read_back () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       try log_records ~ack:ignore env#fs with Eio.Io _ -> read_back env#fs)
 
-(* The log on a controller built by hand that cuts by [Drop_unsynced]: the
+(* The log on a controller built by hand that cuts by [Lose_unsynced]: the
    second sync of the log meets [fault], then the cut. It is the records
    acked and those the cut left. *)
 let cut_after_sync_fault fault =
-  let module Chaos = Eio_fs.Chaos in
+  let module Chaos = Eio_fs_chaos in
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let t = Chaos.Crash.v Drop_unsynced in
+  let t = Chaos.Power.v Lose_unsynced in
   let hook (op : Chaos.Op.t) =
     if op.kind = `Sync && op.nth = 2 && Filename.basename op.path = "log" then
       Some fault
     else None
   in
-  let fs = Chaos.wrap hook (Chaos.Crash.wrap t env#fs) in
+  let fs = Chaos.wrap hook (Chaos.Power.wrap t env#fs) in
   let acked = ref [] in
   (try log_records ~ack:(fun r -> acked := r :: !acked) fs with Eio.Io _ -> ());
-  (List.rev !acked, App.Log.recover (Chaos.Crash.cut t))
+  (List.rev !acked, App.Log.recover (Chaos.Power.cut t))
 
 let cut_failure acked found =
   Fmt.failwith "acked %a, recovered %a"
@@ -100,21 +100,21 @@ let cut_failure acked found =
 
 (* The sync evicts its pages: the cut leaves each record once. *)
 let test_b_cut_after_evict () =
-  let acked, found = cut_after_sync_fault (Eio_fs.Chaos.Fault.Evict `Eio) in
+  let acked, found = cut_after_sync_fault (Eio_fs_chaos.Fault.Evict `Eio) in
   if not (is_prefix acked found && is_prefix found records) then
     cut_failure acked found
 
 (* The sync fails and the page cache keeps its pages: the cut loses the
    write the sync did not make durable, as every unsynced write. *)
 let test_b_cut_after_failure () =
-  let acked, found = cut_after_sync_fault (Eio_fs.Chaos.Fault.Fail `Eio) in
+  let acked, found = cut_after_sync_fault (Eio_fs_chaos.Fault.Fail `Eio) in
   if found <> acked then cut_failure acked found
 
 (* (c) A cache that survives any filesystem error: it never raises one. *)
 let compute k = "value of " ^ k
 
 let test_c ?replay ~get () =
-  Eio_fs.Chaos.check ?replay (fun env ->
+  Eio_fs_chaos.run ?replay (fun env ->
       for _ = 1 to 2 do
         match get env#fs "k" ~compute with
         | v -> if v <> compute "k" then Fmt.failwith "got %S" v
@@ -141,7 +141,7 @@ let recover_kv ?bug ~puts ~acked dir =
     keys
 
 let test_kv ?bug () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -158,7 +158,7 @@ let test_kv ?bug () =
 let value = "a value of some length"
 
 let test_retry ?bug () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       match Retry.save ?bug env#fs value with
       | exception Eio.Io _ -> ()
       | () -> (

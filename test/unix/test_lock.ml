@@ -1,7 +1,7 @@
 (* Locks over a lock file: [with_lock], probes, held locks, waits
    and their bounds, the lock file's checks, and sections. *)
 
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 module Crash = Chaos.Private.Crash
 open Holder
 
@@ -1324,7 +1324,7 @@ let test_lock_over_a_process_local_backend_refuses_a_symlink () =
     (Eio.Path.load (fs / "target"))
 
 (* A wrapper over that backend is the same case, and it is the case a store
-   under test is in: [Eio_fs.Chaos.Private] perturbs or crash-models the tree beneath
+   under test is in: [Eio_fs_chaos.Private] perturbs or crash-models the tree beneath
    it, and over the in-memory backend the tree it perturbs is still this
    process's heap. Nothing the wrapper adds gives those files a name to open
    them by or a descriptor to inherit, so the exclusion they admit is the one

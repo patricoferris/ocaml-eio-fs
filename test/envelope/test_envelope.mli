@@ -1,4 +1,4 @@
-(** A differential of {!Eio_fs.Chaos.Private.Crash} against a reference crash
+(** A differential of {!Eio_fs_chaos.Private.Crash} against a reference crash
     model that answers which images the documented envelope permits, under every
     policy, with directed cases. *)
 

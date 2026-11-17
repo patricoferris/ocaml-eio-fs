@@ -6,7 +6,7 @@ module P = Eio.Path
    the log's size as durable. The size read after the sync counts an
    append made during it, which the sync does not cover. *)
 let checkpoint ~size_after () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       Eio_fs_sync.save P.(env#fs / "log") "";
       Eio_fs_sync.save P.(env#fs / "ckpt") "0")
@@ -37,7 +37,7 @@ let checkpoint ~size_after () =
    added while the save syncs is lost if the compaction then keeps only
    what it saw. *)
 let compaction ~merge () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       let live = ref [ "a" ] in
       Eio.Fiber.both
         (fun () ->
@@ -58,7 +58,7 @@ let compaction ~merge () =
    a recover that holds the change durable fails. With [before], the change
    comes first, and the sync covers it. *)
 let overlap ?os ?(before = false) ?(after = ignore) ~sync ~change ~held () =
-  Eio_fs.Chaos.Crash.check ?os
+  Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env ->
       Eio_fs_sync.save ~perm:0o600 P.(env#fs / "f") "data";
       Eio_fs_sync.save P.(env#fs / "g") "")
@@ -113,7 +113,7 @@ let touched env =
 (* An append made while the log syncs moves its times, which a cut that
    loses the append does not keep. *)
 let times () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "log") "a")
     (fun ~ack env ->
       try
@@ -176,8 +176,8 @@ let suite =
         (Expect.passes (checkpoint ~size_after:false));
       Alcotest.test_case "a fiber runs while another one syncs" `Quick
         (Expect.refused
-           "Eio_fs.Chaos.check: the run with no fault failed: Failure(\"an \
-            entry added is lost\")"
+           "Eio_fs_chaos.run: the run with no fault failed: Failure(\"an entry \
+            added is lost\")"
            (compaction ~merge:false));
       Alcotest.test_case "a merge keeps what was added during a sync" `Quick
         (Expect.passes (compaction ~merge:true));

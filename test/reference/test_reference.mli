@@ -1,4 +1,4 @@
-(** A differential of {!Eio_fs.Chaos.Private.Crash} against an independent
+(** A differential of {!Eio_fs_chaos.Private.Crash} against an independent
     reference crash model. *)
 
 val suite : string * unit Alcotest.test_case list

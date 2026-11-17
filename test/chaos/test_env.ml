@@ -20,10 +20,10 @@ let confined env =
   refused P.(env#cwd / "/x");
   refused P.(env#cwd / "..")
 
-let check () = Eio_fs.Chaos.check ~setup (fun env -> confined env)
+let check () = Eio_fs_chaos.run ~setup (fun env -> confined env)
 
 let crash () =
-  Eio_fs.Chaos.Crash.check ~setup
+  Eio_fs_chaos.Private.check_cuts ~setup
     (fun ~ack env ->
       match Eio_fs_sync.save P.(env#cwd / "f") "v" with
       | () -> ack ()
@@ -48,18 +48,18 @@ let denied env =
       | exception Eio.Io _ -> ())
     [ env#fs; env#cwd ]
 
-let check_as_user () = Eio_fs.Chaos.check ~setup:setup_dirs denied
+let check_as_user () = Eio_fs_chaos.run ~setup:setup_dirs denied
 
 (* The faults still reach the operations alice makes: a save that must not
    fail fails under one. *)
 let check_as_user_faults () =
-  Eio_fs.Chaos.check ~setup:setup_dirs (fun env ->
+  Eio_fs_chaos.run ~setup:setup_dirs (fun env ->
       let fs = Eio_fs.Fs.as_user alice env#fs in
       try P.save ~create:(`Or_truncate 0o644) P.(fs / "home/f") "x"
       with Eio.Io _ -> failwith "save failed")
 
 let crash_as_user () =
-  Eio_fs.Chaos.Crash.check ~setup:setup_dirs
+  Eio_fs_chaos.Private.check_cuts ~setup:setup_dirs
     (fun ~ack env ->
       denied env;
       let fs = Eio_fs.Fs.as_user alice env#fs in

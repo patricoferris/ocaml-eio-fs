@@ -1,4 +1,4 @@
-(* A differential of Chaos.Crash against the reference in envelope.ml, under
+(* A differential of Private.Crash against the reference in envelope.ml, under
    every policy: the image Drop_unsynced leaves, every Survive choice of
    uncommitted entries and data changes, compared exactly when the unsynced
    lists line up, and Reorder_unsynced seeds at block sizes 1, 7 and 4096,
@@ -6,8 +6,8 @@
    only names and modes. *)
 
 open Envelope
-module Crash = Eio_fs.Chaos.Private.Crash
-module Chaos = Eio_fs.Chaos
+module Crash = Eio_fs_chaos.Private.Crash
+module Chaos = Eio_fs_chaos
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int

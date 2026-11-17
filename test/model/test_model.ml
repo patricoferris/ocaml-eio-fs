@@ -1,11 +1,11 @@
-(* A model-based test of the in-memory backend and Chaos.Crash: each seed
+(* A model-based test of the in-memory backend and Private.Crash: each seed
    draws a workload of file and directory operations, run as root or as a
    user, through a reference model and through the filesystem, and checks
    that each operation succeeds or fails in both and that the live trees
    agree. With a crash model, it also checks the post-crash image: exactly
    the committed state under Drop_unsynced, and a state some journal prefix
    allows under Reorder_unsynced, block by block. *)
-module Crash = Eio_fs.Chaos.Private.Crash
+module Crash = Eio_fs_chaos.Private.Crash
 module SM = Map.Make (String)
 
 let ( // ) = Eio.Path.( / )
@@ -852,7 +852,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
       let pc = Eio_fs.Fs.as_user Eio_fs.root (Crash.post_crash ctl) in
       let got = render_real pc in
       (* Invariants on the image, by inode. *)
-      let image = Eio_fs.Chaos.Private.Internal.crash_image ctl in
+      let image = Eio_fs_chaos.Private.Internal.crash_image ctl in
       let inos = List.map (fun (_, ino, _) -> ino) image in
       (match
          List.find_opt

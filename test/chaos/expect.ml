@@ -29,3 +29,4 @@ let invalid message f () =
   | exception Invalid_argument m -> Alcotest.(check string) "refusal" message m
 
 let passes f () = f ()
+let replay m = Scanf.sscanf (field "replay" m) "%_s ~replay:%S" Fun.id

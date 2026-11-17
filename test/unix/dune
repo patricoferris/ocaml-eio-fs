@@ -8,6 +8,7 @@
   eio_main
   fmt
   eio_fs
+  eio-fs.chaos
   eio-fs.sync
   eio-fs.unix
   cstruct

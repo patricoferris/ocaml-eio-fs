@@ -49,7 +49,7 @@ let contents =
   [ "alpha"; String.make 3000 'b'; "gamma, a third blob"; String.make 5000 'd' ]
 
 let test ?put_bug ?index_bug () =
-  Eio_fs.Chaos.Crash.check ~setup
+  Eio_fs_chaos.Private.check_cuts ~setup
     (fun ~ack env ->
       try List.iter (fun b -> ack (put ?bug:put_bug env#fs b)) contents
       with Eio.Io _ -> ())
@@ -72,7 +72,7 @@ let test ?put_bug ?index_bug () =
 
 (* A recover that checks only that indexed blobs exist. *)
 let test_weak ?put_bug () =
-  Eio_fs.Chaos.Crash.check ~setup
+  Eio_fs_chaos.Private.check_cuts ~setup
     (fun ~ack env ->
       try List.iter (fun b -> ack (put ?bug:put_bug env#fs b)) contents
       with Eio.Io _ -> ())

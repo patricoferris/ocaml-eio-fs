@@ -4,8 +4,8 @@
    candidates, so taking every fourth one would only ever move a single
    byte, and never tear a write in the middle of the log. *)
 
-let check ?seed w () = Eio_fs.Chaos.check ?seed w
-let replay_of m = Scanf.sscanf (Expect.field "replay" m) "~replay:%S" Fun.id
+let check ?seed w () = Eio_fs_chaos.run ?seed w
+let replay_of m = Expect.replay m
 
 (* A replay names its scenario, so one found under another seed runs again
    with none, and with any other. *)
@@ -15,9 +15,7 @@ let test_seed_replay () =
   let replay = replay_of found in
   List.iter
     (fun seed ->
-      let again =
-        Expect.report (fun () -> Eio_fs.Chaos.check ?seed ~replay w)
-      in
+      let again = Expect.report (fun () -> Eio_fs_chaos.run ?seed ~replay w) in
       Alcotest.(check string)
         "faults"
         (Expect.field "faults" found)
@@ -35,7 +33,7 @@ let test_crash_seed_replay () =
           Eio.File.sync f);
       Eio.Path.rename tmp Eio.Path.(dir / "config")
     in
-    Eio_fs.Chaos.Crash.check ?seed ?replay
+    Eio_fs_chaos.Private.check_cuts ?seed ?replay
       ~setup:(fun env -> save env#fs "old")
       (fun ~ack env ->
         match save env#fs "new" with () -> ack () | exception Eio.Io _ -> ())

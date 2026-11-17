@@ -1,5 +1,5 @@
-(** Tests of the guards of [Eio_fs.Chaos.check] and [Eio_fs.Chaos.Crash.check].
-*)
+(** Tests of the guards of [Eio_fs_chaos.run] and
+    [Eio_fs_chaos.Private.check_cuts]. *)
 
 val suite : string * unit Alcotest.test_case list
 (** [suite] covers determinism, replay, re-matched, stale and unknown replays,

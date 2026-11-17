@@ -1,4 +1,4 @@
-(** Fuzz tests for {!Eio_fs.Chaos}: crash-safety (only [Eio.Io] or [End_of_file]
+(** Fuzz tests for {!Eio_fs_chaos}: crash-safety (only [Eio.Io] or [End_of_file]
     ever escapes), determinism (faults drawn from a seed replay the same outcome
     and bytes), the [Drop_unsynced] barrier invariant (the post-crash image is
     the synced prefix and keeps its mode), and a reference model (an arbitrary
@@ -6,7 +6,7 @@
     the journal, byte for byte). *)
 
 open Alcobar
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 
 let ( / ) = Eio.Path.( / )
 let i63 = Optint.Int63.of_int
@@ -860,7 +860,7 @@ let test_publish_is_atomic old_body new_body =
   let old_body = cap old_body and new_body = cap new_body in
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let module Crash = Eio_fs.Chaos.Private.Crash in
+  let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
   let fs = Crash.wrap ctl env#fs in
   publish_string Eio.Path.(fs / "f") old_body;

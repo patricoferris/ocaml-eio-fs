@@ -2,7 +2,7 @@
    it one component at a time: no [..], no symbolic link before the last
    component, and every operation answers for itself. *)
 module Batch = Eio_fs_unix.Batch
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 
 let outside_contents = "outside, must not change"
 

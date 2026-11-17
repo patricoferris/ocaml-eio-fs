@@ -1,6 +1,15 @@
 (test
  (name test)
- (libraries provenance eio eio.mock eio_posix eio_fs unix fmt alcotest)
+ (libraries
+  provenance
+  eio
+  eio.mock
+  eio_posix
+  eio_fs
+  eio-fs.chaos
+  unix
+  fmt
+  alcotest)
  (deps
   ../../lib/kernel/fs.csv
   scripts/generate.sh

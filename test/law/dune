@@ -4,6 +4,7 @@
   eio
   eio.mock
   eio_fs
+  eio-fs.chaos
   eio-fs.sync
   eio_fs_internal
   alcotest

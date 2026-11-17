@@ -2,7 +2,7 @@
    barriers that make them durable, on memory and on the real filesystem,
    and the authority the wrapper keeps. *)
 
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 module Op = Chaos.Op
 module Crash = Chaos.Private.Crash
 open Chaos_helpers
@@ -1256,15 +1256,15 @@ let test_crash_drops_an_entry_planted_by_native_name () =
 (* A cut over a host directory, through the public controller. *)
 let with_real_cut policy fn ~check =
   with_real_dir @@ fun real ->
-  let ctl = Chaos.Crash.v policy in
-  fn (Chaos.Crash.wrap ctl real);
-  check (Chaos.Crash.cut ctl)
+  let ctl = Chaos.Power.v policy in
+  fn (Chaos.Power.wrap ctl real);
+  check (Chaos.Power.cut ctl)
 
 (* A workload whose processes write the tree by name beside the wrapper
    keeps their writes, as a disk keeps what a process that syncs its own
    writes left there. *)
 let test_crash_keeps_an_entry_planted_by_native_name () =
-  with_real_cut Drop_unsynced
+  with_real_cut Lose_unsynced
     (fun fs ->
       Eio.Path.with_open_out ~create:(`Exclusive 0o600) (fs / "img")
         (fun file ->
@@ -1293,7 +1293,7 @@ let test_crash_keeps_an_entry_planted_by_native_name () =
    barrier the rename is lost, and the image holds the child's file, never no
    file. *)
 let rename_over_a_childs_file ~barrier =
-  with_real_cut Drop_unsynced
+  with_real_cut Lose_unsynced
     (fun fs ->
       let dir = Eio.Path.native_exn fs ^ "/made" in
       Unix.mkdir dir 0o755;
@@ -1334,8 +1334,8 @@ let test_crash_cut_spares_a_new_file () =
   Fun.protect ~finally:(fun () ->
       Eio.Path.rmtree ~missing_ok:true Eio.Path.(fs / dir))
   @@ fun () ->
-  let ctl = Eio_fs.Chaos.Crash.(v Drop_unsynced) in
-  let wrapped = Eio_fs.Chaos.Crash.wrap ctl Eio.Path.(fs / dir) in
+  let ctl = Eio_fs_chaos.Power.(v Lose_unsynced) in
+  let wrapped = Eio_fs_chaos.Power.wrap ctl Eio.Path.(fs / dir) in
   Eio.Path.with_open_out ~create:(`Exclusive 0o644) (wrapped / "kept")
     (fun file ->
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
@@ -1347,7 +1347,7 @@ let test_crash_cut_spares_a_new_file () =
   in
   let before = identity (wrapped / "kept") in
   Eio.Path.save ~create:(`Exclusive 0o644) (wrapped / "lost") "junk";
-  let post = Eio_fs.Chaos.Crash.cut ctl in
+  let post = Eio_fs_chaos.Power.cut ctl in
   Alcotest.(check bool)
     "the unsynced file is gone" true
     (absent (post / "lost"));
@@ -1370,8 +1370,8 @@ let test_crash_public_controller_keeps_a_childs_entry () =
   Fun.protect ~finally:(fun () ->
       Eio.Path.rmtree ~missing_ok:true Eio.Path.(fs / dir))
   @@ fun () ->
-  let ctl = Eio_fs.Chaos.Crash.(v Drop_unsynced) in
-  let wrapped = Eio_fs.Chaos.Crash.wrap ctl Eio.Path.(fs / dir) in
+  let ctl = Eio_fs_chaos.Power.(v Lose_unsynced) in
+  let wrapped = Eio_fs_chaos.Power.wrap ctl Eio.Path.(fs / dir) in
   let write create s =
     Eio.Path.with_open_out ~create (wrapped / "img") (fun file ->
         Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string s ];
@@ -1383,7 +1383,7 @@ let test_crash_public_controller_keeps_a_childs_entry () =
   Out_channel.with_open_bin
     (Eio.Path.native_exn (wrapped / "device.img"))
     (fun oc -> output_string oc "DEVICE");
-  let post = Eio_fs.Chaos.Crash.cut ctl in
+  let post = Eio_fs_chaos.Power.cut ctl in
   Alcotest.(check string)
     "the wrapper's unsynced rewrite is dropped" "AAAA"
     (Eio.Path.load (post / "img"));

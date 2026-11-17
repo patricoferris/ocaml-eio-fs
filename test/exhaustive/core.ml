@@ -1,9 +1,9 @@
 (* Workloads for the exhaustive check, and one run of a workload under
-   Chaos.Crash. The fake barrier and the fake sync do nothing: they let a
+   Private.Crash. The fake barrier and the fake sync do nothing: they let a
    test check that the invariants catch a barrier that was never issued. *)
 
-module C = Eio_fs.Chaos.Private.Crash
-module Ch = Eio_fs.Chaos
+module C = Eio_fs_chaos.Private.Crash
+module Ch = Eio_fs_chaos
 module P = Eio.Path
 module I63 = Optint.Int63
 module IM = Map.Make (Int64)
@@ -39,7 +39,7 @@ type op =
   | Fsync_u of string
   | Fake_fsync of string
   | Fsync_fail_s of string (* through a second, faultless wrapper *)
-  | Fsync_fail_b of string (* failing beneath Chaos.Crash *)
+  | Fsync_fail_b of string (* failing beneath Private.Crash *)
   | Create of who * string * int
 
 let who = function Root -> "" | User -> "u:"
@@ -239,7 +239,7 @@ let exec ~sw ~w ~wu ~dry hs i op =
           | Some b -> b ~full:false
           | None -> raise (Anomaly "no file barrier on dir handle")))
 
-(* Fresh fs, durable init, ops through Chaos.Crash over a Chaos wrapper with
+(* Fresh fs, durable init, ops through Private.Crash over a Chaos wrapper with
    [sched]. [observe] is called with the raw base after each op, [at] with
    the index of the op about to run. *)
 let exec_all ~sched ~dry ~observe ~at ~init ~policy ops k =
@@ -277,7 +277,7 @@ let exec_all ~sched ~dry ~observe ~at ~init ~policy ops k =
     ops;
   k t base
 
-(* The rules that fail each [Fsync_fail_b] beneath Chaos.Crash: the first
+(* The rules that fail each [Fsync_fail_b] beneath Private.Crash: the first
    sync it sends down, by its rank among the syncs on its path, found by a
    run that lets it succeed. *)
 let beneath_rules ~init ops =

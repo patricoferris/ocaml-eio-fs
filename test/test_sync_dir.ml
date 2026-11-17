@@ -1,6 +1,6 @@
 (* [Eio.Path.sync_dir] as the crash model's directory barrier. *)
 
-module Crash = Eio_fs.Chaos.Crash
+module Crash = Eio_fs_chaos.Power
 
 let ( / ) = Eio.Path.( / )
 
@@ -10,7 +10,7 @@ type barrier = No_barrier | By_name | Through_subtree
    [a/f] made and synced, and [a] barriered as [barrier] says. *)
 let cut_after barrier =
   Eio_mock.Backend.run @@ fun () ->
-  let t = Crash.v Drop_unsynced in
+  let t = Crash.v Lose_unsynced in
   let fs = Crash.wrap t (Eio_fs.Fs.v ()) in
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.sync_dir fs;

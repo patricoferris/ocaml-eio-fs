@@ -1,7 +1,7 @@
-(** Fault-injection tests for {!Eio_fs.Chaos.wrap}: each fault is injected at
+(** Fault-injection tests for {!Eio_fs_chaos.wrap}: each fault is injected at
     one operation and asserted to occur exactly. *)
 
-module Chaos = Eio_fs.Chaos
+module Chaos = Eio_fs_chaos
 module Fault = Chaos.Fault
 module Op = Chaos.Op
 open Chaos_helpers

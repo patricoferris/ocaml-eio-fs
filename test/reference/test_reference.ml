@@ -1,9 +1,9 @@
-(* A differential of Chaos.Crash against the reference model: every state
+(* A differential of Private.Crash against the reference model: every state
    eio-fs produces must be one the reference allows, and the states it
    never produces fall in the classes its documented rules explain. *)
 
 open Reference
-module Crash = Eio_fs.Chaos.Private.Crash
+module Crash = Eio_fs_chaos.Private.Crash
 
 let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 let setup = [ Mkdir "a"; Mkdir "b"; Creat ("a/f", '0') ]
@@ -83,7 +83,7 @@ let crash ?block_size ~as_alice ops k policy =
         | `File content -> { path; k = `F; id; perm; content }
         | `Dir -> { path; k = `D; id; perm; content = "" }
         | `Link _ -> failwith "unexpected link")
-      (Eio_fs.Chaos.Private.Internal.crash_image ctl)
+      (Eio_fs_chaos.Private.Internal.crash_image ctl)
   in
   (List.sort compare image, pending)
 

@@ -1,7 +1,7 @@
 (* A directory operation with no barrier of its own leaves a window: a cut
    right after it rolls it back, and a barrier after it commits it. *)
 
-module Crash = Eio_fs.Chaos.Private.Crash
+module Crash = Eio_fs_chaos.Private.Crash
 open Chaos_helpers
 
 let ( / ) = Eio.Path.( / )

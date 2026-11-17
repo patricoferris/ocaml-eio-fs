@@ -13,9 +13,7 @@ let log_mutant ?budget ?replay () =
 let cache_mutant ?replay () =
   After.test_c ?replay ~get:(App.Cache.get ~bug:`Only_eacces) ()
 
-let replay_of report =
-  Scanf.sscanf (Expect.field "replay" report) "~replay:%S" Fun.id
-
+let replay_of report = Expect.replay report
 let hash replay = List.nth (String.split_on_char '/' replay) 1
 
 let same_failure a b =
@@ -85,8 +83,8 @@ let test_replay_unknown_state () =
       in
       Expect.refused
         (Fmt.str
-           "Eio_fs.Chaos.Crash.check: the replay names %s|%s, a scenario this \
-            check no longer has"
+           "Eio_fs_chaos.run: the replay names %s|%s, a scenario this check no \
+            longer has"
            key st)
         (fun () -> marker (Some (cut ^ "|" ^ st)))
         ())
@@ -111,8 +109,8 @@ let test_replay_seed_budget () =
   in
   Expect.refused
     (Fmt.str
-       "Eio_fs.Chaos.Crash.check: the replay names %s|s7000, a state drawn at \
-        random under a budget of 28004 or more: pass ~budget:28004."
+       "Eio_fs_chaos.run: the replay names %s|s7000, a state drawn at random \
+        under a budget of 28004 or more: pass ~budget:28004."
        key)
     (fun () -> marker (Some (cut ^ "|s7000")))
     ();
@@ -125,7 +123,7 @@ let test_replay_seed_budget () =
    refused. *)
 let test_replay_drawn_state () =
   let mkdir ?replay () =
-    Eio_fs.Chaos.Crash.check ?replay
+    Eio_fs_chaos.Private.check_cuts ?replay
       (fun ~ack env ->
         (try P.mkdir ~perm:0o755 P.(env#fs / "d") with Eio.Io _ -> ());
         ack ())
@@ -139,8 +137,8 @@ let test_replay_drawn_state () =
     (fun st ->
       Expect.refused
         (Fmt.str
-           "Eio_fs.Chaos.Crash.check: the replay names none|end|%s, a scenario \
-            this check no longer has"
+           "Eio_fs_chaos.run: the replay names none|end|%s, a scenario this \
+            check no longer has"
            st)
         (fun () -> mkdir ~replay:(Fmt.str "fs/%s/none|end|%s" h st) ())
         ())
@@ -150,7 +148,7 @@ let test_replay_drawn_state () =
    malformed: a negative choice, a trailing zero, a leading zero or sign. *)
 let test_replay_malformed_state () =
   let save ?replay () =
-    Eio_fs.Chaos.Crash.check ?replay
+    Eio_fs_chaos.Private.check_cuts ?replay
       (fun ~ack env ->
         (try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x"
          with Eio.Io _ -> ());
@@ -162,9 +160,7 @@ let test_replay_malformed_state () =
     (fun st ->
       let replay = Fmt.str "fs/00000000/none|end|%s" st in
       Expect.invalid
-        (Fmt.str
-           "Eio_fs.Chaos.Crash.check: replay is %S, not a replay string of \
-            eio-fs"
+        (Fmt.str "Eio_fs_chaos.run: replay is %S, not a replay string of eio-fs"
            replay)
         (fun () -> save ~replay ())
         ())
@@ -185,7 +181,7 @@ let test_replay_malformed_state () =
 (* A save of [n] bytes that does not sync: the fix changes the size of what
    it writes, and so the workload's first run. *)
 let config ?replay ~value ~sync () =
-  Eio_fs.Chaos.Crash.check ?replay
+  Eio_fs_chaos.Private.check_cuts ?replay
     ~setup:(fun env -> App.save_config env#fs "old")
     (fun ~ack env ->
       match
@@ -229,11 +225,11 @@ let test_stale_replay () =
   in
   Expect.refused
     (Fmt.str
-       "Eio_fs.Chaos.check: the replay names %s, a scenario this check no \
-        longer has: its first run was %s and is now"
+       "Eio_fs_chaos.run: the replay names %s, a scenario this check no longer \
+        has: its first run was %s and is now"
        key (hash replay))
     (fun () ->
-      Eio_fs.Chaos.check ~replay (fun env ->
+      Eio_fs_chaos.run ~replay (fun env ->
           try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "other") "x"
           with Eio.Io _ -> ()))
     ()
@@ -241,16 +237,15 @@ let test_stale_replay () =
 let test_unknown_replay () =
   let replay = replay_of (Expect.report (fun () -> log_mutant ())) in
   Expect.refused
-    "Eio_fs.Chaos.Crash.check: the replay names \
-     none|before:sync:/nowhere#9|drop, a scenario this check no longer has"
+    "Eio_fs_chaos.run: the replay names none|before:sync:/nowhere#9|drop, a \
+     scenario this check no longer has"
     (fun () ->
       log_mutant
         ~replay:(Fmt.str "fs/%s/none|before:sync:/nowhere#9|drop" (hash replay))
         ())
     ();
   Expect.invalid
-    "Eio_fs.Chaos.Crash.check: replay is \"net/x/y\", not a replay string of \
-     eio-fs"
+    "Eio_fs_chaos.run: replay is \"net/x/y\", not a replay string of eio-fs"
     (fun () -> log_mutant ~replay:"net/x/y" ())
     ()
 
@@ -262,19 +257,17 @@ let test_budget () =
       | () | (exception Failure _) ->
           Alcotest.failf "the budget %d was accepted" budget)
     [ 0; -1 ];
-  Expect.refused "Eio_fs.Chaos.Crash.check: the linear tier needs"
+  Expect.refused "Eio_fs_chaos.run: the linear tier needs"
     (fun () -> log_mutant ~budget:5 ())
     ()
 
 let test_nothing () =
-  Expect.refused
-    "Eio_fs.Chaos.check: the workload makes no filesystem operation"
-    (fun () -> Eio_fs.Chaos.check ignore)
+  Expect.refused "Eio_fs_chaos.run: the workload makes no filesystem operation"
+    (fun () -> Eio_fs_chaos.run ignore)
     ();
-  Expect.refused
-    "Eio_fs.Chaos.Crash.check: the workload makes no filesystem operation"
+  Expect.refused "Eio_fs_chaos.run: the workload makes no filesystem operation"
     (fun () ->
-      Eio_fs.Chaos.Crash.check
+      Eio_fs_chaos.Private.check_cuts
         ~setup:(fun env ->
           P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x")
         (fun ~ack:_ _ -> ())
@@ -284,9 +277,9 @@ let test_nothing () =
 let test_nondeterministic () =
   let calls = ref 0 in
   Expect.refused
-    "Eio_fs.Chaos.check: two runs with no fault made different operations"
+    "Eio_fs_chaos.run: two runs with no fault made different operations"
     (fun () ->
-      Eio_fs.Chaos.check (fun env ->
+      Eio_fs_chaos.run (fun env ->
           incr calls;
           for i = 1 to 1 + (!calls mod 2) do
             P.save ~create:(`Or_truncate 0o644)
@@ -296,30 +289,29 @@ let test_nondeterministic () =
     ()
 
 let test_first_run_fails () =
-  Expect.refused "Eio_fs.Chaos.check: the run with no fault failed: Eio.Io"
-    (fun () -> Eio_fs.Chaos.check (fun env -> ignore (P.load P.(env#fs / "f"))))
+  Expect.refused "Eio_fs_chaos.run: the run with no fault failed: Eio.Io"
+    (fun () -> Eio_fs_chaos.run (fun env -> ignore (P.load P.(env#fs / "f"))))
     ()
 
 (* A workload that raises before its first operation reports the
    exception. *)
 let test_raises_first () =
-  Expect.refused "Eio_fs.Chaos.check: the run with no fault failed: Failure"
-    (fun () -> Eio_fs.Chaos.check (fun _ -> failwith "boom"))
+  Expect.refused "Eio_fs_chaos.run: the run with no fault failed: Failure"
+    (fun () -> Eio_fs_chaos.run (fun _ -> failwith "boom"))
     ();
-  Expect.refused "Eio_fs.Chaos.Crash.check: the run with no cut failed: Failure"
+  Expect.refused "Eio_fs_chaos.run: the run with no cut failed: Failure"
     (fun () ->
-      Eio_fs.Chaos.Crash.check
+      Eio_fs_chaos.Private.check_cuts
         (fun ~ack:_ _ -> failwith "boom")
         ~recover:(fun ~acked:_ env -> ignore (P.read_dir env#fs)))
     ()
 
-let reads_nothing =
-  "Eio_fs.Chaos.Crash.check: recover makes no filesystem operation"
+let reads_nothing = "Eio_fs_chaos.run: recover makes no filesystem operation"
 
 let test_reads_nothing () =
   Expect.refused reads_nothing
     (fun () ->
-      Eio_fs.Chaos.Crash.check
+      Eio_fs_chaos.Private.check_cuts
         (fun ~ack env ->
           P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x";
           ack ())
@@ -329,7 +321,7 @@ let test_reads_nothing () =
 (* With no ack and no setup, recover still checks what the workload made is
    whole. *)
 let test_nothing_acked () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack:_ env ->
       try Eio_fs_sync.save P.(env#fs / "f") "x" with Eio.Io _ -> ())
     ~recover:(fun ~acked:_ env ->
@@ -339,7 +331,7 @@ let test_nothing_acked () =
 
 (* A setup that makes only a directory: recover checks it. *)
 let test_setup_directory () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       P.mkdir ~perm:0o755 P.(env#fs / "objects");
       Eio.Path.sync_dir env#fs)
@@ -353,7 +345,7 @@ let test_setup_directory () =
 (* A log setup made, which recover reads as empty when it is missing: a
    correct recover that accepts an empty directory. *)
 let lenient_log ?(sync = true) () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "log") "")
     (fun ~ack env ->
       try
@@ -380,7 +372,7 @@ let test_guard_hides_nothing () =
 (* A cache that evicts the entry setup made before it inserts another: a cut
    may leave the directory empty, so recover must accept that. *)
 let test_empty_reachable () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> P.save ~create:(`Exclusive 0o644) P.(env#fs / "k1") "v$")
     (fun ~ack:_ env ->
       try
@@ -408,7 +400,7 @@ let test_hang () =
     "error" "the run hangs: every fiber waits and no timer is due"
     (Expect.field "error"
        (Expect.report (fun () ->
-            Eio_fs.Chaos.check
+            Eio_fs_chaos.run
               ~setup:(fun env ->
                 P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x")
               (fun env ->
@@ -429,7 +421,7 @@ let too_many_ops =
 let test_yield_poll_is_busy () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let ready = ref false in
             Eio.Fiber.both
               (fun () ->
@@ -454,7 +446,7 @@ let test_tiny_sleeps_are_busy () =
     (fun d ->
       let report =
         Expect.report (fun () ->
-            Eio_fs.Chaos.check (fun env ->
+            Eio_fs_chaos.run (fun env ->
                 let ready = ref false in
                 (try
                    P.save ~create:(`Or_truncate 0o644) P.(env#fs / "ready") "go";
@@ -476,11 +468,11 @@ let test_tiny_sleeps_are_busy () =
    bound, past that, fails the run when nothing stops it. *)
 let test_too_many_turns () =
   Expect.refused
-    "Eio_fs.Chaos.check: the run with no fault failed: the run took 10,000,000 \
+    "Eio_fs_chaos.run: the run with no fault failed: the run took 10,000,000 \
      turns, more than a check can repeat: a busy loop, or a workload too large \
      for a check"
     (fun () ->
-      Eio_fs.Chaos.check (fun env ->
+      Eio_fs_chaos.run (fun env ->
           (try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x"
            with Eio.Io _ -> ());
           for _ = 1 to 3 do
@@ -494,9 +486,10 @@ let test_too_many_turns () =
 
 (* A thousand fibers on a heartbeat of 100 ms and three polling every 1 ms,
    for 500 s of clock: more than 6 million turns in all, each fiber waiting
-   on its timer between two, and no busy loop. *)
+   on its timer between two, and no busy loop. The errors alone pin it: a
+   power cut repeats those turns in each of its many runs. *)
 let test_timers_are_not_busy () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.Private.check_faults (fun env ->
       match P.mkdir ~perm:0o755 P.(env#fs / "d") with
       | exception Eio.Io _ -> ()
       | () ->
@@ -512,7 +505,7 @@ let test_timers_are_not_busy () =
 (* A computation that yields 10000 times ends well within a deadline of
    100 ms. *)
 let test_yields_meet_a_deadline () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       (try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x"
        with Eio.Io _ -> ());
       Eio.Time.with_timeout_exn env#clock 0.1 (fun () ->
@@ -523,7 +516,7 @@ let test_yields_meet_a_deadline () =
 (* Two fibers that pass a token back and forth until a timer of 10 ms stops
    them: time passes as they do, and the timer ends the run. *)
 let test_ping_pong_until_a_timer () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       (try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x"
        with Eio.Io _ -> ());
       let stop = ref false in
@@ -551,7 +544,7 @@ let test_ping_pong_until_a_timer () =
 let test_three_tries_and_a_lasting_condition () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec save n =
               match
                 P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x"
@@ -572,7 +565,7 @@ let test_three_tries_and_a_lasting_condition () =
 let test_livelock () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec save n =
               if n > 50_000 then failwith "the spin was not stopped";
               match
@@ -594,7 +587,7 @@ let test_livelock () =
 let test_livelock_fresh_names () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec save n =
               if n > 50_000 then failwith "the spin was not stopped";
               match
@@ -620,7 +613,7 @@ let test_livelock_fresh_names () =
 let test_hot_spin_stops_early () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let tries = ref 0 in
             try
               P.with_open_out ~create:(`Or_truncate 0o644) P.(env#fs / "log")
@@ -649,7 +642,7 @@ let test_hot_spin_stops_early () =
 let test_spin_report_is_short () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec save n =
               if n > 50_000 then failwith "the spin was not stopped";
               match
@@ -667,7 +660,7 @@ let test_spin_report_is_short () =
    error: under a lasting condition it fails 15000 times with no time
    passing, and ends. *)
 let test_wide_pool_is_not_a_spin () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.Private.check_faults (fun env ->
       for i = 0 to 49 do
         let rec take j =
           if j < 300 then
@@ -686,7 +679,7 @@ let test_wide_pool_is_not_a_spin () =
    refuses: each line is a new write, not a retry. The replay runs the
    scenario where the disk is full from the first line on. *)
 let test_busy_is_not_a_spin () =
-  Eio_fs.Chaos.check ~replay:"fs/00000000/from:write:/log#1.full" (fun env ->
+  Eio_fs_chaos.run ~replay:"fs/00000000/from:write:/log#1.full" (fun env ->
       let processed = ref 0 in
       (try
          P.with_open_out ~append:true ~create:(`If_missing 0o644)
@@ -704,7 +697,7 @@ let test_busy_is_not_a_spin () =
    error: under a lasting condition it fails 11000 times with no time passing,
    and ends. *)
 let test_pool_is_not_a_spin () =
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.run (fun env ->
       for i = 0 to 9 do
         let rec take j =
           if j < 1100 then
@@ -737,7 +730,7 @@ let test_errors_linux_returns () =
         (fun c -> if contains s c then Fmt.failwith "%s from %s" c s)
         codes
   in
-  Eio_fs.Chaos.check
+  Eio_fs_chaos.run
     ~setup:(fun env ->
       P.save ~create:(`Exclusive 0o644) P.(env#fs / "old") "o";
       P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "f")
@@ -776,7 +769,7 @@ end
    its runs see stays flat as the linear tier goes. *)
 let test_heap_stays_flat () =
   let heap = Heap.v ~every:20 () in
-  Eio_fs.Chaos.check (fun env ->
+  Eio_fs_chaos.Private.check_faults (fun env ->
       Heap.sample heap;
       for i = 1 to 30 do
         try Eio_fs_sync.save P.(env#fs / "k") (string_of_int i)
@@ -790,7 +783,7 @@ let test_heap_stays_flat () =
    run. *)
 let test_sampled_heap () =
   let runs = ref 0 and top = ref 0 in
-  Eio_fs.Chaos.check
+  Eio_fs_chaos.run
     ~setup:(fun env -> P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x")
     (fun env ->
       incr runs;
@@ -812,7 +805,7 @@ let test_busy_heap_stays_flat () =
   let heap = Heap.v () in
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec save n =
               if n mod 100_000 = 0 then Heap.sample heap;
               if n > 20_000_000 then failwith "the poll was not stopped";
@@ -840,7 +833,7 @@ let test_first_run_stops_at_the_budget () =
   let stats = ref 0 in
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             Eio.Fiber.all
               (List.init 3 (fun _ () ->
                    while Eio.Time.now env#clock < 100. do
@@ -853,7 +846,7 @@ let test_first_run_stops_at_the_budget () =
   in
   if
     not
-      (String.starts_with ~prefix:"Eio_fs.Chaos.check: the linear tier needs"
+      (String.starts_with ~prefix:"Eio_fs_chaos.run: the linear tier needs"
          report)
   then Alcotest.failf "not refused by the budget: %s" report;
   Heap.check heap 1_000_000
@@ -863,7 +856,7 @@ let test_first_run_stops_at_the_budget () =
 let recover_syncs dirs =
   let runs = ref 0 in
   let dir i = Fmt.str "d%d" i in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       for i = 1 to dirs do
         P.mkdir ~perm:0o755 P.(env#fs / dir i)
@@ -894,7 +887,7 @@ let test_idle_syncs_are_no_cut () =
    open of a file the check already tracks changes nothing a cut leaves. *)
 let reopens n =
   let runs = ref 0 in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "log") "")
     (fun ~ack env ->
       incr runs;
@@ -926,7 +919,7 @@ let test_idle_opens_are_no_cut () =
    leaves. A second one, and a sync of a synced file, change nothing. *)
 let test_stamp () =
   Eio_mock.Backend.run @@ fun () ->
-  let module C = Eio_fs.Chaos.Private.Crash in
+  let module C = Eio_fs_chaos.Private.Crash in
   let ctl = C.v () in
   let fs = C.wrap ctl (Eio_fs.Fs.v ()) in
   let moved f =
@@ -948,10 +941,10 @@ let test_stamp () =
 let test_syncs_count_in_the_floor () =
   let runs = ref 0 in
   Expect.refused
-    "Eio_fs.Chaos.Crash.check: the linear tier needs more than the budget of \
-     1000 runs by operation #"
+    "Eio_fs_chaos.run: the linear tier needs more than the budget of 1000 runs \
+     by operation #"
     (fun () ->
-      Eio_fs.Chaos.Crash.check ~budget:1000
+      Eio_fs_chaos.Private.check_cuts ~budget:1000
         (fun ~ack env ->
           incr runs;
           for i = 1 to 50 do
@@ -973,7 +966,7 @@ let test_syncs_count_in_the_floor () =
 let test_budget_refusal_shows_the_trace () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec go () =
               match P.load P.(env#fs / "ready") with
               | _ -> ()
@@ -985,7 +978,7 @@ let test_budget_refusal_shows_the_trace () =
   in
   if
     not
-      (String.starts_with ~prefix:"Eio_fs.Chaos.check: the linear tier needs"
+      (String.starts_with ~prefix:"Eio_fs_chaos.run: the linear tier needs"
          report)
   then Alcotest.failf "not refused by the budget: %s" report;
   let lines = String.split_on_char '\n' report in
@@ -1002,17 +995,17 @@ let test_budget_refusal_shows_the_trace () =
 let test_nested_report () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             (try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "outer") "x"
              with Eio.Io _ -> ());
-            Eio_fs.Chaos.check ~budget:200 (fun env ->
+            Eio_fs_chaos.run ~budget:200 (fun env ->
                 try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "inner") "y"
                 with Eio.Io _ -> failwith "lost")))
   in
   let first = List.hd (String.split_on_char '\n' report) in
   Alcotest.(check string)
     "first line"
-    "Eio_fs.Chaos.check: the run with no fault failed: Eio_fs.Chaos.check: the \
+    "Eio_fs_chaos.run: the run with no fault failed: Eio_fs_chaos.run: the \
      workload failed under a fault"
     first;
   if String.contains report '\\' then
@@ -1023,9 +1016,9 @@ let test_nested_report () =
    bound, past that, fails the run when nothing stops it. *)
 let test_read_poll_stops () =
   Expect.refused
-    ("Eio_fs.Chaos.check: the run with no fault failed: " ^ too_many_ops)
+    ("Eio_fs_chaos.run: the run with no fault failed: " ^ too_many_ops)
     (fun () ->
-      Eio_fs.Chaos.check
+      Eio_fs_chaos.run
         ~setup:(fun env ->
           P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x")
         (fun env ->
@@ -1051,9 +1044,9 @@ let test_crash_stat_poll_stops () =
   let heap = Heap.v () in
   let stats = ref 0 in
   Expect.refused
-    ("Eio_fs.Chaos.Crash.check: the run with no cut failed: " ^ too_many_ops)
+    ("Eio_fs_chaos.run: the run with no cut failed: " ^ too_many_ops)
     (fun () ->
-      Eio_fs.Chaos.Crash.check
+      Eio_fs_chaos.Private.check_cuts
         (fun ~ack:_ env ->
           Eio.Fiber.all
             (List.init 3 (fun _ () ->
@@ -1077,7 +1070,7 @@ let test_crash_stat_poll_stops () =
 let test_crash_heap_stays_flat () =
   let heap = Heap.v ~every:20 () in
   let n = 200 in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     (fun ~ack env ->
       Heap.sample heap;
       for i = 1 to n do
@@ -1099,7 +1092,7 @@ let test_crash_heap_stays_flat () =
 let test_kept_going () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.Crash.check
+        Eio_fs_chaos.Private.check_cuts
           (fun ~ack env ->
             let n = ref 0 in
             while !n < 3 do
@@ -1125,7 +1118,7 @@ let test_kept_going () =
    backoff until it succeeds: a cut stops it, as nothing runs after a power
    cut. *)
 let test_cut_stops_supervisor () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> save env#fs "0")
     (fun ~ack env ->
       Eio.Switch.run @@ fun sw ->
@@ -1153,7 +1146,7 @@ let test_cut_stops_supervisor () =
 let test_kept_loses_nothing () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.Crash.check
+        Eio_fs_chaos.Private.check_cuts
           (fun ~ack env ->
             P.with_open_out ~create:(`Exclusive 0o644)
               P.(env#fs / "f")
@@ -1185,7 +1178,7 @@ let test_one_numbering () =
   in
   let lost =
     Expect.report (fun () ->
-        Eio_fs.Chaos.Crash.check
+        Eio_fs_chaos.Private.check_cuts
           ~setup:(fun env ->
             Eio_fs_sync.save P.(env#fs / "old") "o";
             Eio_fs_sync.save P.(env#fs / "x") "x")
@@ -1206,7 +1199,7 @@ let test_one_numbering () =
   has lost "\n    #4 rename /x to /y\n";
   let left =
     Expect.report (fun () ->
-        Eio_fs.Chaos.Crash.check
+        Eio_fs_chaos.Private.check_cuts
           ~setup:(fun env ->
             Eio_fs_sync.save P.(env#fs / "f") (String.make 9000 'A'))
           (fun ~ack env ->
@@ -1231,7 +1224,7 @@ let test_one_numbering () =
     (Expect.field "left" left);
   let spin =
     Expect.report (fun () ->
-        Eio_fs.Chaos.check (fun env ->
+        Eio_fs_chaos.run (fun env ->
             let rec save n =
               if n > 50_000 then failwith "the spin was not stopped";
               match
@@ -1251,7 +1244,7 @@ let test_one_numbering () =
 let test_cut_in_recover () =
   let report =
     Expect.report (fun () ->
-        Eio_fs.Chaos.Crash.check
+        Eio_fs_chaos.Private.check_cuts
           ~setup:(fun env ->
             P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "a")
           (fun ~ack env ->

@@ -3,6 +3,9 @@
 val field : string -> string -> string
 (** [field name report] is the [name] line of a check's failure report. *)
 
+val replay : string -> string
+(** [replay report] is the replay string a failure [report] names. *)
+
 val report : (unit -> unit) -> string
 (** [report f] is the failure report of the check [f], which must fail. *)
 

@@ -1,5 +1,5 @@
 (** An ext4-like reference for one file's data under failed syncs, apart from
-    [Chaos.Crash].
+    [Private.Crash].
 
     Each block keeps sets of possible contents: in the page cache, on disk
     (durable), possibly written by a partly failed writeback, and the versions

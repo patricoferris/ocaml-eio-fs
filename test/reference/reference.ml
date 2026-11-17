@@ -1,5 +1,5 @@
 (* An independent reference crash model, an inode graph. It shares no code
-   with Chaos.Crash: it sees only the live trees before and after each
+   with Private.Crash: it sees only the live trees before and after each
    operation and derives events from them. *)
 
 module IM = Map.Make (Int)

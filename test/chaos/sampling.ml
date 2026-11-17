@@ -8,7 +8,7 @@ module P = Eio.Path
 let size = 8
 let record i = Fmt.str "%0*d\n" (size - 1) i
 
-let log ?(bug = false) ~n (env : Eio_fs.Chaos.env) =
+let log ?(bug = false) ~n (env : Eio_fs_chaos.env) =
   let path = P.(env#fs / "log") in
   let whole =
     try

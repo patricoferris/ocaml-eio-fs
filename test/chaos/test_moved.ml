@@ -4,9 +4,10 @@
    its image merges the store's tree with the model's. *)
 
 module P = Eio.Path
-module Crash = Eio_fs.Chaos.Crash
+module Crash = Eio_fs_chaos.Power
+module Model = Eio_fs_chaos.Private.Crash
 
-let keep_all = Crash.Survive (fun _ -> true)
+let keep_all = Crash.Keep (fun _ -> true)
 
 (* The tree below [p]: each entry's path, with a file's bytes and an entry's
    mode. *)
@@ -60,7 +61,7 @@ let rename_across sync () =
     Eio.Path.sync_dir P.(fs / sync)
   in
   let want = [ "d/ 755"; "e/ 755"; "e/f 644 \"F\"" ] in
-  check_image want (cut ~setup:two_dirs Drop_unsynced run);
+  check_image want (cut ~setup:two_dirs Lose_unsynced run);
   check_live (cut ~setup:two_dirs keep_all run)
 
 (* A rename into a directory whose own entry is not durable: a barrier on
@@ -77,10 +78,10 @@ let rename_into_new_dir () =
     Eio.Path.sync_dir P.(fs / "d");
     if parent then Eio.Path.sync_dir fs
   in
-  check_image [ "d/ 755" ] (cut ~setup Drop_unsynced (run ~parent:false));
+  check_image [ "d/ 755" ] (cut ~setup Lose_unsynced (run ~parent:false));
   check_image
     [ "d/ 755"; "e/ 755"; "e/f 644 \"F\"" ]
-    (cut ~setup Drop_unsynced (run ~parent:true));
+    (cut ~setup Lose_unsynced (run ~parent:true));
   check_live (cut ~setup keep_all (run ~parent:false))
 
 (* Every barrier on one directory at a time, then every change kept. *)
@@ -122,7 +123,7 @@ let fails_at_old_name () =
 let mode_of_moved_file () =
   check_image
     [ "d/ 755"; "e/ 755"; "f 644 \"F\"" ]
-    (cut ~setup:two_dirs Drop_unsynced (fun fs ->
+    (cut ~setup:two_dirs Lose_unsynced (fun fs ->
          P.chmod ~follow:false ~perm:0o600 P.(fs / "d/f");
          P.rename P.(fs / "d/f") P.(fs / "f");
          Eio.Path.sync_dir P.(fs / "d");
@@ -138,7 +139,7 @@ let renamed_before_drain () =
   in
   check_image
     [ "d/ 755"; "d/f 644 \"F\""; "g 644 \"G\"" ]
-    (cut ~os:`Macos ~setup Drop_unsynced (fun fs ->
+    (cut ~os:`Macos ~setup Lose_unsynced (fun fs ->
          P.with_open_out ~create:(`Exclusive 0o644)
            P.(fs / "d/f")
            (fun f ->
@@ -153,8 +154,8 @@ let renamed_before_drain () =
 let named_when_made () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
-  let t = Crash.v Drop_unsynced in
-  let fs = Crash.wrap t env#fs in
+  let t = Model.v ~policy:Drop_unsynced () in
+  let fs = Model.wrap t env#fs in
   P.mkdir ~perm:0o755 P.(fs / "d");
   P.with_open_out ~create:(`Exclusive 0o644)
     P.(fs / "d/f")
@@ -165,11 +166,11 @@ let named_when_made () =
   P.rename P.(fs / "d") P.(fs / "e");
   let changes =
     List.filter_map
-      (fun (u : Crash.Unsynced.t) ->
+      (fun (u : Model.unsynced) ->
         match u.kind with
-        | Data | Truncate -> Fmt.kstr Option.some "%a" Crash.Unsynced.pp u
+        | Data | Truncate -> Fmt.kstr Option.some "%a" Model.pp_unsynced u
         | _ -> None)
-      (Crash.unsynced t)
+      (Model.unsynced t)
   in
   Alcotest.(check (list string))
     "changes"

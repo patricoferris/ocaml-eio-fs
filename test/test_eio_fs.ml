@@ -65,7 +65,7 @@ let test_same_file () =
     "two roots" false
     (Eio_fs.Tree.same_file fs (Eio_fs.Fs.v ()));
   let failing =
-    Eio_fs.Chaos.wrap
+    Eio_fs_chaos.wrap
       (fun op -> if op.kind = `Stat then Some (Fail `Eio) else None)
       fs
   in

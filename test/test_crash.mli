@@ -1,4 +1,4 @@
-(** Tests for the crash model of {!Eio_fs.Chaos.Private}. *)
+(** Tests for the crash model of {!Eio_fs_chaos.Private}. *)
 
 val suite : string * unit Alcotest.test_case list
 (** [suite] tests what a power cut leaves of files and directories, the barriers

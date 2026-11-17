@@ -12,7 +12,7 @@ let keep env = if P.load P.(env#fs / "keep") <> "k" then failwith "keep lost"
 let stale_head () =
   let a = String.make 1100 'A' in
   let bad = String.make 512 '7' ^ String.sub a 512 588 in
-  Eio_fs.Chaos.Crash.check ~setup
+  Eio_fs_chaos.Private.check_cuts ~setup
     (fun ~ack:_ env ->
       try P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") a
       with Eio.Io _ -> ())
@@ -26,7 +26,7 @@ let stale_head () =
    ext4 extends its on-disk size as it writes back each page, so the first
    page's writeback alone leaves the length at its end. *)
 let page_end () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       Eio_fs_sync.save P.(env#fs / "f") "")
@@ -51,7 +51,7 @@ let page_end () =
 let frame c = "rec:" ^ String.make 508 c
 
 let old_frame () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       Eio_fs_sync.save P.(env#fs / "wal") (frame 'A'))
@@ -74,7 +74,7 @@ let old_frame () =
 let sectors s = String.concat "" (List.map (fun c -> String.make 512 c) s)
 
 let freed_by_unlink () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       Eio_fs_sync.save
@@ -100,7 +100,7 @@ let freed_by_unlink () =
    the third page of [new], a block the removal freed at another offset,
    which ext4 may give it as well. *)
 let freed_elsewhere () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       Eio_fs_sync.save
@@ -125,7 +125,7 @@ let freed_elsewhere () =
 (* The same, where [old] is still open when [new] grows: ext4 frees its
    blocks at its last close, so a cut before that shows none of them. *)
 let freed_open () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       Eio_fs_sync.save
@@ -160,7 +160,7 @@ let freed_open () =
    removal, and an unsynced append to [new] that lands in its freed block
    may show them. *)
 let freed_unsynced () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       Eio_fs_sync.save P.(env#fs / "new") (String.make 4096 'n'))
@@ -186,7 +186,7 @@ let freed_unsynced () =
    creation frees no block of it, so no page of another file holds its
    bytes. *)
 let lost_not_freed () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") "")
     (fun ~ack:_ env ->
       try
@@ -205,7 +205,7 @@ let lost_not_freed () =
    that grows it: an unsynced write into it lands in a page the disk does
    not hold, which may hold stale data. *)
 let setup_hole ~grow () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
       P.with_open_out ~create:(`Exclusive 0o644) P.(env#fs / "f") @@ fun f ->
@@ -232,7 +232,7 @@ let setup_hole ~grow () =
    writes into a hole [setup] left instead, whose block ext4 allocates at
    writeback in the same way. *)
 let length_order ~mkdir_first ~hole () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       P.with_open_out ~create:(`Exclusive 0o644) P.(env#fs / "f") @@ fun f ->
       if hole then Eio.File.truncate f (Optint.Int63.of_int 8192))
@@ -262,7 +262,7 @@ let length_order ~mkdir_first ~hole () =
    journals a truncation in the syscall's own handle, so a cut that keeps
    [d] made after it keeps it. *)
 let truncate_order ~truncate_first ~barrier ~len () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "abcdef";
       P.mkdir ~perm:0o755 P.(env#fs / "e"))
@@ -286,7 +286,7 @@ let truncate_order ~truncate_first ~barrier ~len () =
 (* An empty write at offset 100 of a three-byte file, with no sync: it
    changes nothing, on Linux as everywhere. *)
 let empty_write () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "abc")
     (fun ~ack:_ env ->
       try
@@ -301,7 +301,7 @@ let empty_write () =
    The cut's first state drops the file, and the states that vary the first
    sector come last one by one, past what the check enumerates. *)
 let stale_first () =
-  Eio_fs.Chaos.Crash.check ~setup
+  Eio_fs_chaos.Private.check_cuts ~setup
     (fun ~ack:_ env ->
       try
         P.save ~create:(`Exclusive 0o644)
@@ -320,7 +320,7 @@ let stale_first () =
    mix of them breaks recover. *)
 let mix () =
   let old = String.make 4096 'o' and planted = "onoonoon" in
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") old)
     (fun ~ack:_ env ->
       try
@@ -337,7 +337,7 @@ let mix () =
    that landed a prefix, and a single sector left behind. *)
 let overwrite ?replay ~recover () =
   let old = String.make 32768 'o' in
-  Eio_fs.Chaos.Crash.check ?replay
+  Eio_fs_chaos.Private.check_cuts ?replay
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") old)
     (fun ~ack:_ env ->
       try
@@ -383,7 +383,7 @@ let overwrite ~rewrite f =
     Eio.File.sync f
 
 let reread ~rewrite () =
-  Eio_fs.Chaos.check
+  Eio_fs_chaos.run
     ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") "old")
     (fun env ->
       try
@@ -395,7 +395,7 @@ let reread ~rewrite () =
 (* The same, where the program copies what it reads back into [g] and
    acknowledges the copy. *)
 let copy ~rewrite () =
-  Eio_fs.Chaos.Crash.check
+  Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       Eio_fs_sync.save P.(env#fs / "f") "old";
       Eio_fs_sync.save P.(env#fs / "g") "old")
@@ -418,9 +418,7 @@ let suite =
             "error" "Failure(\"a prefix landed\")" (Expect.field "error" m));
       Alcotest.test_case "a replay of a drawn state runs it" `Quick (fun () ->
           let m = Expect.report prefix in
-          let replay =
-            Scanf.sscanf (Expect.field "replay" m) "~replay:%S" Fun.id
-          in
+          let replay = Expect.replay m in
           let again = Expect.report (prefix ~replay) in
           Alcotest.(check string)
             "cut" (Expect.field "cut" m) (Expect.field "cut" again));
