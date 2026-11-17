@@ -173,6 +173,16 @@ module Tree = struct
     | Some native -> native
     | None -> Fmt.to_to_string Eio.Path.pp path
 
+  let same_file a b =
+    let stat path =
+      match Eio.Path.stat ~follow:true path with
+      | stat -> Some stat
+      | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> None
+    in
+    match (stat a, stat b) with
+    | Some a, Some b -> Int64.equal a.dev b.dev && Int64.equal a.ino b.ino
+    | _ -> false
+
   type node = Node of string * node list
 
   (* Each child is drawn behind the guides of its ancestors: a branch, and

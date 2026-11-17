@@ -397,6 +397,7 @@ module Entries = Map.Make (Inode)
    it, so fibers of several domains may share one. *)
 type fs = {
   os : os;
+  device : int64; (* the [dev] of its stats, of its own *)
   mutable tree : resource ref Entries.t;
   mutable fds : resource ref Fd_table.t;
   mutable last_ino : Inode.t;
@@ -497,6 +498,7 @@ let new_stat fs ~(user : User.t) ?parent ?kind ~perm () =
   in
   {
     default_stat with
+    dev = fs.device;
     ino = fs.last_ino;
     kind;
     perm;
@@ -511,13 +513,14 @@ let new_stat fs ~(user : User.t) ?parent ?kind ~perm () =
 module Filesystem = struct
   type t = resource ref Entries.t
 
-  let empty ~(owner : User.t) ~now : t =
+  let empty ~device ~(owner : User.t) ~now : t =
     let root =
       Resource.Dir
         {
           stat =
             {
               default_stat with
+              dev = device;
               size = Optint.Int63.of_int 4096;
               ino = 0L;
               kind = `Directory;
@@ -759,6 +762,13 @@ module Filesystem = struct
     final ~follow w name ~slash
 end
 
+(* Devices are numbered up from [Int64.min_int], which no host device takes:
+   no two filesystems of a process share one, nor one and the host. *)
+let devices = Atomic.make 0
+
+let fresh_device () =
+  Int64.add Int64.min_int (Int64.of_int (Atomic.fetch_and_add devices 1))
+
 let v ?clock ?(cwd = "/") ?(owner = User.root) ?os () =
   let now =
     match clock with Some c -> fun () -> Eio.Time.now c | None -> Fun.const 0.
@@ -766,9 +776,11 @@ let v ?clock ?(cwd = "/") ?(owner = User.root) ?os () =
   let os =
     match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
   in
+  let device = fresh_device () in
   {
     os;
-    tree = Filesystem.empty ~owner ~now:(now ());
+    device;
+    tree = Filesystem.empty ~device ~owner ~now:(now ());
     fds = Fd_table.empty;
     last_ino = 0L;
     cwd;

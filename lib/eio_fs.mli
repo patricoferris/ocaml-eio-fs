@@ -34,10 +34,11 @@ val root : user
     move the entry's [ctime]. Making, removing or renaming an entry moves its
     directory's [mtime] and [ctime]. [atime] follows relatime, Linux's default:
     a read, a listing or a link read moves it when it is not past [mtime] or
-    [ctime], or a day after it last moved. [nlink] is [2] plus the number of
-    subdirectories for a directory, [1] for anything else, and [0] once its last
-    name is gone. [blocks] counts the 512-byte blocks of the 4096-byte pages
-    writes put bytes in: a hole, a directory and a link hold none.
+    [ctime], or a day after it last moved. [dev] is the filesystem's own, shared
+    with no other filesystem and no host device. [nlink] is [2] plus the number
+    of subdirectories for a directory, [1] for anything else, and [0] once its
+    last name is gone. [blocks] counts the 512-byte blocks of the 4096-byte
+    pages writes put bytes in: a hole, a directory and a link hold none.
 
     A file's bytes live in memory, holes included, and a file holds at most 4
     GiB: a write or a truncation past that raises {!Eio.Fs.File_too_large}.
@@ -319,6 +320,14 @@ module Tree : sig
   (** [name path] is what [path] is called outside the program: its native
       spelling when the capability has one, and the rendering {!Eio.Path.pp}
       gives it when not. *)
+
+  val same_file : _ Eio.Path.t -> _ Eio.Path.t -> bool
+  (** [same_file a b] is [true] iff [a] and [b] both name a file and their stats
+      give the same device and inode: the same file, by any of its names.
+      Symbolic links are followed, and a path that names nothing matches no
+      path, itself included.
+
+      @raise Eio.Io as a stat fails for another reason than a missing file. *)
 
   val pp_tree : depth:int -> _ Eio.Path.t Fmt.t
   (** [pp_tree ~depth] formats a path and what is under it [depth] levels deep,
