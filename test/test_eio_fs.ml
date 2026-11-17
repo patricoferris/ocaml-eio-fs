@@ -130,6 +130,46 @@ let test_links () =
   write fs "d/sub/c" "x";
   Alcotest.check found "a file below makes none" None (links "d")
 
+(* A file with a second link is replaced by a copy of itself with its
+   permissions, so a write to it no longer reaches the other link; a file with
+   one link is left as it is. A linked file that cannot be read is named. *)
+let test_unshare () =
+  Eio_main.run @@ fun env ->
+  let dir = Filename.temp_dir "eio-fs-unshare" "" in
+  let path n = Eio.Path.(Eio.Stdenv.fs env / Filename.concat dir n) in
+  Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (path ""))
+  @@ fun () ->
+  let file n = snd (path n) in
+  let save n s = Eio.Path.save ~create:(`Or_truncate 0o644) (path n) s in
+  Eio.Path.mkdir ~perm:0o755 (path "tree");
+  save "outside" "shared";
+  Unix.chmod (file "outside") 0o640;
+  Unix.link (file "outside") (file "tree/linked");
+  save "tree/alone" "alone";
+  Alcotest.(check (result unit string))
+    "copied apart" (Ok ())
+    (Eio_fs.Tree.unshare ~spare:(path "spare") (path "tree"));
+  save "tree/linked" "written";
+  Alcotest.(check (pair string string))
+    "the other link, unwritten" ("shared", "written")
+    (Eio.Path.load (path "outside"), Eio.Path.load (path "tree/linked"));
+  Alcotest.(check int)
+    "its permissions" 0o640
+    ((Unix.stat (file "tree/linked")).st_perm land 0o777);
+  Unix.link (file "outside") (file "tree/again");
+  Unix.chmod (file "outside") 0o000;
+  let refused = Eio_fs.Tree.unshare ~spare:(path "spare") (path "tree") in
+  Unix.chmod (file "outside") 0o640;
+  match refused with
+  | Ok () -> Alcotest.fail "an unreadable linked file was copied"
+  | Error why ->
+      Alcotest.(check bool)
+        (Fmt.str "the refusal names the file: %s" why)
+        true
+        (String.starts_with
+           ~prefix:(file "tree/again" ^ ", linked 2 times")
+           why)
+
 (* [Fs.v ()] is the root of an empty filesystem whatever another root holds. *)
 let test_v_is_empty () =
   Eio_mock.Backend.run @@ fun () ->
@@ -799,6 +839,7 @@ let suite =
       Alcotest.test_case "entries" `Quick test_entries;
       Alcotest.test_case "remove_empty" `Quick test_remove_empty;
       Alcotest.test_case "links" `Quick test_links;
+      Alcotest.test_case "unshare" `Quick test_unshare;
       Alcotest.test_case "load asks its filter about the root first" `Quick
         test_load_filter_refuses_the_root;
       Alcotest.test_case "load refuses a regular file" `Quick
