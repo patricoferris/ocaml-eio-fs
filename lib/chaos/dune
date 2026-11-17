@@ -5,6 +5,8 @@
   (:standard -open Eio_fs_mem))
  (private_modules
   quiet_mock
+  chaos_env
+  systhread
   chaos_plan
   chaos_blocks
   chaos_journal
@@ -15,6 +17,7 @@
  (libraries
   hermetic
   eio
+  eio.unix
   eio.utils
   eio-fs
   eio-fs.path

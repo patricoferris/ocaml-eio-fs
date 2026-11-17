@@ -46,7 +46,7 @@ type hook = space:bool -> Op.t -> Fault.t option
 type sched = {
   hook : hook;
   mutable index : int;
-  nths : (Op.kind * string, int) Hashtbl.t;
+  nths : (Op.kind * string option, int) Hashtbl.t; (* on a path, and on any *)
 }
 
 let schedule hook = { hook; index = 0; nths = Hashtbl.create 16 }
@@ -67,16 +67,20 @@ let applies ~space (op : Op.t) : Fault.t -> bool = function
 (* The fault [t]'s hook answers for the next operation, if it applies. *)
 let next ?(space = false) ?(offset = 0) ?(len = 0) ?dest t kind path =
   t.index <- t.index + 1;
-  let nth =
-    1 + Option.value ~default:0 (Hashtbl.find_opt t.nths (kind, path))
+  let count key =
+    let n = 1 + Option.value ~default:0 (Hashtbl.find_opt t.nths key) in
+    Hashtbl.replace t.nths key n;
+    n
   in
-  Hashtbl.replace t.nths (kind, path) nth;
+  let nth = count (kind, Some path) in
+  let rank = count (kind, None) in
   let op : Op.t =
     {
       index = t.index;
       kind;
       path;
       nth;
+      rank;
       file_offset = offset;
       length = len;
       dest;

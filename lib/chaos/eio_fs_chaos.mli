@@ -28,14 +28,44 @@ type env =
   < fs : Eio.Fs.dir_ty Eio.Path.t
   ; cwd : Eio.Fs.dir_ty Eio.Path.t
   ; clock : float Eio.Time.clock_ty Eio.Resource.t
-  ; mono_clock : Eio.Time.Mono.ty Eio.Resource.t >
-(** The type for what a program runs with: the root of a fresh in-memory
-    filesystem as [fs], the same directory as [cwd], confined to itself as
-    eio_posix confines a process's (an absolute path or link and a [".."] above
-    it are refused with [Permission_denied]), and clocks on which a sleep takes
-    no time. A program written against [Eio.Stdenv] fields of these names takes
-    it unchanged. Both directories run as {!Eio_fs.root}; {!Eio_fs.Fs.as_user}
-    runs them as another user. *)
+  ; mono_clock : Eio.Time.Mono.ty Eio.Resource.t
+  ; secure_random : Eio.Flow.source_ty Eio.Resource.t
+  ; stdin : Eio.Flow.source_ty Eio.Resource.t
+  ; stdout : Eio.Flow.sink_ty Eio.Resource.t
+  ; stderr : Eio.Flow.sink_ty Eio.Resource.t
+  ; domain_mgr : Eio.Domain_manager.ty Eio.Resource.t
+  ; process_mgr : [ `Generic ] Eio.Process.mgr_ty Eio.Resource.t
+  ; debug : Eio.Debug.t
+  ; backend_id : string >
+(** The type for what a program or a filesystem under test runs with: the
+    capabilities of {!Eio.Stdenv}, each simulated, so code written against the
+    accessors of {!Eio.Stdenv} takes it unchanged.
+
+    - [fs] is the root of a fresh in-memory filesystem, and [cwd] the same
+      directory, confined to itself as eio_posix confines a process's (an
+      absolute path or link and a [".."] above it are refused with
+      [Permission_denied]). Both run as {!Eio_fs.root}; {!Eio_fs.Fs.as_user}
+      runs them as another user.
+    - [clock] and [mono_clock] start at [0.], and a sleep takes no time
+      ({{!runs}runs}).
+    - [secure_random] draws bytes from a fixed seed, and the default [Random]
+      state is seeded before each run: the first run and each run with a fault
+      draw the same, and a restart draws others, as a new process does.
+    - [stdin] is empty. What [stdout], [stderr] and [Eio.traceln] print is kept,
+      and a report shows its last lines.
+    - [domain_mgr] runs its work in the calling fiber, on the run's scheduler.
+    - [process_mgr] starts nothing: [spawn] and [pipe] raise [Eio.Io].
+    - [debug] is Eio's, and [backend_id] is ["chaos"].
+
+    A program that reaches the system other than through [env], by [Unix], the
+    standard library's channels, [Random.self_init], [Domain.spawn] or
+    [Sys.command], escapes the check. Built with
+    {{:https://github.com/samoht/ocaml-hermetic}hermetic} ([open! Hermetic]),
+    such a call does not compile, so what differs between two runs can only be
+    state the program kept in memory from an earlier one. Without it, a direct
+    call escapes, and when it makes two runs with no fault differ in the kinds
+    of operation they make, the check fails with a report that names the first
+    difference and its likely causes. *)
 
 (** {1:programs Testing a program} *)
 
@@ -121,17 +151,23 @@ val run :
 val device :
   ?os:[< `Linux | `Macos ] ->
   ?user:Eio_fs.user ->
-  (sw:Eio.Switch.t -> _ Eio.Path.t) ->
+  (sw:Eio.Switch.t -> env -> _ Eio.Path.t) ->
   unit
 (** [device ~os ~user dir] runs each scenario recorded on the kernel of [os]
     (defaults to [`Linux]) in a directory of mode [0o755] it makes in a fresh,
-    empty directory [dir ~sw], and compares each answer with the kernel's. [sw]
-    ends with the scenario, so what [dir] opens under it is closed there.
+    empty directory [dir ~sw env], and compares each answer with the kernel's.
+    [sw] ends with the scenario, so what [dir] opens under it is closed there.
 
     {[
-    let () =
-      Eio_main.run @@ fun _ -> Eio_fs_chaos.device (fun ~sw:_ -> Eio_fs.Fs.v ())
+    let () = Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs.Fs.v ())
     ]}
+
+    Each scenario runs in an event loop of its own, as a run of {!run} does,
+    given an {!type-env} whose [fs] is a fresh in-memory filesystem that answers
+    as [os] does. A filesystem built on other capabilities, such as a wrapper
+    over a directory, takes them from that env, so its runs are as deterministic
+    as a program's. A directory on the host works too: its calls run one at a
+    time in the scenario's loop.
 
     A scenario is a short sequence of {!Eio.Path} operations: names that differ
     by case or Unicode form, names and paths at their length limits, opens of
@@ -156,7 +192,7 @@ val device :
 
     [device] runs every scenario, whatever the earlier ones answered. In a
     scenario it stops at the first answer that differs, as the later ones depend
-    on it. It must be called from an Eio event loop.
+    on it. It blocks its caller, as {!run} does.
 
     @raise Failure
       if an answer differs, with one line for each such scenario: its name, its
@@ -196,6 +232,9 @@ module Op : sig
     nth : int;
         (** The operation's place among those of its kind on its path, from [1].
         *)
+    rank : int;
+        (** The operation's place among those of its kind on any path, from [1].
+            A check aims its faults by [kind] and [rank]. *)
     file_offset : int;
         (** Where a read or a write starts, a truncation's new length, [0]
             otherwise. *)
@@ -434,6 +473,12 @@ end
     {b A restart is a fresh process.} It runs on the directory as the fault or
     the disk left it, and so does [inspect]: neither may read state an earlier
     run left in memory.
+
+    {b Each run makes the same kinds of operation.} A check aims a fault at an
+    operation by its kind and its rank among the operations of that kind, so the
+    names a program gives its files may change from run to run. Two runs with no
+    fault that differ in the kinds of operation they make, or in their order,
+    fail the check: {!type-env} says what can make them differ.
 
     {b Do not catch [Eio.Cancel.Cancelled].} A power cut raises it from the
     operation it falls before, and from every one after, as in a cancelled

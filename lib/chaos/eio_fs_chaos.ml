@@ -2,11 +2,7 @@ open! Hermetic
 module M = Chaos_model
 module Plan = Chaos_plan
 
-type env =
-  < fs : Eio.Fs.dir_ty Eio.Path.t
-  ; cwd : Eio.Fs.dir_ty Eio.Path.t
-  ; clock : float Eio.Time.clock_ty Eio.Resource.t
-  ; mono_clock : Eio.Time.Mono.ty Eio.Resource.t >
+type env = Chaos_env.env
 
 module Op = Plan.Op
 module Fault = Plan.Fault
@@ -104,14 +100,6 @@ let rec outcome_text = function
 (* A cut fails the run's switch with it, which cancels every fiber of the
    run. *)
 exception Cut
-
-let env_of clock mono ~(fs : _ Eio.Path.t) ~(cwd : _ Eio.Path.t) : env =
-  object
-    method fs = (fs :> Eio.Fs.dir_ty Eio.Path.t)
-    method cwd = (cwd :> Eio.Fs.dir_ty Eio.Path.t)
-    method clock = clock
-    method mono_clock = mono
-  end
 
 (* {1 Acknowledged files} *)
 
@@ -235,31 +223,36 @@ end
 let confined ~sw (d : _ Eio.Path.t) =
   (Eio.Path.open_dir ~sw d :> Eio.Fs.dir_ty Eio.Path.t)
 
-(* [f] on the env over [base], the unconfined root, wrapped by [wrap], whose
-   acknowledgements go to [ack]. *)
-let with_env ?(wrap = fun d -> (d :> Eio.Fs.dir_ty Eio.Path.t)) ?ack clock mono
-    (base : _ Eio.Path.t) f =
+(* [f] on the env of [side] over [fs] and [cwd], whose acknowledgements go
+   to [ack]. *)
+let in_env ~side ?ack clock mono ~fs ~cwd f =
+  let env = Chaos_env.v side clock mono ~fs ~cwd in
+  Chaos_env.within side @@ fun () ->
+  match ack with None -> f env | Some t -> Ack.within env t f
+
+(* [f] on the env over [base], the unconfined root, wrapped by [wrap]. *)
+let with_env ?(wrap = fun d -> (d :> Eio.Fs.dir_ty Eio.Path.t)) ?ack ~side clock
+    mono (base : _ Eio.Path.t) f =
   Eio.Switch.run @@ fun sw ->
   let cwd = wrap (confined ~sw base) in
-  let env =
-    env_of clock mono ~fs:(wrap (base :> Eio.Fs.dir_ty Eio.Path.t)) ~cwd
-  in
-  match ack with None -> f env | Some t -> Ack.within env t f
+  in_env ~side ?ack clock mono
+    ~fs:(wrap (base :> Eio.Fs.dir_ty Eio.Path.t))
+    ~cwd f
 
 (* After a run with a fault, before its restart: each acknowledged file
    still holds what it held, and [inspect] accepts the filesystem. *)
-let settle ~ack ~inspect ~ended clock mono base =
+let settle ~side ~ack ~inspect ~ended clock mono base =
   match Ack.lost ack with
   | Some s -> Some (Lost (ended, s))
   | None -> (
-      match with_env ~ack clock mono base inspect with
+      match with_env ~side ~ack clock mono base inspect with
       | () -> None
       | exception x -> Some (Inspected (ended, x)))
 
 (* A run ends once [halted] holds why. *)
-let in_loop ?idle ?(halted = ref None) main =
+let in_loop ?idle ?effects ?(halted = ref None) main =
   match
-    Quiet_mock.run ?idle
+    Quiet_mock.run ?idle ?effects
       ~stop:(fun () -> Option.is_some !halted)
       ~limit:3600.
       (fun clock mono _charge -> main clock mono)
@@ -330,12 +323,33 @@ let digest (trace : Plan.trace) =
   let s = Fmt.to_to_string Fmt.(list ~sep:(any ";") Op.pp) trace in
   String.sub (Digest.to_hex (Digest.string s)) 0 8
 
-let rec diverge (a : Plan.trace) (b : Plan.trace) =
-  match (a, b) with
-  | x :: a, y :: b ->
-      if x = y then diverge a b else Fmt.str "%a, then %a" Op.pp x Op.pp y
-  | x :: _, [] | [], x :: _ -> Fmt.str "%a, then nothing" Op.pp x
-  | [], [] -> "nothing"
+(* Two runs with no fault, [a] and [b], must make the same kinds of
+   operation in the same order, for a fault to find its operation again;
+   the names they give their files may differ. *)
+let same_kinds name (a : Plan.trace) (b : Plan.trace) =
+  let rec first = function
+    | (x : Op.t) :: a, (y : Op.t) :: b ->
+        if x.kind = y.kind then first (a, b) else Some (Some x, Some y)
+    | x :: _, [] -> Some (Some x, None)
+    | [], y :: _ -> Some (None, Some y)
+    | [], [] -> None
+  in
+  let op ppf = function
+    | Some op -> Op.pp ppf op
+    | None -> Fmt.string ppf "nothing more"
+  in
+  match first (a, b) with
+  | None -> ()
+  | Some (x, y) ->
+      fail name
+        "two runs with no fault made different operations: %a in the first, %a \
+         in the second. A check aims each fault at an operation by its kind \
+         and its place in the run, so it cannot aim them here. The program \
+         reached something the check does not simulate: Random.self_init, a \
+         process id, the wall clock read through Unix, a second domain, or \
+         state an earlier run left in memory. Built with hermetic (open! \
+         Hermetic), the first four do not compile."
+        op x op y
 
 let parent path =
   match String.rindex_opt path '/' with
@@ -609,6 +623,7 @@ end
    operations, which the plan of the next scenarios reads, and those at
    [marked] places, which the report names. *)
 type record = {
+  side : Chaos_env.side; (* the envs of the runs, and what they printed *)
   lines : Recorder.t;
   mutable kept : (Op.t * Fault.t option) list; (* latest first *)
   mutable nkept : int;
@@ -620,6 +635,7 @@ type record = {
 
 let record ?(cap = max_int) ?(marked = fun _ -> false) () =
   {
+    side = Chaos_env.side ();
     lines = Recorder.v ();
     kept = [];
     nkept = 0;
@@ -647,6 +663,11 @@ let found r p =
   | Some op -> Some op
   | None -> List.find_opt (Plan.at p) (kept r)
 
+(* What the program printed, a line of a report, its lines set in. *)
+let output (trace : record) =
+  let s = String.trim (Chaos_env.printed trace.side) in
+  ("output", String.concat "\n            " (String.split_on_char '\n' s))
+
 (* The report of a failing run: the scenario's lines, the trace, and the
    replay that runs it alone. *)
 let report name ~title ~hash ~key ~matched ~(trace : record) ~error lines =
@@ -660,7 +681,7 @@ let report name ~title ~hash ~key ~matched ~(trace : record) ~error lines =
   let lines =
     lines
     @ Option.fold ~none:[] ~some:(fun m -> [ ("matched", m) ]) matched
-    @ [ ("error", error) ]
+    @ [ ("error", error); output trace ]
   in
   let line ppf (k, v) = if v <> "" then Fmt.pf ppf "  %-9s %s@\n" (k ^ ":") v in
   let replay = Fmt.str "fs/%s/%s" hash key in
@@ -683,9 +704,10 @@ let refuse_first name ~(trace : record) out ~budget ~what =
         Fmt.pf ppf "%s: the run with no %s failed: %s" name what
           (outcome_text o)
   in
+  let line ppf (k, v) = if v <> "" then Fmt.pf ppf "  %-9s %s@\n" (k ^ ":") v in
   Fmt.kstr
     (fun report -> failwith (String.trim report))
-    "%a@\n  trace:@\n%a" head out Recorder.pp trace.lines
+    "%a@\n%a  trace:@\n%a" head out line (output trace) Recorder.pp trace.lines
 
 let no_longer name ~hash (h, k) =
   if h = hash then
@@ -799,14 +821,14 @@ let rec is_io = function
    model when a fault of [s] evicts pages. A run with a fault that returns or
    raises [Eio.Io] sets [ended] and is followed by [run] again on the same
    base, its operations shown to [again] alone. *)
-let run_scenario ~halted ~ended ~again ~os ~setup ~inspect ~ack ~hook ~st run
-    (s : Plan.check) =
+let run_scenario ~side ~halted ~ended ~again ~os ~setup ~inspect ~ack ~hook ~st
+    run (s : Plan.check) =
   let faulty = s.faults <> [] || s.lasting <> None in
   match
     in_loop ~halted @@ fun clock mono ->
     st.mono <- Some mono;
     let base = fresh ~os clock in
-    with_env clock mono base setup;
+    with_env ~side clock mono base setup;
     (* Pages a failed sync evicts read as the disk holds them, which the
        model of the disk knows. *)
     let base =
@@ -815,17 +837,22 @@ let run_scenario ~halted ~ended ~again ~os ~setup ~inspect ~ack ~hook ~st run
       else base
     in
     let a = ack base in
-    let on hook d = (M.wrap (M.schedule hook) d :> Eio.Fs.dir_ty Eio.Path.t) in
+    (* [fs] and [cwd] share one numbering of the operations. *)
+    let on hook =
+      let sched = M.schedule hook in
+      fun d -> (M.wrap sched d :> Eio.Fs.dir_ty Eio.Path.t)
+    in
     let restart e =
-      match settle ~ack:a ~inspect ~ended:e clock mono base with
+      match settle ~side ~ack:a ~inspect ~ended:e clock mono base with
       | Some o -> o
       | None -> (
           ended := Some e;
-          match with_env ~wrap:(on again) ~ack:a clock mono base run with
+          Chaos_env.mark side "-- restart --";
+          match with_env ~side ~wrap:(on again) ~ack:a clock mono base run with
           | () -> Passed
           | exception x -> Raised x)
     in
-    match with_env ~wrap:(on hook) ~ack:a clock mono base run with
+    match with_env ~side ~wrap:(on hook) ~ack:a clock mono base run with
     | () when faulty -> restart None
     | () -> Passed
     | exception x when faulty && is_io x -> restart (Some x)
@@ -878,10 +905,7 @@ let exec_check ?spaces ?cap ?budget ?(inspect = ignore) ~os ~first ~setup run
           (Plan.check_floor ~space ~sure:(Plan.Sure.add sure op) op))
       budget;
     Option.iter
-      (fun t ->
-        Hashtbl.replace t
-          { Plan.kind = op.kind; path = op.path; nth = op.nth }
-          space)
+      (fun t -> Hashtbl.replace t { Plan.kind = op.kind; rank = op.rank } space)
       spaces;
     let fault =
       Option.bind (scheduled_fault s ~on ~pending op) (fun f ->
@@ -905,7 +929,8 @@ let exec_check ?spaces ?cap ?budget ?(inspect = ignore) ~os ~first ~setup run
     None
   in
   let outcome =
-    run_scenario ~halted ~ended ~again ~os ~setup ~inspect ~ack ~hook ~st run s
+    run_scenario ~side:trace.side ~halted ~ended ~again ~os ~setup ~inspect ~ack
+      ~hook ~st run s
   in
   (trace, verdict ~halted ~ended ~st outcome)
 
@@ -1045,12 +1070,7 @@ let check_faults ~name ?budget ?(seed = 0) ?replay ?os ?(setup = ignore)
   let exec ?(cap = (4 * n) + 10_000) s =
     exec_check ~cap ?inspect ~os ~first:(made first) ~setup run s
   in
-  let again = kept (fst (exec ~cap:(n + 1) Plan.none)) in
-  if again <> first then
-    fail name
-      "two runs with no fault made different operations (%s); the workload \
-       must be deterministic"
-      (diverge first again);
+  same_kinds name first (kept (fst (exec ~cap:(n + 1) Plan.none)));
   let hash = digest first in
   let disk = Plan.Disk.v first in
   let meets = meets spaces in
@@ -1305,8 +1325,9 @@ module Crash = struct
     let error =
       match
         in_loop ~idle ~halted @@ fun clock mono ->
+        let side = trace.side in
         let base = fresh ~os clock in
-        with_env clock mono base setup;
+        with_env ~side clock mono base setup;
         let pause = ref ignore in
         let ctl =
           M.Crash.v ~os ~policy:(policy_of trail s.state) ~block_size:512
@@ -1325,7 +1346,7 @@ module Crash = struct
         let settle () =
           Option.map
             (fun o -> Settle o)
-            (settle ~ack ~inspect ~ended:None clock mono base)
+            (settle ~side ~ack ~inspect ~ended:None clock mono base)
         in
         let out, l =
           phase ~touch
@@ -1345,9 +1366,7 @@ module Crash = struct
             ~kept_going:kept_run ~trace ~ctl ~pause ~mono ~faults:s.cfaults
             ~cut:s.cut ~cut_op ~seqs ~changed ~stop fs
             (fun fs cwd ->
-              Ack.within
-                (env_of clock mono ~fs ~cwd)
-                ack
+              in_env ~side ~ack clock mono ~fs ~cwd
                 (run ~ack:(fun v ->
                      if not (M.Crash.is_crashed ctl) then begin
                        Hashtbl.replace changed trace.last ();
@@ -1384,6 +1403,7 @@ module Crash = struct
             in
             let rfs = M.Crash.wrap rctl base in
             recovering := true;
+            Chaos_env.mark side "-- restart --";
             ack.alive <- (fun () -> not (M.Crash.is_crashed rctl));
             ack.on_ack <- ignore;
             let rout, _ =
@@ -1393,7 +1413,7 @@ module Crash = struct
                 ~mono ~faults:[] ~cut:rcut ~cut_op:(ref None) ~seqs:(ref [])
                 ~changed:rchanged ~stop rfs
                 (fun fs cwd ->
-                  Ack.within (env_of clock mono ~fs ~cwd) ack (recover ~acked))
+                  in_env ~side ~ack clock mono ~fs ~cwd (recover ~acked))
             in
             match (rout, s.rcut) with
             | Passed, None -> None
@@ -1404,7 +1424,10 @@ module Crash = struct
                 match settle () with
                 | Some e -> Some e
                 | None -> (
-                    match with_env ~ack clock mono base (recover ~acked) with
+                    Chaos_env.mark side "-- restart --";
+                    match
+                      with_env ~side ~ack clock mono base (recover ~acked)
+                    with
                     | () -> None
                     | exception x -> Some (Again x)))
             | o, _ -> Some (Recover o))
@@ -1568,7 +1591,7 @@ module Crash = struct
     match
       in_loop (fun clock mono ->
           let d = fresh ~os clock in
-          with_env clock mono d setup;
+          with_env ~side:(Chaos_env.side ()) clock mono d setup;
           files d "")
     with
     | Ok l -> l
@@ -1614,11 +1637,7 @@ module Crash = struct
     (* A run keeps no more operations than four times the first run made:
        past that, the plan of the next scenarios reads its first ones. *)
     let exec = exec ~cap:((4 * (n + List.length first.rtrace)) + 10_000) in
-    if again <> first_ops then
-      fail name
-        "two runs with no cut made different operations (%s); the workload \
-         must be deterministic"
-        (diverge first_ops again);
+    same_kinds name first_ops again;
     let hash = digest first_ops in
     let disk = Plan.Disk.v first_ops in
     let sizes = setup_files ~name ~os ~setup in
@@ -1851,6 +1870,7 @@ end
 let name = "Eio_fs_chaos.run"
 
 let run ?os ?budget ?seed ?replay ?setup ?inspect app =
+  Chaos_env.keeping_random @@ fun () ->
   let faults ?replay () =
     check_faults ~name ?budget ?seed ?replay ?os ?setup ?inspect app
   in
@@ -1870,13 +1890,29 @@ let run ?os ?budget ?seed ?replay ?setup ?inspect app =
 
 let ack env file = Ack.ack "Eio_fs_chaos.ack" env file
 let acked env = Ack.acked "Eio_fs_chaos.acked" env
-let device = Device.check
+
+let device ?os ?user dir =
+  let fs_os = os_of os in
+  Chaos_env.keeping_random @@ fun () ->
+  let run f =
+    match
+      in_loop ~effects:{ Quiet_mock.handle = Systhread.handle }
+      @@ fun clock mono ->
+      with_env ~side:(Chaos_env.side ()) clock mono (fresh ~os:fs_os clock) f
+    with
+    | Ok got -> Ok got
+    | Error o -> Error (outcome_text o)
+    | exception (Eio.Io _ as x) -> Error ("raised " ^ exn_text x)
+  in
+  Device.check ?os ?user ~run dir
 
 module Private = struct
   let check_faults ?budget ?seed ?replay ?os ?setup run =
+    Chaos_env.keeping_random @@ fun () ->
     check_faults ~name ?budget ?seed ?replay ?os ?setup run
 
   let check_cuts ?budget ?seed ?replay ?os ?setup run ~recover =
+    Chaos_env.keeping_random @@ fun () ->
     Crash.check_cuts ~name ?budget ?seed ?replay ?os ?setup run ~recover
 
   let scenarios = Device.scenarios

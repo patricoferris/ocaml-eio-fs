@@ -237,11 +237,11 @@ let test_stale_replay () =
 let test_unknown_replay () =
   let replay = replay_of (Expect.report (fun () -> log_mutant ())) in
   Expect.refused
-    "Eio_fs_chaos.run: the replay names none|before:sync:/nowhere#9|drop, a \
-     scenario this check no longer has"
+    "Eio_fs_chaos.run: the replay names none|before:sync:99|drop, a scenario \
+     this check no longer has"
     (fun () ->
       log_mutant
-        ~replay:(Fmt.str "fs/%s/none|before:sync:/nowhere#9|drop" (hash replay))
+        ~replay:(Fmt.str "fs/%s/none|before:sync:99|drop" (hash replay))
         ())
     ();
   Expect.invalid
@@ -679,7 +679,7 @@ let test_wide_pool_is_not_a_spin () =
    refuses: each line is a new write, not a retry. The replay runs the
    scenario where the disk is full from the first line on. *)
 let test_busy_is_not_a_spin () =
-  Eio_fs_chaos.run ~replay:"fs/00000000/from:write:/log#1.full" (fun env ->
+  Eio_fs_chaos.run ~replay:"fs/00000000/from:write:1.full" (fun env ->
       let processed = ref 0 in
       (try
          P.with_open_out ~append:true ~create:(`If_missing 0o644)

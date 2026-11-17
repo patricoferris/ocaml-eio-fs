@@ -17,6 +17,7 @@ module Op = struct
     kind : kind;
     path : string;
     nth : int;
+    rank : int;
     file_offset : int;
     length : int;
     dest : string option;
@@ -81,11 +82,11 @@ module Fault = struct
     | Swap_symlink t -> "swap:" ^ t
 end
 
-type pos = { kind : Op.kind; path : string; nth : int }
+type pos = { kind : Op.kind; rank : int }
 
-let pos_of (op : Op.t) = { kind = op.kind; path = op.path; nth = op.nth }
-let at p (op : Op.t) = op.kind = p.kind && op.path = p.path && op.nth = p.nth
-let pos_key p = Fmt.str "%s:%s#%d" (Op.kind_name p.kind) p.path p.nth
+let pos_of (op : Op.t) = { kind = op.kind; rank = op.rank }
+let at p (op : Op.t) = op.kind = p.kind && op.rank = p.rank
+let pos_key p = Fmt.str "%s:%d" (Op.kind_name p.kind) p.rank
 
 let ordinal n =
   let suffix =
@@ -102,7 +103,7 @@ let pos_text ?(at = fun _ -> None) p =
   match at p with
   | Some op -> Fmt.to_to_string Op.pp op
   | None ->
-      Fmt.str "the %s %s of %s" (ordinal p.nth) (Op.kind_name p.kind) p.path
+      Fmt.str "the %s %s of the run" (ordinal p.rank) (Op.kind_name p.kind)
 
 type trace = Op.t list
 

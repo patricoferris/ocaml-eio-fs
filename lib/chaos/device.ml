@@ -140,7 +140,7 @@ let differs ~scenario ~ops ~got j (a : answer) =
   | None -> line
   | Some why -> Fmt.str "%s@\n    (%s: %s)" line a.from why
 
-let check ?os ?user f =
+let check ?os ?user ~run:run_in f =
   let os : os =
     match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
   in
@@ -158,19 +158,22 @@ let check ?os ?user f =
            else
              let answers = answers os scenario ops in
              let got =
+               run_in @@ fun env ->
                Eio.Switch.run @@ fun sw ->
-               let dir = Eio.Path.(f ~sw / string_of_int i) in
+               let dir = Eio.Path.(f ~sw env / string_of_int i) in
                Eio.Path.mkdir ~perm:0o755 dir;
                K.run ids dir ops
              in
-             let rec first j = function
+             let rec first got j = function
                | [] -> []
                | (a : answer) :: rest ->
                    if List.nth got j <> a.want then
                      [ differs ~scenario ~ops ~got j a ]
-                   else first (j + 1) rest
+                   else first got (j + 1) rest
              in
-             first 0 answers)
+             match got with
+             | Ok got -> first got 0 answers
+             | Error e -> [ Fmt.str "  %s: %s" scenario e ])
          K.scenarios)
   in
   if differed <> [] then begin

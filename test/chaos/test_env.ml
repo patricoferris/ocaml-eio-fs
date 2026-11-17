@@ -93,6 +93,43 @@ let counter_name () =
       incr n;
       publish (Fmt.str "target.%d" !n) env)
 
+(* A program written against Eio.Stdenv's accessors: it names its
+   temporary file from secure_random, says so on stdout, and saves through a
+   domain manager. *)
+let main ?(fail = false) env =
+  let hex = Cstruct.create 8 in
+  Eio.Flow.read_exact (Eio.Stdenv.secure_random env) hex;
+  let name = "target." ^ Cstruct.to_hex_string hex in
+  Eio.Flow.copy_string (name ^ "\n") (Eio.Stdenv.stdout env);
+  Eio.Domain_manager.run (Eio.Stdenv.domain_mgr env) (fun () ->
+      publish name env);
+  if fail then failwith "done"
+
+let stdenv () = Eio_fs_chaos.run (main ~fail:false)
+
+(* Two checks print the same: the report shows it. *)
+let printed () =
+  let output () =
+    Expect.field "output"
+      (Expect.report (fun () -> Eio_fs_chaos.run (main ~fail:true)))
+  in
+  let first = output () in
+  if not (String.starts_with ~prefix:"target." first) then
+    Alcotest.failf "the report shows %S" first;
+  Alcotest.(check string) "the same output" first (output ())
+
+(* A check starts no process. *)
+let no_process () =
+  Expect.refused "Eio_fs_chaos.run: the run with no fault failed: Eio.Io"
+    (fun () ->
+      Eio_fs_chaos.run (fun env ->
+          P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x";
+          Eio.Switch.run @@ fun sw ->
+          ignore
+            (Eio.Process.spawn ~sw (Eio.Stdenv.process_mgr env) [ "true" ]
+              : _ Eio.Process.t)))
+    ()
+
 let suite =
   ( "env",
     [
@@ -108,4 +145,8 @@ let suite =
         (Expect.passes random_name);
       Alcotest.test_case "a temporary named by a counter" `Quick
         (Expect.passes counter_name);
+      Alcotest.test_case "a program written against Eio.Stdenv" `Quick
+        (Expect.passes stdenv);
+      Alcotest.test_case "two checks print the same" `Quick printed;
+      Alcotest.test_case "a check starts no process" `Quick no_process;
     ] )

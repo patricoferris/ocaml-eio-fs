@@ -97,8 +97,7 @@ fresh, empty directory and runs short scenarios in it, each recorded on a
 real Linux and a real macOS kernel.
 
 ```ocaml
-# Eio_main.run @@ fun _ ->
-  Eio_fs_chaos.device (fun ~sw:_ -> Eio_fs.Fs.v ());;
+# Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs.Fs.v ());;
 - : unit = ()
 ```
 

@@ -15,13 +15,18 @@ let user =
 
 let memfs (os : os) () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os ~user (fun ~sw:_ -> Eio_fs.Fs.v ~os ~user ())
+  Chaos.device ~os ~user (fun ~sw:_ _ -> Eio_fs.Fs.v ~os ~user ())
 
 (* Without [~user], the scenarios that need one are left out, and root
    passes the others. *)
 let memfs_root (os : os) () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os (fun ~sw:_ -> Eio_fs.Fs.v ~os ())
+  Chaos.device ~os (fun ~sw:_ _ -> Eio_fs.Fs.v ~os ())
+
+(* A device built on another capability takes it from the env: here a
+   wrapper over the env's own filesystem. *)
+let overlay (os : os) () =
+  Chaos.device ~os (fun ~sw:_ env -> Chaos.wrap (fun _ -> None) env#fs)
 
 let failure f =
   match f () with
@@ -49,7 +54,7 @@ let test_stat_fault () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos ~user (fun ~sw:_ ->
+    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
         Chaos.wrap no_stat_of_a (Eio_fs.Fs.v ~os:`Macos ~user ()))
   in
   Alcotest.(check string)
@@ -62,7 +67,7 @@ let test_stat_fault () =
 (* Linux does not find [A] either: the same directory passes there. *)
 let test_stat_fault_linux () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os:`Linux ~user (fun ~sw:_ ->
+  Chaos.device ~os:`Linux ~user (fun ~sw:_ _ ->
       Chaos.wrap no_stat_of_a (Eio_fs.Fs.v ~user ()))
 
 (* Under [`Linux] the filesystem keeps [a] and [A] apart, as macOS does
@@ -71,7 +76,8 @@ let test_wrong_os () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos ~user (fun ~sw:_ -> Eio_fs.Fs.v ~os:`Linux ~user ())
+    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
+        Eio_fs.Fs.v ~os:`Linux ~user ())
   in
   Alcotest.(check bool)
     "names the first scenario" true
@@ -82,7 +88,7 @@ let test_left_out () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos (fun ~sw:_ -> Eio_fs.Fs.v ~os:`Linux ())
+    Chaos.device ~os:`Macos (fun ~sw:_ _ -> Eio_fs.Fs.v ~os:`Linux ())
   in
   let last = List.hd (List.rev (String.split_on_char '\n' report)) in
   Alcotest.(check bool)
@@ -96,7 +102,7 @@ let invalid name f =
 
 let test_refused () =
   Eio_mock.Backend.run @@ fun () ->
-  let fs ~sw:_ = Eio_fs.Fs.v ~user () in
+  let fs ~sw:_ _ = Eio_fs.Fs.v ~user () in
   invalid "root" (fun () -> Chaos.device ~user:Eio_fs.root fs);
   invalid "umask" (fun () -> Chaos.device ~user:{ user with umask = 0o077 } fs);
   invalid "no supplementary group" (fun () ->
@@ -143,7 +149,7 @@ let test_host () =
       let n = ref 0 in
       (* Opened, a directory is confined, as the recorder's cwd was, and takes
          the user's group, as the recorder's did. *)
-      let fresh ~sw =
+      let fresh ~sw _ =
         incr n;
         let d = Filename.concat tmp (string_of_int !n) in
         Unix.mkdir d 0o755;
@@ -205,6 +211,10 @@ let () =
           Alcotest.test_case "macOS" `Quick (memfs `Macos);
           Alcotest.test_case "Linux, as root" `Quick (memfs_root `Linux);
           Alcotest.test_case "macOS, as root" `Quick (memfs_root `Macos);
+          Alcotest.test_case "an overlay over env#fs, Linux" `Quick
+            (overlay `Linux);
+          Alcotest.test_case "an overlay over env#fs, macOS" `Quick
+            (overlay `Macos);
         ] );
       ( "device",
         [

@@ -55,27 +55,19 @@ let rejected () =
     "title" "Eio_fs_chaos.run: inspect rejected what the fault left"
     (title report)
 
-(* An env no check made. *)
-let stranger () : Chaos.env =
-  let fs = (Eio_fs.Fs.v () :> Eio.Fs.dir_ty P.t) in
-  object
-    method fs = fs
-    method cwd = fs
-
-    method clock =
-      (Eio_mock.Clock.make () :> float Eio.Time.clock_ty Eio.Resource.t)
-
-    method mono_clock =
-      (Eio_mock.Clock.Mono.make () :> Eio.Time.Mono.ty Eio.Resource.t)
-  end
+(* An env whose run has ended. *)
+let ended () =
+  let kept = ref None in
+  Chaos.run (fun env ->
+      kept := Some env;
+      P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") "x");
+  Option.get !kept
 
 let refused () =
-  ( Eio_mock.Backend.run @@ fun () ->
-    let env = stranger () in
-    P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x";
-    match Chaos.ack env P.(env#fs / "f") with
-    | () -> Alcotest.fail "an env of no run was accepted"
-    | exception Invalid_argument _ -> () );
+  (let env = ended () in
+   match Chaos.ack env P.(env#fs / "f") with
+   | () -> Alcotest.fail "an env of no run was accepted"
+   | exception Invalid_argument _ -> ());
   Chaos.run (fun env ->
       (try P.mkdir ~perm:0o755 P.(env#fs / "d") with Eio.Io _ -> ());
       match Chaos.ack env P.(env#fs / "d") with

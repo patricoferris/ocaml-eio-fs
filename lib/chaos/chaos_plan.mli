@@ -18,6 +18,7 @@ module Op : sig
     kind : kind;
     path : string;
     nth : int;
+    rank : int;
     file_offset : int;
     length : int;
     dest : string option;
@@ -45,17 +46,19 @@ module Fault : sig
   (** [pp] formats a fault. *)
 end
 
-type pos = { kind : Op.kind; path : string; nth : int }
-(** The type for the place of an operation in a run, by its kind, path and rank
-    among those, so it is found again in another run. *)
+type pos = { kind : Op.kind; rank : int }
+(** The type for the place of an operation in a run, by its kind and its rank
+    among the operations of that kind, on any path. Each run of a check makes
+    the same operations up to its first fault, whatever names it gives its
+    files, so a position is found again in another run, and in a run that makes
+    operations of other kinds in between. *)
 
 val at : pos -> Op.t -> bool
 (** [at p op] is [true] iff [op] is at [p]. *)
 
 val pos_text : ?at:(pos -> Op.t option) -> pos -> string
 (** [pos_text ~at p] says where [p] is, for a report: as the operation [at p] of
-    the run is shown in its trace, and else by its place among the operations of
-    its kind on its path. *)
+    the run is shown in its trace, and else by its kind and rank. *)
 
 type trace = Op.t list
 (** The type for a run's operations, in order. *)
