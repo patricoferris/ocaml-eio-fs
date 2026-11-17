@@ -106,6 +106,30 @@ let test_remove_empty () =
   removed ();
   Alcotest.(check bool) "a still stays" true (kind (fs / "a") = `Directory)
 
+(* A tree of links alone is its links, named from the directory the walk
+   starts in; anything else in it, an empty directory among them, is none. *)
+let test_links () =
+  with_fs @@ fun fs ->
+  let links rel = Eio_fs.Tree.links fs rel in
+  let found = Alcotest.(option (list (pair string string))) in
+  Eio.Path.mkdirs ~perm:0o755 (fs / "d/sub");
+  Eio.Path.symlink ~link_to:"/gen/a" (fs / "d/a");
+  Eio.Path.symlink ~link_to:"../b" (fs / "d/sub/b");
+  Alcotest.check found "a link is itself"
+    (Some [ ("d/a", "/gen/a") ])
+    (links "d/a");
+  Alcotest.check found "a directory of links is each, a trailing slash dropped"
+    (Some [ ("d/a", "/gen/a"); ("d/sub/b", "../b") ])
+    (Option.map (List.sort compare) (links "d/"));
+  Alcotest.check found "nothing there is none" None (links "absent");
+  write fs "f" "x";
+  Alcotest.check found "a file is none" None (links "f");
+  Eio.Path.mkdir ~perm:0o755 (fs / "d/empty");
+  Alcotest.check found "an empty directory below makes none" None (links "d");
+  Eio.Path.rmdir (fs / "d/empty");
+  write fs "d/sub/c" "x";
+  Alcotest.check found "a file below makes none" None (links "d")
+
 (* [Fs.v ()] is the root of an empty filesystem whatever another root holds. *)
 let test_v_is_empty () =
   Eio_mock.Backend.run @@ fun () ->
@@ -774,6 +798,7 @@ let suite =
       Alcotest.test_case "same_file" `Quick test_same_file;
       Alcotest.test_case "entries" `Quick test_entries;
       Alcotest.test_case "remove_empty" `Quick test_remove_empty;
+      Alcotest.test_case "links" `Quick test_links;
       Alcotest.test_case "load asks its filter about the root first" `Quick
         test_load_filter_refuses_the_root;
       Alcotest.test_case "load refuses a regular file" `Quick
