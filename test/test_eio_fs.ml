@@ -552,13 +552,9 @@ module Crunch = struct
       ] )
 end
 
-(* A path that traverses *through* a regular file resolves to nothing: POSIX
-   answers ENOTDIR, and every real Eio backend surfaces that as an [Eio.Io].
-   The in-memory backend must too, or it is not substitutable for one -- code
-   written correctly against Eio's error model still crashes on it, and only on
-   this backend. Serving static files is the everyday way to hit it: a server
-   that falls back from "page.txt" to "page.txt/index.html" walks straight into
-   this path on any request for a file that exists. *)
+(* A path through a regular file raises [Eio.Io] (ENOTDIR), as every Eio
+   backend does: a server falling back from "page.txt" to
+   "page.txt/index.html" meets it. *)
 let test_path_through_file_is_io_error () =
   with_fs @@ fun fs ->
   write fs "page.txt" "hello";
@@ -572,14 +568,8 @@ let test_path_through_file_is_io_error () =
   expect_io "read_dir through a file" (fun () ->
       Eio.Path.read_dir (fs / "page.txt"))
 
-(* Closing a file that was opened with [~sw] must not leave the switch a second
-   close to make: [Eio.Resource.close] is the documented way to release early,
-   and the switch releases whatever is still open when it finishes. The POSIX
-   backends drop the hook on close, so a store that opens a scratch file, closes
-   it and carries on -- writing a journal, fsyncing it, closing it, then removing
-   it, as a rollback-journal commit does -- runs fine there and died here on the
-   switch's second close. That is a substitutability bug: the in-memory backend
-   exists so storage tests can run against it instead of a real directory. *)
+(* A file closed before its switch ends is not closed again by the
+   switch. *)
 let test_close_then_switch_release () =
   with_fs @@ fun fs ->
   Eio.Switch.run @@ fun sw ->
@@ -594,20 +584,8 @@ let test_close_in_then_switch_release () =
   let file = Eio.Path.open_in ~sw (fs / "r") in
   Eio.Resource.close file
 
-(* And the same again for the second close a caller makes itself.
-   [Eio.Resource.close] is specified to be idempotent -- "If [t] is already
-   closed then this does nothing (it does not raise an exception)" (eio 1.4,
-   [lib_eio/resource.mli]) -- and eio's own posix backend keeps that promise,
-   its close answering a descriptor that has gone with [false] rather than
-   raising. A double close is the ordinary shape of one handle with two owners:
-   a session closing both views of a file it opened twice, a caller's own close
-   in front of a hook that closes what it registered. Over a real directory
-   that works, so it has to work here, or a store's tests pass against this
-   backend and its production run does something else.
-
-   The file is read back afterwards because "does nothing" is the whole
-   specification: the second close must not raise, and must not take the file
-   with it either. *)
+(* A second close does nothing, as [Eio.Resource.close] specifies and
+   eio_posix does: it neither raises nor loses the file. *)
 let test_close_twice_is_not_an_error () =
   with_fs @@ fun fs ->
   Eio.Switch.run @@ fun sw ->
@@ -625,12 +603,8 @@ let test_close_twice_is_not_an_error () =
     "and a read handle closed twice takes nothing with it either" "payload"
     (Eio.Path.load (fs / "w"))
 
-(* Not every path has a spelling the host would recognise: nothing outside the
-   process backs an in-memory tree, so a native name for it would point at an
-   unrelated real location. A path still has to be nameable when it is refused,
-   so the name falls back to the rendering Eio gives the path itself -- the
-   capability's label and the member inside it -- which at least says which
-   path was meant. *)
+(* An in-memory path has no native spelling, so [Tree.name] is the rendering
+   [Eio.Path.pp] gives it. *)
 let test_name_falls_back_to_the_eio_rendering () =
   with_fs @@ fun fs ->
   write fs "hello.txt" "world";
@@ -642,14 +616,9 @@ let test_name_falls_back_to_the_eio_rendering () =
     "the name is what Eio.Path.pp renders the path as" "<fs:hello.txt>"
     (Eio_fs.Tree.name path)
 
-(* [Path.pp_tree] labels every node by the last component of its own path, a
-   symbolic link by that component and its target, and the root by the path the
-   caller handed in -- for the root of this backend, the directory itself. The
-   labels are path arithmetic on the path each node was reached by, and nothing
-   else in the suite renders a tree, so the shapes that arithmetic has to
-   answer for are pinned here: a directory below the root, a name reached
-   through a trailing slash, and the root of the capability, which has no last
-   component to be named by. *)
+(* [pp_tree] labels each node by its last component, a link by that and its
+   target, and the root by the path given: a directory below the root, a
+   name through a trailing slash, and the capability's root. *)
 (* The glyphs the tree is drawn with, named so the renderings below read as
    trees: a branch with siblings after it, and the last branch of a level. *)
 let branch = "\xe2\x94\x9c\xe2\x94\x80\xe2\x94\x80 "

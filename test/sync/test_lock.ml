@@ -60,11 +60,7 @@ let test_a_raise_leaves_the_section_usable () =
     "the section is still there" 7
     (Lock.use section (fun () -> 7))
 
-(* A runner that cannot enter has no answer to give at the section's result
-   type, so it raises -- and it raises [Unavailable], the one exception a
-   backend-free component on the other side can name. A component whose
-   interface promises a result catches this and reports it; anything else
-   would travel out through that promise. *)
+(* A runner that cannot enter raises [Unavailable]. *)
 module Refusing = struct
   type t = string
 

@@ -1,5 +1,5 @@
-The generator embeds a directory tree: files, permissions, symbolic
-links and empty directories -- as an OCaml module.
+The generator embeds a directory tree as an OCaml module: files,
+permissions, symbolic links and empty directories.
 
   $ umask 022
   $ mkdir -p tree/static

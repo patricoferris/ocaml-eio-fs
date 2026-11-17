@@ -382,9 +382,9 @@ let rec remove_at (Base_dir ((module B), bv) as owner) path =
       if not (String.equal path "") then B.rmdir bv path
   | _ -> B.unlink bv path
 
-(* A swap fires AFTER the scheduled operation: the name is unlinked and made a
-   symlink to the target, so everything resolving the path afterwards reaches
-   the target -- the check-to-use window a TOCTOU exploits. *)
+(* A swap fires after the scheduled operation: the name becomes a symbolic
+   link to the target, so whatever resolves the path afterwards reaches the
+   target, as in the window a TOCTOU attack uses. *)
 let swap_after boxed fault path =
   match fault with
   | Some (Fault.Swap_symlink target) ->
@@ -1258,10 +1258,9 @@ module Crash = struct
     | _ -> err_not_wrapped ()
 
   (* A journal path as the model records it: root-relative, '/'-separated, ""
-     for the root itself. A barrier names its directory in whatever spelling
-     the caller had -- [Filename.dirname] answers "." for a root-level file,
-     and a subtree prefix leaves a trailing slash -- so every path reaching the
-     journal is reduced to one key first. *)
+     for the root itself. A barrier names its directory in the caller's
+     spelling ("." for a root-level file, a trailing slash after a subtree
+     prefix), so every path reaching the journal is reduced to one key. *)
   let path_segments path =
     String.split_on_char '/' path
     |> List.filter (fun seg ->
@@ -1272,8 +1271,8 @@ module Crash = struct
   (* The journal names an entry as the base directory resource sees it: the path
      {!wrap} was handed, with the entry below it. The durable image is a
      snapshot rooted at that same path, so indexing the image means dropping the
-     root's own segments first. A path that is not under the root -- a rename
-     out of the wrapped tree -- has no place in the image at all. *)
+     root's own segments first. A path that is not under the root, such as a
+     rename out of the wrapped tree, has no place in the image. *)
   let tree_path ~root path =
     let rec strip root segs =
       match (root, segs) with
@@ -2997,9 +2996,9 @@ module Crash = struct
 
     (* The sync barrier: the live content becomes durable and the file's pending
        changes leave the log, so a later crash can neither drop nor reorder
-       them. It commits this file's data and nothing else -- the directory
-       entries a name lives in are the metadata journal's business, committed by
-       [sync_metadata] or a registered [Dir_sync], as fsync(2) divides them. *)
+       them. It commits this file's data and nothing else: the directory
+       entries a name lives in are the journal's, committed by [sync_metadata]
+       or a registered [Dir_sync], as fsync(2) divides them. *)
     let sync_full ~full cf =
       let upto, stat = paused cf in
       let fs = fstate_of cf in

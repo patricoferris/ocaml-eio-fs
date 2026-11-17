@@ -75,8 +75,8 @@ let test_readonly_reopen_denied () =
       Eio.Path.with_open_out ~create:(`Or_truncate 0o444) (env#fs / "ro")
         (fun _ -> ()))
 
-(* open(2): the mode of a freshly created file does not restrict the creating
-   open itself -- O_CREAT|O_RDWR with mode 0444 yields a writable fd. *)
+(* open(2): a new file's mode does not restrict the creating open: O_CREAT|O_RDWR
+   with mode 0444 gives a writable descriptor. *)
 let test_readonly_fresh_create_writable () =
   with_env @@ fun env ->
   Eio.Path.with_open_out ~create:(`Exclusive 0o444) (env#fs / "ro") (fun f ->
@@ -94,9 +94,9 @@ let test_chmod_restores_writability () =
   Eio.Path.save ~create:(`Or_truncate 0o644) (env#fs / "ro") "y";
   Alcotest.(check string) "rewritten" "y" (Eio.Path.load (env#fs / "ro"))
 
-(* open(2): EACCES also when read permission is missing. A write-only file
-   can be created -- the creating open is unrestricted -- but not reopened:
-   this backend opens files O_RDONLY or O_RDWR, and both need the read bit. *)
+(* open(2): EACCES when the read bit is missing. A write-only file can be
+   created, as the creating open is unrestricted, but not reopened: this
+   backend opens O_RDONLY or O_RDWR, and both need the read bit. *)
 let test_unreadable_reopen_denied () =
   with_env ~user:alice @@ fun env ->
   Eio.Path.save ~create:(`Or_truncate 0o200) (env#fs / "wo") "x";

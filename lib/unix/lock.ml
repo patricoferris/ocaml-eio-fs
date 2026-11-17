@@ -206,7 +206,7 @@ let use_local_lock (key : lock_key) fn = use_shared_mutex local_locks key fn
 
 (* POSIX drops every record lock a process holds on a file when the process
    closes any descriptor for it, so a caller that leaves without the fiber
-   mutex -- refused, out of patience, cancelled -- never closes its descriptor
+   mutex (refused, out of patience, cancelled) never closes its descriptor
    while a fiber of this process holds the file: it hands the descriptor to
    that holder, which closes it once its own record lock is released. *)
 let let_go_of local file =
@@ -315,9 +315,9 @@ let take_available ~on_wait ~patience ~refused ~on_taken ~try_take ~wait () =
          [Eio.Mutex.lock] may have been granted the mutex all the same: the
          unlocker's wake and the cancellation race for one atomic and either
          can win. So what was taken is remembered rather than read off which
-         fiber came back, and a mutex granted as the bound lapsed is held --
-         and given back by the caller -- rather than dropped with nobody left
-         to unlock it. *)
+         fiber came back, and a mutex granted as the bound lapsed is held, for
+         the caller to give back, rather than dropped with nobody left to
+         unlock it. *)
       let taken = ref false in
       let granted =
         Eio.Fiber.first

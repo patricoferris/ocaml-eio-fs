@@ -124,9 +124,8 @@ let test_sync_error () =
   Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
   expect_io "fsync failure" (fun () -> Eio.File.sync file)
 
-(* fsync(2) flushes a file through any descriptor on it, so a file opened
-   read-only answers the barrier too -- a durable publish syncs a read-only
-   file that way -- and the schedule fails it as it fails a read-write one. *)
+(* A file opened read-only answers the barrier too, as fsync(2) does, and the
+   schedule fails it as it fails a read-write one. *)
 let test_read_only_file_sync () =
   with_chaos (at ~nth:2 `Sync "f" (Fail `Eio)) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Exclusive 0o444) (raw / "f") "data";
@@ -248,11 +247,8 @@ let test_directory_short_read_inapplicable () =
     "directory read is not a byte read" []
     (directory_names false (chaos / "tree"))
 
-(* A [Swap_symlink] fault reproduces a TOCTOU: the scripted [`Stat] on "victim"
-   still returns the original regular file, then the path becomes a symlink to
-   the secret, so a follow-up open on the same path -- as a builder that stats
-   then opens would do -- resolves to what was swapped in. The check saw one
-   thing; the use sees another. *)
+(* [Swap_symlink] on a [`Stat]: the stat sees the regular file, and a later
+   open of the same path reaches the secret. *)
 let test_swap_symlink () =
   with_chaos (at `Stat "victim" (Swap_symlink "secret")) @@ fun ~raw ~chaos ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "victim") "safe";
@@ -273,12 +269,8 @@ let test_swap_symlink () =
     "the swapped-in link points at the secret" "secret"
     (Eio.Path.read_link (raw / "victim"))
 
-(* An open leaves the same window a stat does, and the descriptor it hands back
-   is what makes it worth exploiting: the caller keeps the file the name meant at
-   the open, while the name goes on to mean the target, so everything the caller
-   asks the path afterwards -- how long it is, what it holds -- is answered about
-   another file. Scripted on the [`Open], the fault pins that window for a
-   reader. *)
+(* [Swap_symlink] on an [`Open]: the descriptor keeps the file, and the path
+   then names the target. *)
 let test_swap_symlink_on_open_in () =
   with_chaos (at `Open_read "current" (Swap_symlink "decoy"))
   @@ fun ~raw ~chaos ->
@@ -389,9 +381,7 @@ let test_real_child_cwd () =
 
 let swap_on_open path target = at `Open_read path (Swap_symlink target)
 
-(* The name the swap frees is a symlink: the portable case, and the guard rail
-   for the fixture -- if this one fails the real-filesystem harness is broken,
-   not the directory cases under it. *)
+(* The name the swap frees is a symbolic link. *)
 let test_swap_on_real_symlink_subtree () =
   with_real_dir @@ fun raw ->
   let chaos = Chaos.wrap (swap_on_open "current" "other") raw in
@@ -414,9 +404,7 @@ let test_swap_on_real_symlink_subtree () =
     "real fs: so the path answers about the other tree" "elsewhere"
     (Eio.Path.load (raw / "current" / "f"))
 
-(* An empty true directory. The open completes, the name is a symlink to the
-   target afterwards, and every path-based follow-up is answered about the
-   target -- the whole point of the fault. *)
+(* An empty directory: after the open, the name is a link to the target. *)
 let test_swap_on_real_empty_directory_subtree () =
   with_real_dir @@ fun raw ->
   let chaos = Chaos.wrap (swap_on_open "current" "other") raw in
@@ -434,10 +422,7 @@ let test_swap_on_real_empty_directory_subtree () =
     "real fs: so the path answers about the other tree" "elsewhere"
     (Eio.Path.load (raw / "current" / "f"))
 
-(* A populated true directory -- the shape a store's staging directory has, and
-   the shape the in-memory subtree case above uses. Freeing this name takes the
-   entries with it, so the swap must clear them rather than stop at ENOTEMPTY.
-*)
+(* A directory with entries: the swap removes them with it. *)
 let test_swap_on_real_populated_directory_subtree () =
   with_real_dir @@ fun raw ->
   let chaos = Chaos.wrap (swap_on_open "current" "other") raw in

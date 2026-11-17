@@ -27,28 +27,8 @@ let test_sync_dir_empty_and_repeated () =
   Eio_fs_unix.sync_dir dir;
   Eio_fs_unix.sync_dir dir
 
-(* ---- the barrier lands on the directory the caller holds ----
-
-   [sync_dir] is handed an [Eio.Path.t]: a directory capability and a name
-   resolved beneath it. Flattening that pair into a native string and opening
-   the string from [/] hands the barrier to whatever the name resolves to at
-   that instant. Eio says as much of the flattening itself -- [Path.native]
-   "does not check for confinement (the resulting path might not be accessible
-   via [t] itself)", and "if a directory was opened with [open_subtree] and
-   later renamed, this might use the old name" -- and the last step of a commit
-   protocol is exactly where that matters, since what a barrier reports durable
-   has to be the directory whose entry was just renamed into place.
-
-   Which inode an [fsync] reached is not observable from a program: nothing
-   short of cutting power tells a barrier on one directory from a barrier on
-   another. The resolution is observable, and these two cases pin it from both
-   sides.
-
-   Here the capability outlives the name. The directory is opened, then its
-   name is taken away; the caller still holds the directory, so the barrier it
-   asks for is the one that directory can give and there is nothing to fail. A
-   barrier that re-resolves the name instead finds nothing under it and fails a
-   publication that is already complete. *)
+(* [sync_dir] syncs the directory the capability holds, not what its name
+   resolves to now: a directory renamed after it was opened is still synced. *)
 let test_sync_dir_barriers_the_held_directory () =
   with_real_dir @@ fun root ->
   Eio.Path.mkdir ~perm:0o700 (root / "d");
@@ -56,14 +36,8 @@ let test_sync_dir_barriers_the_held_directory () =
   Eio.Path.rename (root / "d") (root / "moved");
   Eio_fs_unix.sync_dir d
 
-(* And here the name outlives the directory, which is the shape that costs a
-   publication rather than merely failing one. The store is moved aside and a
-   link to a directory of the adversary's own left under its name: re-resolving
-   the name follows the link, fsyncs a directory the caller never named, and
-   returns, so the caller is told its rename reached stable storage while
-   nothing of its own was flushed at all. Resolving through the capability
-   refuses the link, its target being outside the tree the capability names, so
-   the caller learns rather than being handed a barrier it did not get. *)
+(* A link left under the directory's name is refused, not followed to a
+   directory outside the tree. *)
 let test_sync_dir_refuses_a_name_a_link_took () =
   with_real_dir @@ fun root ->
   Eio.Path.mkdir ~perm:0o700 (root / "tree");
@@ -97,22 +71,11 @@ let test_sync_dir_refuses_a_relative_link () =
   | () -> Alcotest.fail "the barrier followed a link"
   | exception Eio.Io _ -> ()
 
-(* The barrier runs on a fiber that shares its domain with every other fiber of
-   the program: a server publishes while it serves. So the open and the fsync
-   belong on a system thread, not on the fiber's own thread -- an inline pair
-   holds the domain's scheduler inside the C call for the whole barrier, which
-   on Darwin is F_FULLFSYNC, through to the platter and the slowest call the
-   process makes. Here one fiber issues a run of barriers while a sibling
-   counts its own turns; the sibling gets none at all while the pair runs
-   inline. The sibling spins for as long as the barriers take, so the run is
-   short: a directory fsync can take 100 ms (an ext4 on a loop device), and
-   the count separates the two shapes at any length. *)
+(* The barrier runs on a system thread: a sibling fiber gets turns while a run
+   of barriers goes on. *)
 let test_sync_dir_lets_a_sibling_fiber_run () =
   with_real_dir @@ fun dir ->
-  (* One turn every other barrier is a floor the fixed shape clears with room
-     to spare -- it suspends once per barrier -- and the inline pair cannot
-     reach at all, having no suspension point between the first barrier and
-     the last. ([/] is [Eio.Path.( / )] here, so the floor is spelt out.) *)
+  (* One turn every other barrier: the barrier suspends once per call. *)
   let barriers = 10 in
   let floor = 5 in
   let started = ref false in
@@ -147,11 +110,8 @@ let test_full_fsync_file () =
     ~finally:(fun () -> Unix.close fd)
     (fun () -> Eio_fs_unix.full_fsync fd)
 
-(* full_fsync pushes a real file's data to stable storage and surfaces the OS
-   error on a dead descriptor -- on Darwin this exercises the F_FULLFSYNC path
-   (and its fsync fallback), elsewhere plain fsync. Power-cut durability
-   itself is not unit-testable; what is pinned here is that the barrier is
-   issued on the right descriptor and failures are not swallowed. *)
+(* [full_fsync] syncs a real file (F_FULLFSYNC on Darwin, fsync elsewhere)
+   and raises the OS error on a closed descriptor. *)
 let test_full_fsync_surfaces_errors () =
   let path = Filename.temp_file "eio-fs-fullfsync" ".dat" in
   let fd = Unix.openfile path [ Unix.O_WRONLY ] 0o644 in
@@ -248,16 +208,9 @@ let test_sync_file_asks_the_registration_before_the_descriptor () =
     "the registration answered the barrier" 1
     !(state.Registered_file.calls)
 
-(* The other half, and the reason this entry point exists at all rather than
-   deferring to the portable one. A file that registers no barrier is where the
-   platform's own belongs: on Darwin F_FULLFSYNC, through to the platter, where
-   the file's own sync stops at the drive's cache. That the descriptor is
-   reached for is what the same closed descriptor says here, from the other
-   side -- the barrier must raise. The portable barrier over the same file is
-   what says the raise can only be the descriptor: it takes the file's own
-   sync, which succeeds. So an implementation that quietly deferred to the
-   portable route -- the durability guarantee traded away for a greener suite
-   -- returns here where this one raises. *)
+(* A file with no registered barrier gets the platform's own on its
+   descriptor: on a closed descriptor it raises, where the portable barrier,
+   which takes the file's own sync, returns. *)
 let test_sync_file_takes_the_descriptor_when_nothing_is_registered () =
   with_real_dir @@ fun dir ->
   Eio.Switch.run @@ fun sw ->
@@ -270,18 +223,9 @@ let test_sync_file_takes_the_descriptor_when_nothing_is_registered () =
         "the barrier skipped the descriptor of a file that registers none"
   | exception Invalid_argument _ -> ()
 
-(* The same ordering in the shape a store publishes in, over the real
-   filesystem it runs on. The crash wrapper's file hands its caller no host
-   descriptor, so the barrier reaches the model's own sync and not a real
-   F_FULLFSYNC the model never recorded -- after which [Drop_unsynced] would
-   drop the image bytes the store was told had reached the platter.
-
-   Two files take the same cut, and only one is barriered. The unbarriered one
-   is the control: it says the model still drops what no barrier covered, so
-   the barriered one surviving is the barrier being seen and not the model
-   having gone soft. Both entries are committed, the names being the metadata
-   journal's business, so what differs between the two is the data barrier
-   alone. *)
+(* Through the crash wrapper over a real directory, [sync_file] reaches the
+   model's sync: of two files cut alike, the synced one survives
+   [Drop_unsynced] and the other, the control, is dropped. *)
 let test_sync_file_under_the_crash_model_survives_the_cut () =
   with_real_dir @@ fun dir ->
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
@@ -309,9 +253,7 @@ let test_sync_file_under_the_crash_model_survives_the_cut () =
     (Eio.Path.load (post / "unbarriered"))
 
 (* A plain POSIX file registers nothing, so the barrier is its descriptor's
-   own -- F_FULLFSYNC on Darwin. Power-cut durability is not unit-testable;
-   what is pinned here is that the barrier is issued and the file reads back
-   whole after it, the file half of [test_sync_dir_after_rename]. *)
+   own (F_FULLFSYNC on Darwin): it runs, and the file reads back whole. *)
 let test_sync_file_on_a_plain_posix_file () =
   with_real_dir @@ fun dir ->
   Eio.Switch.run (fun sw ->
@@ -843,9 +785,8 @@ let test_sparse_map_does_not_block_eio () =
   Alcotest.(check bool)
     "another fiber ran while the map was being walked" true !ran
 
-(* The in-memory backend registers its barrier as a no-op -- volatile storage
-   has nothing to sync -- so the platter-strength entry point runs unchanged
-   over it too. *)
+(* The in-memory backend registers a barrier that does nothing, so
+   [sync_file] runs over it too. *)
 let test_sync_dir_in_memory_no_op () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env -> Eio_fs_unix.sync_dir env#fs
@@ -872,14 +813,8 @@ let test_path_usage_counts_allocated_tree_without_following_links () =
   Alcotest.(check (float 0.))
     "latest tree mtime" expected_mtime usage.latest_mtime
 
-(* What a copy of a tree will move, asked of the tree before the copy starts.
-
-   The figures are the fixture's own, not a second reading of the same stats:
-   two regular files of one and seven bytes, under a directory, beside a
-   symbolic link whose target is three characters. A walk that counted the link
-   would report three files and eleven bytes, and one that counted the directory
-   would report whatever the filesystem gives a directory entry -- so the tree
-   separates content from the things that carry it. *)
+(* [usage] counts regular files and their bytes: two files of one and seven
+   bytes, beside a directory and a link to a three-character target. *)
 let test_path_usage_counts_the_files_a_copy_would_move () =
   with_real_dir @@ fun dir ->
   Eio.Path.mkdir ~perm:0o755 (dir / "sub");

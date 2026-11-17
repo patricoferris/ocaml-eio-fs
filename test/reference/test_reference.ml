@@ -242,7 +242,7 @@ let differential workloads =
     for k = 0 to List.length ops do
       let evs = List.concat (take k evs_by_op) in
       let per_op = List.mapi (fun p e -> (p, e)) (take k evs_by_op) in
-      (* A write's setuid clear is journaled at once, and any later
+      (* A write's setuid clear is journalled at once, and any later
          journal event carries it. *)
       let clear_idx =
         let clears = Hashtbl.create 4 in

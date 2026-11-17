@@ -188,11 +188,10 @@ let extents fd ~file_offset ~length ~max =
   Eio_unix.run_in_systhread ~label:"eio-fs-extents" @@ fun () ->
   extents_native fd file_offset length max
 
-(* A registered barrier keeps its own semantics; a plain POSIX directory is
-   opened through the capability the path carries, without following a final
-   link -- so a name a link has taken is refused rather than fsynced instead of
-   the caller's directory -- and pushed through to stable storage off the
-   calling fiber's thread. A handle with no descriptor takes the portable
+(* A registered barrier keeps its own semantics. A plain POSIX directory is
+   opened through the path's capability without following a final link, so a
+   name a link has taken is refused, and pushed through to stable storage off
+   the calling fiber's thread. A handle with no descriptor takes the portable
    barrier. *)
 let sync_dir ((res, path) as p : _ Eio.Path.t) =
   match Eio_fs_sync.dir_barrier res with

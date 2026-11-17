@@ -73,7 +73,7 @@ val wrap : sched -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
     copy. A crash rewrites the base to a post-crash image in which unsynced
     writes may be dropped or reordered.
 
-    {b Directory operations are journaled.} Creation, [mkdir], [unlink],
+    {b Directory operations are journalled.} Creation, [mkdir], [unlink],
     [rmdir], [symlink], [rename], [chmod] and [chown] enter a metadata journal
     in program order; {!Crash.sync_metadata} commits it whole, and a directory
     barrier (a sync of the directory, opened as a file or not) commits only the

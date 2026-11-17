@@ -538,8 +538,8 @@ static value eio_fs_seek(value fd_v, value offset_v, int whence,
 
   if (found < 0) {
     /* A file whose tail is a hole answers ENXIO to SEEK_DATA, and an offset
-       at or past the end answers ENXIO to both. That is an answer -- there is
-       no next one -- and not a failure. */
+       at or past the end answers ENXIO to both: there is no next one, which
+       is an answer and not a failure. */
     if (saved_errno == ENXIO)
       CAMLreturn(Val_none);
     caml_unix_error(saved_errno, name, Nothing);

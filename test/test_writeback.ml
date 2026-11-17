@@ -85,7 +85,7 @@ let test_crash_rename_over_an_open_file () =
   Alcotest.(check string) "a" "other" (Eio.Path.load (post / "a"))
 
 (* A file created through a dangling symbolic link is a new entry at the
-   link's target, journaled as any create. *)
+   link's target, journalled as any create. *)
 let test_crash_create_through_a_dangling_link () =
   let ctl = Crash.v () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
@@ -1374,7 +1374,7 @@ let suite =
       Alcotest.test_case
         "crash: a deferred barrier holds for its directory only" `Quick
         test_crash_deferred_barrier_identity;
-      Alcotest.test_case "crash: chmod and chown are journaled" `Quick
+      Alcotest.test_case "crash: chmod and chown are journalled" `Quick
         test_crash_chmod_journaled;
       Alcotest.test_case "crash: a synced chmod of a file whose name is pending"
         `Quick test_crash_synced_chmod_of_a_new_file;
@@ -1425,7 +1425,7 @@ let suite =
       Alcotest.test_case "crash: a lost page is kept or evicted" `Quick
         test_crash_lost_page_kept_or_evicted;
       Alcotest.test_case
-        "crash: a write's setuid clear is journaled at the write" `Quick
+        "crash: a write's setuid clear is journalled at the write" `Quick
         test_crash_clear_journaled_at_write;
       Alcotest.test_case "crash: a kept truncation brings no lost write back"
         `Quick test_crash_kept_truncation_length_only;

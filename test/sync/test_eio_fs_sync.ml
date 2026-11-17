@@ -224,9 +224,8 @@ let test_publish_enforces_byte_limit () =
     "oversized temporary removed" true
     (Eio.Path.kind ~follow:false (env#fs / "live.tmp") = `Not_found)
 
-(* The barrier has teeth: under the crash model a default publish survives
-   Drop_unsynced on its own barriers, and one under Barrier.none loses its
-   rename -- the window the caller opted into. *)
+(* Under the crash model, a default publish survives [Drop_unsynced], and one
+   under [Barrier.none] loses its rename. *)
 let test_publish_durability_flag () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run @@ fun env ->
@@ -245,24 +244,8 @@ let test_publish_durability_flag () =
     "non-durable publish lost" true
     (Eio.Path.kind ~follow:false Eio.Path.(post / "fast") = `Not_found)
 
-(* ---- the file-data barrier dispatches like the directory one ----
-
-   A commit protocol makes two things durable: the bytes it wrote and the
-   directory entry that names them. [sync_file] is the first half, and it
-   dispatches through the operation the backend registers, [File_sync]. A
-   file is itself the resource, so that operation takes no name where the
-   directory's [Dir_sync] takes a [~path].
-
-   The registration is what makes the barrier visible to a wrapper, and a
-   wrapper that models power loss has to see the barrier the protocol issued
-   or it drops data the protocol was told was durable. So it is answered
-   whole: a caller that also synced the file behind the registration would
-   hand that model a barrier it never recorded, which is the same defect from
-   the other end.
-
-   One wrapper pins both sides. It counts what the registration was asked and
-   what reached the file underneath it, so a barrier that answers in the wrong
-   place is a count in the wrong counter rather than a silent pass. *)
+(* [sync_file] answers through a registered [File_sync] alone, never also
+   through the file's own sync: the wrapper below counts both. *)
 module Counting_file = struct
   type t = {
     base : Eio.File.rw_ty Eio.Resource.t;
@@ -326,11 +309,8 @@ let test_sync_file_answers_through_the_registration () =
     "and nothing reached the file behind it" 0
     !(state.Counting_file.delegated)
 
-(* A backend that registers nothing keeps the plain barrier: a file's own sync
-   is what makes its data durable, where a directory's had to be reached by
-   opening the directory read-only and fsyncing that handle. Silence is
-   therefore safe here, and the in-memory backend needs no registration of its
-   own -- its files' sync is already the no-op volatile storage deserves. *)
+(* A file whose backend registers no [File_sync] is synced with its own
+   sync. *)
 let test_sync_file_without_a_registration_syncs_the_file () =
   with_in_memory_file @@ fun base ->
   let file, state = counting_file ~register:false base in
@@ -462,7 +442,7 @@ let test_barrier_is_used () =
       | Ok () -> ()
       | Error _ -> Alcotest.fail "publish_link refused a new link")
 
-(* -- Appending lines -- *)
+(* Appending lines *)
 
 let with_mem f =
   Eio_mock.Backend.run @@ fun () ->

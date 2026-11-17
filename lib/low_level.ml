@@ -1427,10 +1427,9 @@ let not_a_file op r =
 let check_writable op (t : Fd.t) =
   if not t.writable then Error.err (op ^ ": not open for writing")
 
-(* A descriptor open on a non-regular file still answers the file interface --
-   [Eio.Path.open_in] on a directory is legal and the portable directory
-   barrier depends on it -- so the operations below refuse one with EISDIR, as
-   read(2) and write(2) do. *)
+(* A descriptor open on a directory still answers the file interface, as the
+   portable directory barrier opens one with [Eio.Path.open_in], so the
+   operations below refuse it with EISDIR, as read(2) and write(2) do. *)
 (* A write by a user other than root clears the file's privilege bits. A
    write of no bytes changes nothing, as Linux returns before the file
    system sees it. *)

@@ -26,9 +26,8 @@ let test_crash_unwrapped_refused () =
     "post_crash refused" true
     (refused (fun () -> ignore (Crash.post_crash ctl)))
 
-(* A write with no intervening sync is lost after a crash -- and so is the
-   file itself: its creation is an uncommitted directory operation, so no
-   empty ghost file lingers. *)
+(* A write with no sync after it is lost in a crash, and so is the file: its
+   creation is an uncommitted directory operation. *)
 let test_crash_unsynced_lost () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
@@ -254,12 +253,9 @@ let test_crash_readonly_in_closed_subtree () =
 
 (* {2 Directory-operation durability}
 
-   Directory operations -- file creation, mkdir, unlink, rmdir, symlink,
-   rename -- are journaled in program order and commit on a sync of their
-   directory, never on a file sync: fsync(2) on a
-   descriptor makes that file's data durable and says nothing about the
-   directory its name lives in. A crash rolls back the uncommitted suffix,
-   whole. The spec is the journal model in chaos.mli. *)
+   Directory operations (create, mkdir, unlink, rmdir, symlink, rename) are
+   journalled in program order and commit on a sync of their directory, never
+   on a file sync. A crash rolls back the uncommitted suffix, whole. *)
 
 (* An unlink committed by the metadata barrier stays deleted: the crash must
    not resurrect the file from its tracked durable content. *)
@@ -276,16 +272,8 @@ let test_crash_committed_unlink_stays_deleted () =
     "committed unlink stays deleted" true
     (absent (post / "f"))
 
-(* Syncing a file commits that file's data, not the directory's entries:
-   fsync(2) on a descriptor says nothing about the directory a name lives in.
-   So an unlink still pending when some *other* file is synced must roll back,
-   exactly as it would had the machine lost power right there.
-
-   Conflating the two hides a class of bug rather than a corner of one. A store
-   that removes a journal or a log and reaches for the file barrier instead of
-   the directory barrier tests green here and loses data on real hardware: that
-   is how the WAL half of a durability bug in ocaml-sqlite stayed invisible
-   while the journal half was caught. *)
+(* A file sync commits that file's data, not a directory's entries: an
+   unlink pending when another file is synced rolls back. *)
 let test_crash_file_sync_leaves_metadata_pending () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
@@ -319,9 +307,8 @@ let test_crash_uncommitted_unlink_rolls_back () =
     "uncommitted unlink rolled back" "data"
     (Eio.Path.load (post / "f"))
 
-(* The tmp-file-then-rename commit protocol with no barrier after the rename:
-   the swap reverts whole. The file is back at the temporary path, the final
-   path is absent -- never a mixture, never both. *)
+(* A rename into place with no barrier after it reverts whole: the file is
+   back at the temporary path and the final path is absent. *)
 let test_crash_uncommitted_rename_reverts () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
@@ -418,9 +405,8 @@ let test_crash_uncommitted_symlink_vanishes () =
   let post = Crash.post_crash ctl in
   Alcotest.(check bool) "uncommitted symlink gone" true (absent (post / "lnk"))
 
-(* The current-pointer swap of a release store: replacing a committed symlink
-   through a temporary name reverts whole when uncommitted -- the old pointer
-   target is served, and the temporary never lingers. *)
+(* A symbolic link replaced through a temporary name reverts whole when
+   uncommitted: the old target is served, and the temporary is gone. *)
 let test_crash_symlink_swap_reverts () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
@@ -446,9 +432,8 @@ let test_crash_uncommitted_rmdir_restored () =
     "uncommitted rmdir rolled back" true
     (Eio.Path.kind ~follow:false (post / "d") = `Directory)
 
-(* A directory rename carries its tracked children. Uncommitted, the whole
-   subtree reverts to the staging path; committed, it lives at the final
-   path -- exactly the staging-directory publish of a release store. *)
+(* A directory rename carries its tracked children: uncommitted, the subtree
+   reverts to the staging path; committed, it is at the final path. *)
 let test_crash_dir_rename_uncommitted_reverts () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
@@ -661,22 +646,9 @@ let test_crash_unsynced_lists_dir_ops () =
 
 (* {2 The directory barrier is scoped to one directory}
 
-   [Eio.Path.sync_dir] through the crash wrapper is the model's metadata
-   barrier, and fsync(2) fixes what one barrier covers: syncing directory D
-   makes the entries OF D durable -- the journal entries whose recorded path's
-   parent is D -- and says nothing about D's own entry in its parent, nor about
-   a sibling of D, nor about an entry one level further down. A barrier that
-   commits the whole journal cannot tell a store that barriered the right
-   directory from one that barriered any directory at all, so a missing barrier
-   on one level of a mkdirs reads as durable.
-
-   The tightening leaves correct call sites alone: a store barriers the parent
-   directory of the file it just published, which is exactly the directory that
-   holds that file's entry, so ocaml-sqlite's crash tests stay green. It does
-   not close the window that a crash trigger on a directory operation opens
-   either -- there both operations are entries of the SAME directory, so the
-   barrier that commits one commits the other whatever its scope. Both gaps are
-   real and they need different changes. *)
+   A directory barrier through the crash wrapper commits the entries of that
+   directory only: not its own entry in its parent, not a sibling's, not an
+   entry one level down. *)
 
 (* Syncing a directory does not commit that directory's own name: [a]'s entry
    lives in the root, and only the root's barrier makes it durable. The sibling
@@ -1178,15 +1150,8 @@ let test_crash_sync_failure_beneath () =
 
 (* {2 The model's authority is the wrapper, not the descriptor}
 
-   Over a host directory the wrapper hands eio-fs.unix, and no other caller,
-   the host's descriptor beneath a file it opened, to take a record lock on.
-   That descriptor names the same bytes the model is tracking, so what it is
-   for has to be settled: it carries the operations the operating system
-   offers on an open file, and it is not a second way into the durability
-   journal. A write issued on it is not a write the model saw; a barrier issued
-   on it is not the model's barrier. The two runs below take that descriptor
-   -- the same open file the wrapper's own writes go through -- and put it next
-   to those writes under the two policies that tell them apart. *)
+   A write or a sync on the host descriptor beneath a wrapped file is not one
+   the model saw. *)
 
 (* A file opened through the wrapper over a host directory has the host's
    descriptor beneath it; a run that could not take it would be testing
@@ -1258,20 +1223,8 @@ let test_crash_ignores_a_barrier_through_a_bare_descriptor () =
         "a barrier the model never saw left the write unsynced" "AAAA"
         (Eio.Path.load (post / "img")))
 
-(* The by-name half, and the sharper one: a descriptor the wrapper carried over
-   at least names a file the model is tracking, but a name reaches the tree
-   whether or not the model has ever heard of what it reaches. A crash rebuilds
-   the whole wrapped tree from the model, so an entry made under a native name
-   after the wrap -- by a child process, by a device-image builder, by a test's
-   own setup -- is not in the post-crash image, whatever the policy would have
-   kept. Survive-everything keeps every change the journal holds, so the file
-   that is missing here is missing for having never entered it.
-
-   The boundary is what {!Chaos.Crash.wrap} states; this pins it, because a
-   workload that reaches the tree by name reads a recovered image that never
-   held its bytes and calls that a durability result. A test that must plant
-   something by name plants it before the wrap, where the snapshot picks it
-   up. *)
+(* An entry made by name after the wrap is not in the post-crash image, even
+   under [Survive] of everything. *)
 let test_crash_drops_an_entry_planted_by_native_name () =
   let ctl = Crash.v ~policy:(Crash.Survive (fun _ -> true)) () in
   let planted = ref "" in

@@ -322,7 +322,7 @@ let test_lock_wait_does_not_block_eio () =
     "another fiber progressed while waiting" true !progressed;
   Alcotest.check status "the holder let go when told" (`Exited 0) !ended
 
-let test_lock_serializes_fibers () =
+let test_lock_serialises_fibers () =
   with_real_dir @@ fun dir ->
   let lock = dir / "lock" in
   let entered, set_entered = Eio.Promise.create () in
@@ -343,21 +343,8 @@ let test_lock_serializes_fibers () =
   Alcotest.(check bool)
     "same-process critical sections did not overlap" false !overlapped
 
-(* ---- the exclusion is the file's, not the name's ----
-
-   POSIX record locks do not exclude within a process: a second [lockf] over
-   one file, taken through a second descriptor, is granted to the process that
-   already holds it, and closing any one of those descriptors drops the lock
-   for all of them. Between two fibers of this process the mutex is therefore
-   the whole of the exclusion, and it excludes exactly what its key identifies.
-
-   A name does not identify a file. Here one file is reached by two of them --
-   a hard link, which is what a snapshot, a stale deployment, or a party who
-   writes the lock file's directory leaves behind -- and canonicalising does not
-   merge them, [Unix.realpath] resolving symbolic links and a hard link being
-   none of those. Two keys are two mutexes; the operating system grants the
-   second acquisition; and both callers run their critical section over one
-   file at once, with nothing in either run to say the exclusion was absent. *)
+(* Two names of one file, here a hard link, share one fiber mutex: the
+   exclusion is the file's, not the name's. *)
 let test_lock_excludes_another_name_for_the_locked_file () =
   with_real_dir @@ fun dir ->
   Eio.Path.save ~create:(`Or_truncate 0o600) (dir / "lock") "";
@@ -383,15 +370,8 @@ let test_lock_excludes_another_name_for_the_locked_file () =
   Alcotest.(check bool)
     "a second name for the held file was not granted the lock" false !granted
 
-(* The key is resolved unconfined as well. [Unix.realpath] walks the name from
-   [/], through the directories a party other than the caller writes, where the
-   open that follows it resolves every component beneath the capability the
-   path carries. Where the two disagree, realpath answers first and answers for
-   the lock: a lock file under a parent link that points nowhere ends the
-   acquisition in [Unix.Unix_error (ENOENT, "realpath", ...)] before the lock's
-   own resolution has said anything -- a failure of the key, and none of the
-   answers this interface gives, which are Eio's own for a path it declines and
-   [Not_found] for a lock file that is not there. *)
+(* A lock file under a dangling parent link raises [Not_found] through the
+   capability, not [Unix_error] from an unconfined [realpath]. *)
 let test_lock_answers_a_parent_link_that_leads_nowhere () =
   with_real_dir @@ fun dir ->
   Eio.Path.symlink ~link_to:"gone" (dir / "parent");
@@ -908,10 +888,8 @@ let test_held_released_from_its_switch_hook_leaves_a_record () =
   | `Free record -> Alcotest.(check string) "the record left" "ended\n" record
   | `Held _ -> Alcotest.fail "a lock whose switch ended probed as held"
 
-(* A close of the held file anywhere in this process -- a reader that opened
-   it by name and let it go -- drops the record lock under the holder, and
-   nothing tells it. A restate takes it again on the held descriptor before it
-   writes, so the claim a holder goes on stating is one it still has. *)
+(* A close of the held file elsewhere in this process drops the record lock
+   under the holder; [restate] takes it again before it writes. *)
 let test_held_restate_takes_back_a_lock_a_stray_close_dropped () =
   with_real_dir_env @@ fun env dir ->
   let lock = dir / "lock" in
@@ -1095,13 +1073,8 @@ let test_lock_wait_behind_a_fiber_says_so () =
   Eio.Promise.await granted;
   Alcotest.(check int) "said it waits once" 1 !waits
 
-(* A holder that dies does not cost the waiter its bound. The record lock is
-   the kernel's, held on an open descriptor, so it goes when the last
-   descriptor to the file closes -- which a killed process does as surely as an
-   exiting one. A waiter that read the lock file rather than asking the kernel
-   would sit out the whole bound behind a process that is gone. Here the bound
-   is on a clock that never moves and the holder never lets go on its own, so
-   the kill is all that can end the wait. *)
+(* A killed holder frees the waiter at once: the kernel drops the record
+   lock with the last descriptor, on a clock that never moves. *)
 let test_lock_bounded_wait_does_not_sit_out_a_killed_holder () =
   with_real_dir_env @@ fun env dir ->
   let lock = dir / "lock" in
@@ -1138,20 +1111,8 @@ let test_lock_existing_does_not_create () =
   Alcotest.(check bool)
     "probing does not create the lock file" false (Eio.Path.is_file lock)
 
-(* ---- the lock path is the lock's own file ----
-
-   A lock file lives in a directory another party writes, which is exactly
-   where an entry gets planted under the name a locker is about to use. If the
-   lock follows what it finds there, the exclusive lock lands on the entry's
-   target: two processes then hold two locks over one resource, both read the
-   same state and both publish, with nothing in either run to say the exclusion
-   was absent. So the lock path must be its own regular file, and anything else
-   under that name is refused.
-
-   The refusal is Eio's own vocabulary for a path it declines to resolve --
-   [Eio.Io (Eio.Fs.E (Permission_denied _))], as Eio raises for a name outside a
-   sandbox -- and it names the lock path, because an operator reading the failure
-   needs to know which entry is wrong. *)
+(* The lock path is its own regular file: anything else under that name is
+   refused with [Permission_denied], naming the lock path. *)
 
 let check_refusal what path fn =
   let native = Eio.Path.native_exn path in
@@ -1190,21 +1151,9 @@ let test_lock_refuses_a_dangling_symlink_without_creating_its_target () =
     "the link's target was not created" false
     (Eio.Path.is_file (dir / "elsewhere"))
 
-(* ---- the window between the name check and the open ----
-
-   The name is weighed before the file is opened and the descriptor after the
-   lock is held, and in between the open resolves that same name a second time.
-   An entry planted in that window is what the second resolution follows. It is
-   a real window rather than a theoretical one: eio runs [stat] and [openat] on
-   a system thread, so the fiber suspends at each and another fiber of the same
-   domain -- let alone another process sharing the lock file's directory -- runs
-   between them.
-
-   A test cannot hook between two calls it does not make, so the directory
-   itself does the planting: [Plant_after_stat] answers a stat about the base
-   directory as it stands, then takes the name it was asked about with a
-   dangling symbolic link before returning. Everything else, including the
-   descriptor an open returns, is the base directory's own. *)
+(* An entry planted between the stat of the lock name and its open is
+   refused. [Plant_after_stat] answers a stat, then takes the name with a
+   dangling link. *)
 module Plant_after_stat = struct
   type t = {
     base : Eio.Fs.dir_ty Eio.Resource.t;
@@ -1312,38 +1261,11 @@ let test_lock_creates_a_missing_lock_file_as_a_regular_file () =
     "the lock file survives as a regular file" true
     (after.kind = `Regular_file)
 
-(* ---- a lock file that carries no descriptor ----
+(* A lock file with no descriptor. A backend that declares no opener outside
+   this process, as the in-memory one does, holds it under the in-process
+   mutex alone. Any other lock file with no descriptor is refused. *)
 
-   The record lock is taken on a Unix descriptor, and a backend that is not the
-   host filesystem hands out files carrying none. Two such backends exist here
-   and one answer cannot serve both.
-
-   This package's in-memory filesystem holds its files in this process's heap.
-   No other process can open them: there is no name to open them by --
-   [Eio.Path.native] answers [None] over it -- and no descriptor to inherit. So
-   no opener outside this process exists to be excluded, and the in-process
-   mutex is not a weaker lock there, it is the whole exclusion the backend
-   admits. A unikernel filesystem is the same case.
-
-   A wrapper over a real host directory is the other case and is nothing like
-   it: the file it hands back is an ordinary host file, which any process opens
-   by name and locks. Running under the mutex alone there puts two processes
-   inside one critical section with nothing in either run to say the exclusion
-   was absent -- the failure this interface exists to prevent. So a wrapper
-   answers for the base it was given: over a host directory it passes that
-   directory's own descriptors through, and the record lock taken under it is
-   the host's; over a backend that admits no outside opener it forwards what
-   the backend declares, and the mutex is the whole exclusion there as it is
-   without the wrapper.
-
-   So the missing descriptor is not the question. Whether the backend admits an
-   opener outside this process is, and only the backend knows: one that admits
-   none says so, and its lock file is held under the mutex alone. Every other
-   lock file with no descriptor is refused -- loudly, as the barrier next door
-   refuses a backend that registers none -- rather than locked in name only,
-   silence being what turns a missing exclusion into a bug nobody sees. *)
-
-let test_lock_over_a_process_local_backend_serializes_fibers () =
+let test_lock_over_a_process_local_backend_serialises_fibers () =
   with_in_memory_fs @@ fun fs ->
   let lock = fs / "lock" in
   Alcotest.(check bool)
@@ -1410,7 +1332,7 @@ let test_lock_over_a_process_local_backend_refuses_a_symlink () =
    answer for a base it did not look at. A wrapper that declares nothing turns
    a lock file this interface holds under the mutex into one it refuses, which
    is the whole of a fault-injected store's locking gone. *)
-let test_lock_over_a_wrapped_process_local_backend_serializes_fibers () =
+let test_lock_over_a_wrapped_process_local_backend_serialises_fibers () =
   with_in_memory_fs @@ fun fs ->
   let wrapped = Chaos.wrap (fun _ -> None) fs in
   let lock = wrapped / "lock" in
@@ -1442,25 +1364,9 @@ let test_lock_over_a_wrapped_process_local_backend_serializes_fibers () =
   Alcotest.(check bool)
     "same-process critical sections did not overlap" false !overlapped
 
-(* ---- the lock is granted in the order callers entered ----
-
-   An acquisition suspends before it takes anything: the lock file is opened
-   first, the key the fiber mutex is found by being the opened file's own
-   device and inode, and a backend runs that open off the calling fiber. So the
-   order two fibers reach the mutex in is the order their opens came back in,
-   which is not the order they entered, and a caller cannot repair it from
-   outside: between "I entered" and "I hold" it has no point to stand. What
-   that costs is a queue that reorders its own writers -- a spool whose
-   sequence numbers are issued inside the lock publishes them out of the order
-   its callers were served in.
-
-   The suspension belongs to the backend, so a test that wants an exact
-   interleaving brings its own: [Slow_open] delegates every operation to the
-   in-memory backend and yields before an open, as many scheduler turns as the
-   entering fiber asked for. Under [Eio_mock.Backend] the run queue is
-   deterministic, so the fiber that enters first can be made to reach its own
-   open last -- the reversal a real filesystem produces by itself, where the
-   open is a worker thread's round trip and no order is promised at all. *)
+(* The lock is granted in the order callers entered, even when their opens
+   come back in the other order. [Slow_open] yields before an open as many
+   turns as the entering fiber asks. *)
 module Slow_open = struct
   type t = { base : Eio.Fs.dir_ty Eio.Resource.t }
 
@@ -1543,19 +1449,9 @@ let test_lock_is_granted_in_the_order_fibers_entered () =
     "the lock was granted in the order the fibers entered" [ "a"; "b"; "c" ]
     (List.rev !held)
 
-(* The other side of "a wrapper answers for its base": the crash model wraps a
-   real host directory to put a store's durability under test, and the file it
-   hands back is that directory's own file. Its exclusion is the host's record
-   lock -- any process opens the file by name and takes it -- and the wrapper
-   has none of its own to offer instead, so it hands the descriptor beneath to
-   this library, and to no caller, and the lock a store takes under the model
-   is the lock it takes in production.
-
-   Another process holds the record lock on that same host file throughout, so
-   a non-blocking acquisition through the wrapper has one answer, and it names
-   the lock file. Being granted the lock would mean the wrapper handed out an
-   exclusion the operating system never gave; being refused for want of a
-   descriptor would mean no crash-modelled store can lock at all. *)
+(* Through the crash wrapper over a host directory, the lock is the host's
+   record lock: a non-blocking take refused by another process names the lock
+   file. *)
 let test_lock_through_a_crash_wrapper_takes_the_host_lock () =
   with_real_dir_env @@ fun env dir ->
   Eio.Switch.run @@ fun sw ->
@@ -1877,8 +1773,8 @@ let suite =
         (a_wait_answers_at_the_release ~kind:"lease" take_lease_for);
       Alcotest.test_case "a lease wait for a fiber says so" `Quick
         test_lease_wait_for_a_fiber_says_so;
-      Alcotest.test_case "lock serializes fibers" `Quick
-        test_lock_serializes_fibers;
+      Alcotest.test_case "lock serialises fibers" `Quick
+        test_lock_serialises_fibers;
       Alcotest.test_case "lock excludes another name for its file" `Quick
         test_lock_excludes_another_name_for_the_locked_file;
       Alcotest.test_case "lock answers a parent link that leads nowhere" `Quick
@@ -1952,15 +1848,15 @@ let suite =
         test_lock_refuses_a_directory_or_a_fifo;
       Alcotest.test_case "missing lock file is created as a regular file" `Quick
         test_lock_creates_a_missing_lock_file_as_a_regular_file;
-      Alcotest.test_case "lock serializes fibers over a process-local backend"
-        `Quick test_lock_over_a_process_local_backend_serializes_fibers;
+      Alcotest.test_case "lock serialises fibers over a process-local backend"
+        `Quick test_lock_over_a_process_local_backend_serialises_fibers;
       Alcotest.test_case "a process-local backend still refuses a symlink"
         `Quick test_lock_over_a_process_local_backend_refuses_a_symlink;
       Alcotest.test_case "an uncontended bounded lock needs no clock" `Quick
         test_lock_bounded_and_uncontended_needs_no_clock;
       Alcotest.test_case
-        "lock serializes fibers over a wrapped process-local backend" `Quick
-        test_lock_over_a_wrapped_process_local_backend_serializes_fibers;
+        "lock serialises fibers over a wrapped process-local backend" `Quick
+        test_lock_over_a_wrapped_process_local_backend_serialises_fibers;
       Alcotest.test_case "lock is granted in the order fibers entered" `Quick
         test_lock_is_granted_in_the_order_fibers_entered;
       Alcotest.test_case "lock through a crash wrapper takes the host lock"
