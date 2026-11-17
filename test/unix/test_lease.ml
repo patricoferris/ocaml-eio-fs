@@ -576,6 +576,29 @@ let test_shared_lease_outlives_its_owner () =
   let _, status = reap pid in
   require "the shared lease outlived its owner" (exited status 0)
 
+(* A reader's look tried without waiting, as at a ledger's slot, and refused by
+   another process's lease, leaves no descriptor behind: a process that looks
+   at every move of a ledger would otherwise reach the descriptor limit. *)
+let test_refused_looks_leave_no_descriptor () =
+  with_real_dir_env @@ fun env dir ->
+  let lock = dir / "lock" in
+  Eio.Switch.run @@ fun sw ->
+  let _, release = holding_process ~sw ~env ~kind:"lease" ~lock in
+  let descriptors () = Array.length (Sys.readdir "/dev/fd") in
+  let look () =
+    match Eio_fs_unix.Lease.with_shared ~block:`No lock ignore with
+    | () -> Alcotest.fail "a lease another process holds was shared"
+    | exception Eio_fs_unix.Lock_unavailable _ -> ()
+  in
+  look ();
+  let before = descriptors () in
+  for _ = 1 to 10 do
+    look ()
+  done;
+  Alcotest.(check int)
+    "descriptors open after the refused looks" before (descriptors ());
+  Alcotest.check status "the holder let go when told" (`Exited 0) (release ())
+
 let suite =
   ( "lease",
     [
@@ -593,6 +616,8 @@ let suite =
       lease_readers_alone_test_case;
       lease_gate_removed_test_case;
       Alcotest.test_case "shared leases" `Quick test_shared_lease;
+      Alcotest.test_case "refused reader looks leave no descriptor" `Quick
+        test_refused_looks_leave_no_descriptor;
       Alcotest.test_case "a shared lease outlives its owner" `Quick
         test_shared_lease_outlives_its_owner;
     ] )
