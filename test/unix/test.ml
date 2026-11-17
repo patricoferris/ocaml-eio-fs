@@ -143,4 +143,5 @@ let () =
           Test_link.suite;
           Test_batch.suite;
           Test_inline.suite;
+          Test_volume.suite;
         ]
