@@ -64,10 +64,16 @@ val check :
     then opens a path in a directory no attacker can write. Security-sensitive
     code asks for it with {!wrap}.
 
-    A run passes if [run] returns. [run] catches the errors its program may
-    raise and checks the results itself: any exception that escapes it fails the
-    check, an injected [Eio.Io] included. So does a hang, a first run that makes
-    no filesystem operation, and two first runs that make different ones.
+    A program runs as is: [check (fun env -> My_app.run env#fs)]. A run with a
+    fault may return or raise [Eio.Io], from one fiber or several. Either way,
+    [run] then runs again with no fault on the directory as that run left it, as
+    the program restarts, and must return. The check fails on:
+
+    - a first run, which has no fault, that does not return;
+    - a run with a fault that raises another exception, or hangs;
+    - a restart that raises any exception, or hangs;
+    - a first run that makes no filesystem operation, and two first runs that
+      make different ones.
 
     [budget] (defaults to [20_000]) bounds the runs. [seed] (defaults to [0])
     draws the scenarios of the sampled tier: another seed meets other faults.

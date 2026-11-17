@@ -81,10 +81,16 @@ let test ?bug () =
       release env#fs)
 
 (* Under errors: acquire succeeds, or raises the error; it never reports a
-   holder when there is none. *)
+   holder when there is none. Each run, a restart included, is a new process
+   with a pid of one digit, so the operations stay the same, and the earlier
+   one is dead. *)
+let runs = ref 0
+
 let test_errors ?bug () =
   Eio_fs.Chaos.check (fun env ->
-      match acquire ?bug ~pid:1 ~alive:(fun p -> p = 1) env#fs with
+      incr runs;
+      let me = 1 + (!runs mod 9) in
+      match acquire ?bug ~pid:me ~alive:(fun p -> p = me) env#fs with
       | () -> ( try release env#fs with Eio.Io _ -> ())
       | exception Eio.Io _ -> ()
       | exception Held p ->

@@ -54,6 +54,8 @@ type outcome =
   | Too_many
   | Livelock of [ `Path | `Dir ] * string * int
   | Over_budget of int (* the operation the first run stopped at *)
+  | Restart of exn option * outcome
+(* what the faulty run raised, if anything, and how its restart failed *)
 
 (* A report a nested check raised is text, its lines set in. *)
 let exn_text = function
@@ -61,7 +63,7 @@ let exn_text = function
       String.concat "\n    " (String.split_on_char '\n' m)
   | x -> Printexc.to_string x
 
-let outcome_text = function
+let rec outcome_text = function
   | Passed -> "none"
   | Raised x -> exn_text x
   | Deadlock -> "the run hangs: every fiber waits and no timer is due"
@@ -91,6 +93,7 @@ let outcome_text = function
   | Over_budget at ->
       Fmt.str "the linear tier needs more runs than the budget by operation #%d"
         at
+  | Restart (_, o) -> outcome_text o
 
 (* A cut fails the run's switch with it, which cancels every fiber of the
    run. *)
@@ -649,9 +652,19 @@ let scheduled_fault (s : Plan.check) ~on ~pending op =
           Some f
       | [], _ -> None)
 
+(* A faulty run may end with [Eio.Io], from one fiber or several. *)
+let rec is_io = function
+  | Eio.Io _ -> true
+  | Eio.Exn.Multiple l -> l <> [] && List.for_all (fun (x, _) -> is_io x) l
+  | _ -> false
+
 (* Runs [setup] then [run] over a fresh base wrapped by [hook], on a disk
-   model when a fault of [s] evicts pages. *)
-let run_scenario ~halted ~os ~setup ~hook ~st run (s : Plan.check) =
+   model when a fault of [s] evicts pages. A run with a fault that returns or
+   raises [Eio.Io] sets [ended] and is followed by [run] again on the same
+   base, its operations shown to [again] alone. *)
+let run_scenario ~halted ~ended ~again ~os ~setup ~hook ~st run (s : Plan.check)
+    =
+  let faulty = s.faults <> [] || s.lasting <> None in
   match
     in_loop ~halted @@ fun clock mono ->
     st.mono <- Some mono;
@@ -664,10 +677,17 @@ let run_scenario ~halted ~os ~setup ~hook ~st run (s : Plan.check) =
       then (M.Crash.wrap (M.Crash.v ~os ()) base :> Eio.Fs.dir_ty Eio.Path.t)
       else base
     in
-    let sched = M.schedule hook in
-    let wrap d = (M.wrap sched d :> Eio.Fs.dir_ty Eio.Path.t) in
-    match with_env ~wrap clock mono base run with
+    let on hook d = (M.wrap (M.schedule hook) d :> Eio.Fs.dir_ty Eio.Path.t) in
+    let restart e =
+      ended := Some e;
+      match with_env ~wrap:(on again) clock mono base run with
+      | () -> Passed
+      | exception x -> Raised x
+    in
+    match with_env ~wrap:(on hook) clock mono base run with
+    | () when faulty -> restart None
     | () -> Passed
+    | exception x when faulty && is_io x -> restart (Some x)
     | exception x -> Raised x
   with
   | Ok o -> o
@@ -681,6 +701,7 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
   let trace = record ?cap ~marked () in
   let pending = ref s.faults and on = ref false and st = streak first in
   let halted = ref None and floor = ref 0 and ops = ref 0 in
+  let ended = ref None in
   let sure = Plan.Sure.v () in
   let hook ~space (op : Op.t) =
     count_op halted ops;
@@ -709,12 +730,21 @@ let exec_check ?spaces ?cap ?budget ~os ~first ~setup run (s : Plan.check) =
         take_time st op;
         None
   in
-  let outcome = run_scenario ~halted ~os ~setup ~hook ~st run s in
+  let restart_ops = ref 0 in
+  let again ~space:_ (op : Op.t) =
+    count_op halted restart_ops;
+    take_time st op;
+    None
+  in
+  let outcome = run_scenario ~halted ~ended ~again ~os ~setup ~hook ~st run s in
+  let restarted o =
+    match !ended with Some e when o <> Passed -> Restart (e, o) | _ -> o
+  in
   let outcome =
     match (!halted, st.hit) with
-    | Some o, _ -> o
+    | Some o, _ -> restarted o
     | None, Some (t, p, n) -> Livelock (t, p, n)
-    | None, None -> outcome
+    | None, None -> restarted outcome
   in
   (trace, outcome)
 
@@ -798,6 +828,28 @@ let meets spaces (s : Plan.check) =
       | _ -> true)
     s.faults
 
+(* The report of a scenario whose run failed, or whose restart did. *)
+let failed_check name ~hash ~matched ~trace s out =
+  let faults = ("faults", Plan.check_text ~at:(found trace) s) in
+  let report = report name ~hash ~key:(Plan.check_key s) ~matched ~trace in
+  match out with
+  | Restart (e, o) ->
+      report
+        ~title:
+          "the restart failed: the workload, run again with no fault on what \
+           the faulty run left, did not return"
+        ~error:(outcome_text o)
+        [
+          faults;
+          ( "ended",
+            match e with
+            | None -> "the faulty run returned"
+            | Some x -> "the faulty run raised " ^ exn_text x );
+        ]
+  | o ->
+      report ~title:"the workload failed under a fault" ~error:(outcome_text o)
+        [ faults ]
+
 let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let os = os_of os in
   let name = "Eio_fs.Chaos.check" in
@@ -833,10 +885,7 @@ let check ?budget ?(seed = 0) ?replay ?os ?(setup = ignore) run =
   let linear = List.filter meets (Plan.check_linear first) in
   let attempt ?matched s =
     let trace, out = exec s in
-    if out <> Passed then
-      report name ~title:"the workload failed under a fault" ~hash
-        ~key:(Plan.check_key s) ~matched ~trace ~error:(outcome_text out)
-        [ ("faults", Plan.check_text ~at:(found trace) s) ];
+    if out <> Passed then failed_check name ~hash ~matched ~trace s out;
     trace
   in
   match replay with

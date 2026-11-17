@@ -558,6 +558,7 @@ let test_three_tries_and_a_lasting_condition () =
               with
               | () -> ()
               | exception Eio.Io _ when n < 3 -> save (n + 1)
+              | exception Eio.Io _ -> failwith "three tries failed"
             in
             save 1))
   in
@@ -1005,7 +1006,8 @@ let test_nested_report () =
             (try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "outer") "x"
              with Eio.Io _ -> ());
             Eio_fs.Chaos.check ~budget:200 (fun env ->
-                P.save ~create:(`Or_truncate 0o644) P.(env#fs / "inner") "y")))
+                try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "inner") "y"
+                with Eio.Io _ -> failwith "lost")))
   in
   let first = List.hd (String.split_on_char '\n' report) in
   Alcotest.(check string)

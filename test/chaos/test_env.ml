@@ -50,11 +50,13 @@ let denied env =
 
 let check_as_user () = Eio_fs.Chaos.check ~setup:setup_dirs denied
 
-(* The faults still reach the operations alice makes. *)
+(* The faults still reach the operations alice makes: a save that must not
+   fail fails under one. *)
 let check_as_user_faults () =
   Eio_fs.Chaos.check ~setup:setup_dirs (fun env ->
       let fs = Eio_fs.Fs.as_user alice env#fs in
-      P.save ~create:(`Or_truncate 0o644) P.(fs / "home/f") "x")
+      try P.save ~create:(`Or_truncate 0o644) P.(fs / "home/f") "x"
+      with Eio.Io _ -> failwith "save failed")
 
 let crash_as_user () =
   Eio_fs.Chaos.Crash.check ~setup:setup_dirs

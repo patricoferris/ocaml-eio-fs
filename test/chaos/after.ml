@@ -110,14 +110,16 @@ let test_b_cut_after_failure () =
   let acked, found = cut_after_sync_fault (Eio_fs.Chaos.Fault.Fail `Eio) in
   if found <> acked then cut_failure acked found
 
-(* (c) A cache that survives any filesystem error. *)
+(* (c) A cache that survives any filesystem error: it never raises one. *)
 let compute k = "value of " ^ k
 
 let test_c ?replay ~get () =
   Eio_fs.Chaos.check ?replay (fun env ->
       for _ = 1 to 2 do
-        let v = get env#fs "k" ~compute in
-        if v <> compute "k" then Fmt.failwith "got %S" v
+        match get env#fs "k" ~compute with
+        | v -> if v <> compute "k" then Fmt.failwith "got %S" v
+        | exception (Eio.Io _ as e) ->
+            Fmt.failwith "the cache raised %s" (Printexc.to_string e)
       done)
 
 (* A key-value store with a write-ahead log and compaction. *)
