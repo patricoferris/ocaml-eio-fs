@@ -1,6 +1,0 @@
-(copy_files#
- (files ../../lib/chaos/chaos_plan.{ml,mli}))
-
-(test
- (name test)
- (libraries hermetic fmt alcotest))
