@@ -329,6 +329,17 @@ module Tree : sig
       after it. It is [Error (d, e)] for the first [d] whose removal failed for
       another reason, [e] the {!Eio.Io} it raised. *)
 
+  val links : _ Eio.Path.t -> string -> (string * string) list option
+  (** [links dir rel] is each symbolic link at or below [rel] in [dir] with its
+      target, read and not followed, when [rel] is a link, or a directory whose
+      entries are each a link or such a directory. A link is named by its path
+      from [dir]: an entry [n] of a directory [rel] is [rel/n], a trailing slash
+      of [rel] dropped. It is [None] when [rel], or an entry below it, is
+      anything else: a file, an empty directory, or nothing. The walk stops at
+      the first such entry.
+
+      @raise Eio.Io when a directory or a link of the walk cannot be read. *)
+
   val name : _ Eio.Path.t -> string
   (** [name path] is what [path] is called outside the program: its native
       spelling when the capability has one, and the rendering {!Eio.Path.pp}

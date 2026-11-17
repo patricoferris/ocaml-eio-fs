@@ -201,6 +201,26 @@ module Tree = struct
             | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> Ok ()
             | [] | (exception Eio.Io _) -> Error (d, e)))
 
+  let rec links dir rel =
+    let at = Eio.Path.(dir / rel) in
+    match Eio.Path.kind ~follow:false at with
+    | `Symbolic_link -> Some [ (rel, Eio.Path.read_link at) ]
+    | `Directory -> (
+        let stem =
+          if String.ends_with ~suffix:"/" rel then
+            String.sub rel 0 (String.length rel - 1)
+          else rel
+        in
+        match Eio.Path.read_dir at with
+        | [] -> None
+        | names ->
+            List.fold_left
+              (fun acc n ->
+                Option.bind acc (fun acc ->
+                    Option.map (List.append acc) (links dir (stem ^ "/" ^ n))))
+              (Some []) names)
+    | _ -> None
+
   type node = Node of string * node list
 
   (* Each child is drawn behind the guides of its ancestors: a branch, and
