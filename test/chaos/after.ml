@@ -35,18 +35,21 @@ let rec is_prefix p l =
   | x :: p, y :: l -> x = y && is_prefix p l
   | _ -> false
 
+(* Appends [records] to the log in [dir], acking each, until a fault. *)
+let log_records ?(append = fun f r -> App.Log.append f r) ~ack dir =
+  Eio.Switch.run @@ fun sw ->
+  let log = App.Log.open_ ~sw dir in
+  List.iter
+    (fun r ->
+      append log r;
+      ack r)
+    records
+
+let names l = List.map (fun r -> String.sub r 0 (String.index r ':')) l
+
 let test_b ?budget ?replay ~append ~recover () =
   Eio_fs.Chaos.Crash.check ?budget ?replay
-    (fun ~ack env ->
-      try
-        Eio.Switch.run @@ fun sw ->
-        let log = App.Log.open_ ~sw env#fs in
-        List.iter
-          (fun r ->
-            append log r;
-            ack r)
-          records
-      with Eio.Io _ -> ())
+    (fun ~ack env -> try log_records ~append ~ack env#fs with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
       let found = recover env#fs in
       if not (is_prefix acked found && is_prefix found records) then
@@ -55,6 +58,44 @@ let test_b ?budget ?replay ~append ~recover () =
           acked
           Fmt.Dump.(list string)
           found)
+
+(* A failed sync loses writes and moves none: the log read back holds the
+   records appended, in order, each once. *)
+let read_back dir =
+  match App.Log.recover dir with
+  | exception Eio.Io _ -> ()
+  | found ->
+      if not (is_prefix found records) then
+        Fmt.failwith "read back %a" Fmt.Dump.(list string) (names found)
+
+(* The log, read back by the program once a fault stops it. *)
+let test_b_read_back () =
+  Eio_fs.Chaos.check (fun env ->
+      try log_records ~ack:ignore env#fs with Eio.Io _ -> read_back env#fs)
+
+(* The log on a controller built by hand: the second sync of the log fails
+   and evicts its pages, then a cut loses every unsynced change. *)
+let test_b_cut_after_evict () =
+  let module Chaos = Eio_fs.Chaos in
+  Eio_mock.Backend.run @@ fun () ->
+  Eio_fs.run @@ fun env ->
+  let t = Chaos.Crash.v Drop_unsynced in
+  let evict (op : Chaos.Op.t) =
+    if op.kind = `Sync && op.nth = 2 && Filename.basename op.path = "log" then
+      Some (Chaos.Fault.Evict `Eio)
+    else None
+  in
+  let fs = Chaos.wrap evict (Chaos.Crash.wrap t env#fs) in
+  let acked = ref [] in
+  (try log_records ~ack:(fun r -> acked := r :: !acked) fs with Eio.Io _ -> ());
+  let acked = List.rev !acked in
+  let found = App.Log.recover (Chaos.Crash.cut t) in
+  if not (is_prefix acked found && is_prefix found records) then
+    Fmt.failwith "acked %a, recovered %a"
+      Fmt.Dump.(list string)
+      (names acked)
+      Fmt.Dump.(list string)
+      (names found)
 
 (* (c) A cache that survives any filesystem error. *)
 let compute k = "value of " ^ k

@@ -18,6 +18,11 @@ let suite =
         (Expect.caught (test_a ~save:(App.save_config ~bug:`No_dir_sync)));
       Alcotest.test_case "log: correct" `Quick
         (Expect.passes (test_b ~append ~recover));
+      Alcotest.test_case "log: read back after a fault, correct" `Quick
+        (Expect.passes test_b_read_back);
+      Alcotest.test_case "log: a cut by hand after an evicted sync, correct"
+        `Quick
+        (Expect.passes test_b_cut_after_evict);
       Alcotest.test_case "log: no sync, by the linear tier" `Quick
         (Expect.caught (test_b ~append:(App.Log.append ~bug:`No_sync) ~recover));
       Alcotest.test_case "log: a retried sync, by the linear tier" `Quick
