@@ -409,6 +409,28 @@ let copy ~rewrite () =
       if acked <> [] && P.load P.(env#fs / "g") <> "new" then
         failwith "the copy holds what the disk held")
 
+(* Two files overwritten in place, and a state of the cut that writes back
+   only the second sector of the second, which no torn write leaves: the
+   report says what each file holds, one the cut left as synced included. *)
+let half_written () =
+  let old = String.make 1024 'o' and fresh = String.make 1024 'n' in
+  Eio_fs_chaos.Private.check_cuts
+    ~setup:(fun env ->
+      Eio_fs_sync.save P.(env#fs / "a") "old";
+      Eio_fs_sync.save P.(env#fs / "b") old)
+    (fun ~ack:_ env ->
+      try
+        List.iter
+          (fun (f, v) ->
+            P.with_open_out ~create:`Never P.(env#fs / f) @@ fun f ->
+            Eio.File.pwrite_all f ~file_offset:Optint.Int63.zero
+              [ Cstruct.of_string v ])
+          [ ("a", "new"); ("b", fresh) ]
+      with Eio.Io _ -> ())
+    ~recover:(fun ~acked:_ env ->
+      let b = P.load P.(env#fs / "b") in
+      if b.[0] = 'o' && b.[512] = 'n' then failwith "b written back last first")
+
 let suite =
   ( "states",
     [
@@ -529,6 +551,15 @@ let suite =
           let m = Expect.report mix in
           Alcotest.(check string)
             "error" "Failure(\"a planted mix\")" (Expect.field "error" m));
+      Alcotest.test_case "a report says what each written file holds" `Quick
+        (fun () ->
+          let m = Expect.report half_written in
+          let lines = String.split_on_char '\n' m |> List.map String.trim in
+          List.iter
+            (fun want ->
+              if not (List.exists (String.starts_with ~prefix:want) lines) then
+                Alcotest.failf "no %S in %s" want m)
+            [ "/a, 3 bytes"; "/b, 1024 bytes" ]);
       Alcotest.test_case "a report says where a stale sector came from" `Quick
         (fun () ->
           let field f m = Expect.field m (Expect.report f) in

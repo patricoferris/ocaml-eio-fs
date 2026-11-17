@@ -60,9 +60,62 @@ let test_stat_fault () =
   Alcotest.(check string)
     "report"
     {|Eio_fs_chaos.device: 1 of 86 scenarios differ from macOS
-  case lookup: write a x; stat A: expected one of {file 1}, got ENOENT
+  case lookup: write a x; stat A: expected file 1, got ENOENT
   85 passed, 1 differed, 0 left out|}
     report
+
+(* An error that prints on several lines is reported on one. *)
+type Eio.Exn.Backend.t += Odd
+
+let () =
+  Eio.Exn.Backend.register_pp (fun ppf -> function
+    | Odd ->
+        Fmt.string ppf "odd";
+        true
+    | _ -> false)
+
+let test_one_line () =
+  let odd (op : Chaos.Op.t) =
+    if op.kind = `Stat && Filename.basename op.path = "A" then
+      raise
+        (Eio.Exn.add_context (Eio.Exn.create (Eio.Exn.X Odd)) "stat %s" op.path)
+    else None
+  in
+  let report =
+    failure @@ fun () ->
+    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
+        Chaos.wrap odd (Eio_fs.Fs.v ~os:`Macos ~user ()))
+  in
+  Alcotest.(check int)
+    "lines" 3
+    (List.length (String.split_on_char '\n' report))
+
+(* Where eio_posix differs from the kernel too, the report says so. *)
+let test_eio_posix_too () =
+  let report =
+    failure @@ fun () ->
+    Chaos.device ~os:`Linux ~user (fun ~sw:_ _ ->
+        Chaos.wrap
+          (fun op ->
+            if
+              op.kind = `Change
+              && List.length (String.split_on_char '/' op.path) > 2
+            then Some (Fail `Eio)
+            else None)
+          (Eio_fs.Fs.v ~user ()))
+  in
+  let differs = Chaos.Private.eio_posix_differs `Linux in
+  List.iter
+    (fun line ->
+      match differing line with
+      | [ s ] ->
+          let marked =
+            String.ends_with ~suffix:"(eio_posix differs here too)" line
+          in
+          if marked <> List.mem s differs then
+            Alcotest.failf "%s: marked %b" s marked
+      | _ -> ())
+    (String.split_on_char '\n' report)
 
 (* Linux does not find [A] either: the same directory passes there. *)
 let test_stat_fault_linux () =
@@ -221,6 +274,9 @@ let () =
           Alcotest.test_case "a stat fault" `Quick test_stat_fault;
           Alcotest.test_case "the fault agrees with Linux" `Quick
             test_stat_fault_linux;
+          Alcotest.test_case "an error on one line" `Quick test_one_line;
+          Alcotest.test_case "where eio_posix differs too" `Quick
+            test_eio_posix_too;
           Alcotest.test_case "the other os" `Quick test_wrong_os;
           Alcotest.test_case "left out" `Quick test_left_out;
           Alcotest.test_case "refused arguments" `Quick test_refused;

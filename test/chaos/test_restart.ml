@@ -53,6 +53,11 @@ let other () =
       try P.save ~create:(`Or_truncate 0o644) P.(env#fs / "f") complete
       with Eio.Io _ -> failwith "save failed")
 
+(* A report prints as itself, so an uncaught one reads well. *)
+let printed () =
+  let report = Expect.report (fun () -> in_place ()) in
+  Alcotest.(check string) "printed" report (Printexc.to_string (Failure report))
+
 let suite =
   ( "restart",
     [
@@ -63,4 +68,5 @@ let suite =
       Alcotest.test_case "Eio.Io from two fibers passes" `Quick
         (Expect.passes both);
       Alcotest.test_case "another exception fails" `Quick (Expect.caught other);
+      Alcotest.test_case "a report prints as itself" `Quick printed;
     ] )

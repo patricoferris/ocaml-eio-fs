@@ -17,13 +17,11 @@ let saved () = Chaos.run (app ~bug:`None)
 (* A cut loses the rename that no directory sync made durable. *)
 let unsynced_dir () =
   let report = Expect.report (fun () -> Chaos.run (app ~bug:`No_dir_sync)) in
-  let prefix = "Eio_fs_chaos.run: an acknowledged file lost what it held" in
-  if not (String.starts_with ~prefix (title report)) then
-    Alcotest.failf "not a lost file: %s" report;
   Alcotest.(check string)
-    "error"
-    "/config held \"new\" when acknowledged after #4, and now is missing"
-    (Expect.field "error" report);
+    "title"
+    "Eio_fs_chaos.run: a power cut lost an acknowledged file: /config held \
+     \"new\" when acknowledged after #4, and now is missing"
+    (title report);
   let replay = Expect.replay report in
   Alcotest.(check string)
     "the replay fails the same way" report
