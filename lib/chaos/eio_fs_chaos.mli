@@ -24,19 +24,7 @@
     program meets, its {{!replay}failures and replay}, its {{!runs}runs} and the
     {{!model}disk model} a power cut follows come after. *)
 
-type env =
-  < fs : Eio.Fs.dir_ty Eio.Path.t
-  ; cwd : Eio.Fs.dir_ty Eio.Path.t
-  ; clock : float Eio.Time.clock_ty Eio.Resource.t
-  ; mono_clock : Eio.Time.Mono.ty Eio.Resource.t
-  ; secure_random : Eio.Flow.source_ty Eio.Resource.t
-  ; stdin : Eio.Flow.source_ty Eio.Resource.t
-  ; stdout : Eio.Flow.sink_ty Eio.Resource.t
-  ; stderr : Eio.Flow.sink_ty Eio.Resource.t
-  ; domain_mgr : Eio.Domain_manager.ty Eio.Resource.t
-  ; process_mgr : [ `Generic ] Eio.Process.mgr_ty Eio.Resource.t
-  ; debug : Eio.Debug.t
-  ; backend_id : string >
+type env = Eio_chaos.env
 (** The type for what a program or a filesystem under test runs with: the
     capabilities of {!Eio.Stdenv}, each simulated, so code written against the
     accessors of {!Eio.Stdenv} takes it unchanged.
@@ -56,6 +44,8 @@ type env =
     - [domain_mgr] runs its work in the calling fiber, on the run's scheduler.
     - [process_mgr] starts nothing: [spawn] and [pipe] raise [Eio.Io].
     - [debug] is Eio's, and [backend_id] is ["chaos"].
+    - [chaos] is the run's {!Eio_chaos.t}, for a device the program builds
+      itself.
 
     A program that reaches the system other than through [env], by [Unix], the
     standard library's channels, [Random.self_init], [Domain.spawn] or
@@ -140,8 +130,15 @@ val run :
       To find it, a replay may first run [app] a few times, so the failing run
       is the last one.
     @raise Invalid_argument
-      if [budget] is not positive, or [replay] is not a replay string of eio-fs.
+      if [budget] is not positive, or [replay] is not a replay string of [run].
 *)
+
+val disk : unit -> Eio_chaos.part
+(** [disk ()] is the disk of {!run} as a part of {!Eio_chaos.run}, to test a
+    program on it and other simulated devices at once: an in-memory filesystem
+    that answers as the [~os] of the check does, with the faults and power cuts
+    above. [run app] is [Eio_chaos.run [ disk () ] app], but for the name its
+    reports give. *)
 
 (** {1:filesystems Testing a filesystem} *)
 
@@ -499,7 +496,8 @@ end
 
     {b Each run makes the same kinds of operation.} A check aims a fault at an
     operation by its kind and its rank among the operations of that kind, so the
-    names a program gives its files may change from run to run. Two runs with no
+    names a program gives its files may change from run to run, and a report
+    says where two runs with no fault named different files. Two runs with no
     fault that differ in the kinds of operation they make, or in their order,
     fail the check: {!type-env} says what can make them differ.
 

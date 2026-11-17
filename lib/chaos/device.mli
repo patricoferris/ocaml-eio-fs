@@ -10,8 +10,8 @@ val needs_user : string list
 val check :
   ?os:[< `Linux | `Macos ] ->
   ?user:Eio_fs.user ->
-  run:((Chaos_env.env -> string list) -> (string list, string) result) ->
-  (sw:Eio.Switch.t -> Chaos_env.env -> _ Eio.Path.t) ->
+  run:((Eio_chaos.env -> string list) -> (string list, string) result) ->
+  (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
   unit
 (** [check ~os ~user ~run dir] is {!Eio_fs_chaos.device}, each scenario run by
     [run], which is its answers, or why its run did not end. *)

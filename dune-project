@@ -35,8 +35,7 @@ macOS does.")
   (cstruct (>= 6.2.0))
   optint
   mtime
-  psq
-  domain-local-await
+  eio-chaos
   uucp
   uunf
   (cmdliner (>= 1.1.0))

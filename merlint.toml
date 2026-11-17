@@ -19,11 +19,6 @@ exclude = ["E005", "E105"]
 files = ["test/os/scripts/record.ml"]
 exclude = ["E330"]
 
-# The test compiles a copy of eio_fs's private Quiet_mock: it links no eio_fs.
-[[rules]]
-files = ["test/quiet_mock/*"]
-exclude = ["E606"]
-
 # A setup's I_dir, I_file and I_link stand beside a node's Dir, File and Link
 # in the same module: bare, the later type would take the names.
 [[rules]]
@@ -46,12 +41,6 @@ exclude = ["E606"]
 # interface signature defines it, so an operation Eio adds fails to compile.
 [[rules]]
 files = ["lib/chaos/chaos_law.ml"]
-exclude = ["E005"]
-
-# A copy of Eio_mock's scheduler, kept as close to it as the changes allow,
-# as eio-net's copy is.
-[[rules]]
-files = ["lib/chaos/quiet_mock.ml"]
 exclude = ["E005"]
 
 # Eio_fs_unix includes this module: its names are the library's own, such as

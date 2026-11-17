@@ -4,9 +4,6 @@
  (flags
   (:standard -open Eio_fs_mem))
  (private_modules
-  quiet_mock
-  chaos_env
-  systhread
   chaos_plan
   chaos_blocks
   chaos_journal
@@ -17,8 +14,8 @@
  (libraries
   hermetic
   eio
-  eio.unix
   eio.utils
+  eio-chaos
   eio-fs
   eio-fs.path
   eio-fs.sync
@@ -28,9 +25,7 @@
   fmt
   cstruct
   optint
-  mtime
-  psq
-  domain-local-await))
+  mtime))
 
 (rule
  (target device_traces.ml)
@@ -47,4 +42,4 @@
  (package eio-fs)
  (files eio_fs_chaos.mli)
  (preludes prelude.txt)
- (libraries eio-fs eio-fs.chaos eio eio_main))
+ (libraries eio-fs eio-fs.chaos eio-chaos eio eio_main))
