@@ -23,8 +23,10 @@
   "eio-fs is an in-memory filesystem for Eio, to test code under
 filesystem errors and power cuts. Each test gets a fresh filesystem of its
 own, used through the ordinary Eio.Path API, so the code under test does not
-change. The checks of Eio_fs.Chaos run that code again and again, each time
-with a different filesystem error or power cut.")
+change. Eio_fs_chaos.run runs a program again and again, each time with a
+different filesystem error or power cut, and restarts it on what the failure
+left. Eio_fs_chaos.device checks that an Eio filesystem answers as Linux or
+macOS does.")
  (depends
   (hermetic (>= 0.1.0))
   (ocaml (>= 5.4))
