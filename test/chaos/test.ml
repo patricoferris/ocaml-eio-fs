@@ -14,4 +14,5 @@ let () =
       Test_macos.suite;
       Test_moved.suite;
       Test_sampling.suite;
+      Test_restart.suite;
     ]
