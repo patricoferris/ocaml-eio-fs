@@ -353,6 +353,17 @@ module Tree : sig
 
       @raise Eio.Io as a stat fails for another reason than a missing file. *)
 
+  val unshare : spare:'a Eio.Path.t -> 'a Eio.Path.t -> (unit, string) result
+  (** [unshare ~spare path] replaces each regular file at or under [path] that
+      has more than one link by a copy of itself, so a write to it reaches no
+      other link. A copy is made beside [spare], named [spare] with a count
+      appended, with the file's permission bits, and renamed over the file.
+      Symbolic links are not followed, as {!iter} does not follow them. It is
+      [Error why] for the first file that cannot be copied apart, [why] naming
+      it and the reason; the files copied before it stay apart.
+
+      @raise Eio.Io as a stat or a listing of the walk raises. *)
+
   val pp_tree : depth:int -> _ Eio.Path.t Fmt.t
   (** [pp_tree ~depth] formats a path and what is under it [depth] levels deep,
       as tree(1) lists it: each entry by its last component, a symbolic link as

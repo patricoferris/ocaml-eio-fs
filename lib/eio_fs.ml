@@ -221,6 +221,36 @@ module Tree = struct
               (Some []) names)
     | _ -> None
 
+  exception Shared of string
+
+  let fail_shared fmt = Fmt.kstr (fun why -> raise (Shared why)) fmt
+
+  (* Each copy is made at a name of its own beside [spare], as the walk copies
+     the files of a level in several fibers. *)
+  let unshare ~spare path =
+    let copies = Atomic.make 0 in
+    let copy_apart file (stat : Eio.File.Stat.t) =
+      let dir, stem = spare in
+      let n = Atomic.fetch_and_add copies 1 + 1 in
+      let spare = (dir, Fmt.str "%s.%d" stem n) in
+      try
+        Eio.Path.with_open_in file (fun src ->
+            Eio.Path.with_open_out
+              ~create:(`Exclusive (stat.perm land 0o777))
+              spare
+              (fun dst -> Eio.Flow.copy src dst));
+        Eio.Path.rename spare file
+      with Eio.Io _ as e ->
+        fail_shared "%s, linked %Ld times, cannot be copied apart: %a"
+          (name file) stat.nlink Eio.Exn.pp e
+    in
+    let shared (stat : Eio.File.Stat.t) =
+      stat.kind = `Regular_file && Int64.compare stat.nlink 1L > 0
+    in
+    match iter (fun f stat -> if shared stat then copy_apart f stat) path with
+    | () -> Ok ()
+    | exception Shared why -> Error why
+
   type node = Node of string * node list
 
   (* Each child is drawn behind the guides of its ancestors: a branch, and
