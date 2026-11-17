@@ -300,6 +300,19 @@ let test_first_run_fails () =
     (fun () -> Eio_fs.Chaos.check (fun env -> ignore (P.load P.(env#fs / "f"))))
     ()
 
+(* A workload that raises before its first operation reports the
+   exception. *)
+let test_raises_first () =
+  Expect.refused "Eio_fs.Chaos.check: the run with no fault failed: Failure"
+    (fun () -> Eio_fs.Chaos.check (fun _ -> failwith "boom"))
+    ();
+  Expect.refused "Eio_fs.Chaos.Crash.check: the run with no cut failed: Failure"
+    (fun () ->
+      Eio_fs.Chaos.Crash.check
+        (fun ~ack:_ _ -> failwith "boom")
+        ~recover:(fun ~acked:_ env -> ignore (P.read_dir env#fs)))
+    ()
+
 let reads_nothing =
   "Eio_fs.Chaos.Crash.check: recover makes no filesystem operation"
 
@@ -1300,6 +1313,8 @@ let suite =
         test_nondeterministic;
       Alcotest.test_case "a first run that fails is refused" `Quick
         test_first_run_fails;
+      Alcotest.test_case "a workload that raises at once reports it" `Quick
+        test_raises_first;
       Alcotest.test_case "a recover that reads nothing is refused" `Quick
         test_reads_nothing;
       Alcotest.test_case "nothing acked and nothing set up" `Quick
