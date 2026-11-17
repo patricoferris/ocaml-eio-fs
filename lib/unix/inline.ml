@@ -41,7 +41,9 @@ module Make (B : Eio.Fs.Pi.DIR) = struct
   let resolve t path =
     match B.native t path with
     | Some p -> p
-    | None -> invalid_arg "Eio_fs_unix.inline_fs: a path with no native form"
+    | None ->
+        Fmt.invalid_arg
+          "Eio_fs_unix.inline_fs: path is %S, which has no native form" path
 
   include B
 

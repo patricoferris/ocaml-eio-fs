@@ -718,7 +718,9 @@ let take_lease_lock ~shared ~patience ~on_wait ~name file =
         ~on_wait raw_fd ignore
   | None ->
       Fmt.invalid_arg
-        "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor" name
+        "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor for \
+         flock"
+        name
 
 (* The mutex is keyed by the file the name holds, read before anything is
    opened: an ask a fiber of this process refuses opens no descriptor, whose
@@ -844,7 +846,9 @@ module Held = struct
   let restate t contents =
     writing t @@ fun () ->
     match t.file with
-    | None -> invalid_arg "Eio_fs_unix.Held.restate: the lock has been released"
+    | None ->
+        invalid_arg
+          "Eio_fs_unix.Held.restate: t is released, so it holds no lock file"
     | Some file ->
         eio_unix_errors (fun () -> take_back t file);
         update_lock_contents file contents
@@ -978,7 +982,8 @@ module Lease = struct
     | None ->
         let_go ();
         Fmt.invalid_arg
-          "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor"
+          "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor for \
+           flock"
           (Eio_fs.Tree.name path)
 
   (* The refusal an exclusive holder of [path] gives: a shared lease tried

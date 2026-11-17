@@ -1577,8 +1577,7 @@ module Crash = struct
         if not !reads then
           fail name
             "recover makes no filesystem operation in any run, so it checks \
-             nothing a cut leaves: read in recover what setup and the workload \
-             made."
+             nothing a cut leaves"
 end
 
 module Private = struct

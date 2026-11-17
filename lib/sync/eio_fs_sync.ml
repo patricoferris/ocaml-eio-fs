@@ -36,8 +36,8 @@ let sync_any_file (Eio.Resource.T (v, ops) as file) =
   | None, Some (module W) -> W.sync v
   | None, None ->
       invalid_arg
-        "Eio_fs_sync.Barrier.sync_file: the file's backend has no sync, \
-         register a File_sync barrier on the file resource"
+        "Eio_fs_sync.Barrier.sync_file: file has a backend with no sync, and \
+         registers no File_sync barrier"
 
 let can_sync (Eio.Resource.T (_, ops) as file) =
   Option.is_some (file_barrier file)
@@ -579,7 +579,9 @@ let reclaim path =
       Eio.Path.with_subtree parent (fun parent ->
           reclaim_entry Eio.Path.(parent / name))
   | None ->
-      invalid_arg "Eio_fs_sync.publish_generation: generation has no parent"
+      Fmt.invalid_arg
+        "Eio_fs_sync.publish_generation: generation is %a, which has no parent"
+        Eio.Path.pp path
 
 let discard p =
   Eio.Cancel.protect @@ fun () -> try reclaim p with Eio.Io _ -> ()

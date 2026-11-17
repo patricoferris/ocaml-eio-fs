@@ -587,7 +587,9 @@ module Batch = struct
     match (t, ops) with
     | _, [] -> []
     | Portable (_, live), _ when not !live ->
-        invalid_arg "Eio_fs_unix.Batch.run: the batch's switch has finished"
+        invalid_arg
+          "Eio_fs_unix.Batch.run: t's switch has finished, which closed its \
+           directories"
     | Portable (root, _), ops -> List.map (portable_attempt root) ops
     | Native fd, ops ->
         Eio_unix.Fd.use_exn "Eio_fs_unix.Batch.run" fd @@ fun root ->
@@ -682,7 +684,11 @@ let removed_dir r b rel =
       counted r 0;
       true
   | [ Error e ] -> gone r rel e
-  | _ -> invalid_arg "Eio_fs_unix.remove_tree: one result per operation"
+  | l ->
+      Fmt.invalid_arg
+        "Eio_fs_unix.remove_tree: Batch.run answered %d results, not one per \
+         operation"
+        (List.length l)
 
 (* Whether nothing is left of the entries [paths]: those that are no directory
    first, then the others, all at once. *)
