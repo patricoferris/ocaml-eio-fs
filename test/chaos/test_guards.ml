@@ -160,7 +160,8 @@ let test_replay_malformed_state () =
     (fun st ->
       let replay = Fmt.str "fs/00000000/none|end|%s" st in
       Expect.invalid
-        (Fmt.str "Eio_fs_chaos.run: replay is %S, not a replay string of eio-fs"
+        (Fmt.str
+           "Eio_fs_chaos.run: replay is %S, not a replay string of this check"
            replay)
         (fun () -> save ~replay ())
         ())
@@ -245,7 +246,7 @@ let test_unknown_replay () =
         ())
     ();
   Expect.invalid
-    "Eio_fs_chaos.run: replay is \"net/x/y\", not a replay string of eio-fs"
+    "Eio_fs_chaos.run: replay is \"net/x/y\", not a replay string of this check"
     (fun () -> log_mutant ~replay:"net/x/y" ())
     ()
 
@@ -306,7 +307,8 @@ let test_raises_first () =
         ~recover:(fun ~acked:_ env -> ignore (P.read_dir env#fs)))
     ()
 
-let reads_nothing = "Eio_fs_chaos.run: recover makes no filesystem operation"
+let reads_nothing =
+  "Eio_fs_chaos.run: the restart makes no filesystem operation"
 
 let test_reads_nothing () =
   Expect.refused reads_nothing
