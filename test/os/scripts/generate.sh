@@ -18,14 +18,17 @@ switch="${OPAM_SWITCH_PREFIX:?run in an opam switch}"
 pkg=("$switch"/.opam-switch/packages/eio_posix.*)
 [ -d "${pkg[0]}" ] || { echo "eio_posix is not installed in $switch" >&2; exit 1; }
 eio="${pkg[0]##*/eio_posix.}"
+# A switch that pins Eio to a source: Linux pins the same one.
+pin="$(sed -n 's/^ *src: "\(.*\)"$/\1/p' "$switch/.opam-switch/overlay/eio_posix/opam" 2>/dev/null || true)"
+eio_label="$eio${pin:+ from $pin}"
 image="ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460"
 
-scripts=(test/os/scripts test/os/seq)
+scripts=(test/os/scripts lib/kernel/eio_fs_kernel.ml lib/kernel/eio_fs_kernel.mli)
 revision="$(git -C "$src" log -1 --format=%H -- "${scripts[@]}")"
 [ -z "$(git -C "$src" status --porcelain -- "${scripts[@]}")" ] ||
   revision="$revision with uncommitted changes"
 # test/os/test.ml checks this digest.
-digest="$(cat "$src/test/os/scripts/record.ml" "$src/test/os/seq/os_seq.ml" | md5 -q)"
+digest="$(cat "$src/test/os/scripts/record.ml" "$src/lib/kernel/eio_fs_kernel.ml" | md5 -q)"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/fs-traces.XXXXXX")"
 trap 'chmod -R u+rwx "$work"; rm -rf "$work"' EXIT
@@ -37,13 +40,17 @@ mount_opts="$(mount | sed -n "s|^.* on $mp (\(.*\))\$|\1|p")"
 touch "$work/case/a"
 if [ -e "$work/case/A" ]; then case_=case-insensitive; else case_=case-sensitive; fi
 
-# Only the recorder is built, from the two directories it needs.
+# Only the recorder is built, from the interpreter and its own directory.
 docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:exec,mode=1777 \
-  -v "$src/test/os:/os:ro" -v "$work/out:/out" "$image" bash -euc "
-    mkdir ~/rec && cp -r /os/seq /os/scripts ~/rec
+  -v "$src/test/os/scripts:/os/scripts:ro" -v "$src/lib/kernel:/os/kernel:ro" \
+  -v "$work/out:/out" "$image" bash -euc "
+    mkdir -p ~/rec/kernel && cp -r /os/scripts ~/rec
+    cp /os/kernel/eio_fs_kernel.ml /os/kernel/eio_fs_kernel.mli ~/rec/kernel
+    echo '(library (name eio_fs_kernel) (libraries eio fmt cstruct optint))' >~/rec/kernel/dune
     echo '(lang dune 3.0)' >~/rec/dune-project
     cd ~/rec
     opam update -y >/dev/null
+    if [ -n '$pin' ]; then opam pin add -yn eio.$eio '$pin' >/dev/null; opam pin add -yn eio_posix.$eio '$pin' >/dev/null; fi
     opam install -y eio_posix.$eio fmt cstruct optint >/dev/null
     opam exec -- dune build ./scripts/record.exe
     mkdir /work/linux /work/case && cd /work/linux
@@ -54,7 +61,7 @@ docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:ex
     fs=\$(awk '\$2 == \"/work\" { print \$3 }' /proc/mounts)
     opts=\$(awk '\$2 == \"/work\" { print \$4 }' /proc/mounts)
     user=\"uid \$(id -u), groups \$(id -G)\"
-    eio=\$(opam show -f installed-version eio_posix)
+    eio=\"\$(opam show -f installed-version eio_posix)${pin:+ from $pin}\"
     printf '# linux %s: %s\\n' >/out/linux.meta \\
       os \"\$os\" image $image filesystem \"\$fs, \$c\" \\
       mount \"\$opts\" user \"\$user\" eio_posix \"\$eio\""
@@ -71,7 +78,7 @@ macos_user="uid $(id -u), groups $(id -G)"
     "macos filesystem" "${mount_opts%%,*}, $case_" \
     "macos mount" "$mount_opts" \
     "macos user" "$macos_user" \
-    "macos eio_posix" "$eio"
+    "macos eio_posix" "$eio_label"
   cat "$work/out/linux.meta"
   "$record" merge "$work/out/linux.csv" "$work/out/macos.csv"
 } >"$out"

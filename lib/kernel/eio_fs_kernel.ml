@@ -299,6 +299,12 @@ let contains ~sub s =
   let rec go i = i + n <= m && (String.sub s i n = sub || go (i + 1)) in
   go 0
 
+let errno_of_message s =
+  let s = String.lowercase_ascii s in
+  List.find_map
+    (fun (sub, e) -> if contains ~sub s then Some e else None)
+    errnos
+
 let errno exn =
   match exn with
   | Eio.Io (Eio.Fs.E (Not_found _), _) -> "ENOENT"
@@ -310,10 +316,8 @@ let errno exn =
   | Invalid_argument _ -> "invalid_argument"
   | End_of_file -> "eof"
   | exn -> (
-      let s = String.lowercase_ascii (Printexc.to_string exn) in
-      match List.find_opt (fun (sub, _) -> contains ~sub s) errnos with
-      | Some (_, e) -> e
-      | None -> "exn " ^ Printexc.to_string exn)
+      let s = Printexc.to_string exn in
+      match errno_of_message s with Some e -> e | None -> "exn " ^ s)
 
 let perm s = int_of_string ("0o" ^ s)
 
@@ -425,141 +429,7 @@ let op ids dir line =
 let run ids dir ops =
   List.map
     (fun line ->
-      try op ids dir line with Bad_op _ as e -> raise e | exn -> errno exn)
-    ops
-
-(* The same operations through [Unix], straight to the kernel. [-] marks one
-   [Unix] cannot make. *)
-
-let unix_errno (e : Unix.error) =
-  match e with
-  | ENOENT -> "ENOENT"
-  | EEXIST -> "EEXIST"
-  | EACCES | EPERM -> "denied"
-  | ELOOP -> "ELOOP"
-  | EFBIG -> "EFBIG"
-  | EOPNOTSUPP -> "ENOTSUP"
-  | e -> (
-      let s = String.lowercase_ascii (Unix.error_message e) in
-      match List.find_opt (fun (sub, _) -> contains ~sub s) errnos with
-      | Some (_, n) -> n
-      | None -> "unix " ^ Unix.error_message e)
-
-let unix_kind (st : Unix.LargeFile.stats) =
-  match st.st_kind with
-  | S_REG -> Fmt.str "file %Ld" st.st_size
-  | S_DIR -> "dir"
-  | S_LNK -> "link"
-  | _ -> "other"
-
-let unix_names p =
-  let d = Unix.opendir p in
-  let rec go acc =
-    match Unix.readdir d with
-    | "." | ".." -> go acc
-    | n -> go (n :: acc)
-    | exception End_of_file -> acc
-  in
-  let l = Fun.protect ~finally:(fun () -> Unix.closedir d) (fun () -> go []) in
-  names (List.sort String.compare l)
-
-let unix_open p flags =
-  let has c = String.contains flags c in
-  let flags =
-    (if has 'r' then [ Unix.O_RDONLY ] else [ Unix.O_RDWR ])
-    @ (if has 'x' then [ Unix.O_CREAT; O_EXCL ]
-       else if has 't' then [ Unix.O_CREAT; O_TRUNC ]
-       else if has 'c' then [ Unix.O_CREAT ]
-       else [])
-    @ if has 'a' then [ Unix.O_APPEND ] else []
-  in
-  Unix.close (Unix.openfile p (Unix.O_CLOEXEC :: flags) 0o644)
-
-let unix_op ids dir line =
-  let ( / ) d p = if p = "" then d ^ "/" else d ^ "/" ^ p in
-  let ok () = "ok" in
-  let with_fd p flags f =
-    let fd = Unix.openfile p flags 0o644 in
-    Fun.protect ~finally:(fun () -> Unix.close fd) (fun () -> f fd)
-  in
-  match words line with
-  | [ "write"; p; data ] ->
-      with_fd (dir / p) [ O_WRONLY; O_CREAT; O_TRUNC ] (fun fd ->
-          ignore (Unix.write_substring fd data 0 (String.length data)));
-      ok ()
-  | [ "read"; p ] ->
-      with_fd (dir / p) [ O_RDONLY ] (fun fd ->
-          let buf = Buffer.create 64 and b = Bytes.create 4096 in
-          let rec go () =
-            match Unix.read fd b 0 4096 with
-            | 0 -> String.escaped (Buffer.contents buf)
-            | n ->
-                Buffer.add_subbytes buf b 0 n;
-                go ()
-          in
-          go ())
-  | [ "readd"; p ] ->
-      with_fd (dir / p) [ O_RDONLY ] (fun fd ->
-          string_of_int (Unix.read fd (Bytes.create 16) 0 16))
-  (* [Unix] binds no pwrite, lchmod or O_NOFOLLOW. *)
-  | [ "pwa"; _; _; _ ] | [ "lchmod"; _; _ ] -> "-"
-  | [ "open"; _; flags ] when String.contains flags 'n' -> "-"
-  | [ "open"; p; flags ] ->
-      unix_open (dir / p) flags;
-      ok ()
-  | [ "opendir"; p ] ->
-      Unix.closedir (Unix.opendir (dir / p));
-      ok ()
-  | [ "lsd"; p ] | [ "ls"; p ] -> unix_names (dir / p)
-  | [ "mkdir"; p ] ->
-      Unix.mkdir (dir / p) 0o755;
-      ok ()
-  | [ "mkdir"; p; m ] ->
-      Unix.mkdir (dir / p) (perm m);
-      ok ()
-  | [ "unlink"; p ] ->
-      Unix.unlink (dir / p);
-      ok ()
-  | [ "rmdir"; p ] ->
-      Unix.rmdir (dir / p);
-      ok ()
-  | [ "rename"; a; b ] ->
-      Unix.rename (dir / a) (dir / b);
-      ok ()
-  | [ "symlink"; target; p ] ->
-      Unix.symlink target (dir / p);
-      ok ()
-  | [ "readlink"; p ] -> String.escaped (Unix.readlink (dir / p))
-  | [ "stat"; p ] -> unix_kind (Unix.LargeFile.stat (dir / p))
-  | [ "lstat"; p ] -> unix_kind (Unix.LargeFile.lstat (dir / p))
-  | [ "mode"; p ] -> Fmt.str "%o" (Unix.LargeFile.lstat (dir / p)).st_perm
-  | [ "group"; p ] ->
-      let g = (Unix.LargeFile.lstat (dir / p)).st_gid in
-      if g = ids.gid then "primary"
-      else if g = ids.other_gid then "other"
-      else "foreign"
-  | [ "chmod"; p; m ] ->
-      Unix.chmod (dir / p) (perm m);
-      ok ()
-  | [ "chgrp"; p ] ->
-      Unix.chown (dir / p) (-1) ids.other_gid;
-      ok ()
-  | [ "chain"; n ] ->
-      if not (Sys.file_exists (dir / "f")) then
-        with_fd (dir / "f") [ O_WRONLY; O_CREAT; O_EXCL ] (fun fd ->
-            ignore (Unix.write_substring fd "x" 0 1));
-      for i = 1 to int_of_string n do
-        let target = if i = 1 then "f" else Fmt.str "l%d" (i - 1) in
-        Unix.symlink target (dir / Fmt.str "l%d" i)
-      done;
-      ok ()
-  | _ -> raise (Bad_op line)
-
-let run_unix ids dir ops =
-  List.map
-    (fun line ->
-      try unix_op ids dir line with
-      | Bad_op _ as e -> raise e
-      | Unix.Unix_error (e, _, _) -> unix_errno e
-      | End_of_file -> "eof")
+      try op ids dir line with
+      | (Bad_op _ | Eio.Cancel.Cancelled _) as e -> raise e
+      | exn -> errno exn)
     ops

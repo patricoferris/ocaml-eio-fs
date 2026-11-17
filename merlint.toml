@@ -6,11 +6,12 @@
 files = ["test/law/test_chaos_law.ml"]
 exclude = ["E100", "E105"]
 
-# The recorder writes whatever an operation raises as its outcome, to compare
-# eio_posix with the kernel.
+# The interpreter writes whatever an operation raises, but a cancellation, as
+# its outcome, to compare a directory with the kernel. Its scenarios are one
+# list of names and operation lines, which merlint measures as a function.
 [[rules]]
-files = ["test/os/seq/os_seq.ml"]
-exclude = ["E105"]
+files = ["lib/kernel/eio_fs_kernel.ml"]
+exclude = ["E005", "E105"]
 
 # The traces pin the recorder's digest: renaming its entry point means
 # recording them again on Linux and on macOS.

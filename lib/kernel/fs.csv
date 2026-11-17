@@ -1,18 +1,18 @@
 # script: test/os/scripts/generate.sh
-# script revision: 5a1143ef7cb964b3d8efe30c48e7d9a94b2c20d3
-# script digest: 1304f4a857e93d2bfc26a39ff41f3eb8
-# recorded: 2026-11-16
-# macos os: macOS 27.2, Darwin 27.2.0 arm64
+# script revision: 5a1143ef7cb964b3d8efe30c48e7d9a94b2c20d3 with uncommitted changes
+# script digest: b3b9c8d4d7762e5078b80b542b125e49
+# recorded: 2026-11-17
+# macos os: macOS 27.3, Darwin 27.3.0 arm64
 # macos filesystem: apfs, case-insensitive
 # macos mount: apfs, local, journaled, nobrowse, protect, root data
 # macos user: uid 501, groups 20 12 61 79 80 81 701 33 98 100 204 250 395 398 399 400
-# macos eio_posix: 1.6
+# macos eio_posix: 1.7 from git+https://github.com/ocaml-multicore/eio.git#v1.7
 # linux os: Linux 7.2.12-orbstack-00394-gbecdd6130068 aarch64
 # linux image: ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460
 # linux filesystem: tmpfs, case-sensitive
 # linux mount: rw,nosuid,nodev,relatime
 # linux user: uid 1000, groups 1000 4242
-# linux eio_posix: 1.6
+# linux eio_posix: 1.7 from git+https://github.com/ocaml-multicore/eio.git#v1.7
 ops,linux,macos,linux eio_posix,macos eio_posix
 write a x;stat A;read A;ls .,ok|ENOENT|ENOENT|[a],ok|file 1|x|[a],ok|ENOENT|ENOENT|[a],ok|file 1|x|[a]
 write a x;open A x;ls .,ok|ok|[A/a],ok|EEXIST|[a],ok|ok|[A/a],ok|EEXIST|[a]
@@ -43,48 +43,48 @@ write {\240\159\152\128}128 x;write {\240\159\152\128}255 x;ls .,ENAMETOOLONG|EN
 stat {a/}520;stat {a/}2100;mkdir {a/}520,ENOENT|ENAMETOOLONG|ENOENT,ENAMETOOLONG|ENAMETOOLONG|ENAMETOOLONG,ENOENT|ENOENT|ENOENT,ENOENT|ENOENT|ENOENT
 stat a\000b;write a\000b x,ENOENT|ENOENT,ENOENT|ENOENT,ENOENT|ENOENT,ENOENT|ENOENT
 mkdir d;unlink d;unlink d/;ls .,ok|EISDIR|EISDIR|[d],ok|denied|denied|[d],ok|EISDIR|EISDIR|[d],ok|denied|denied|[d]
-write f x;unlink f/;ls .,ok|ENOTDIR|[f],ok|ENOTDIR|[f],ok|ENOTDIR|[f],ok|ENOTDIR|[f]
+write f x;unlink f/;ls .,ok|ENOTDIR|[f],ok|ENOTDIR|[f],ok|ok|[],ok|ok|[]
 mkdir d;unlink d/.;unlink d/..;unlink .,ok|EISDIR|EISDIR|EISDIR,ok|denied|denied|denied,ok|EISDIR|EISDIR|EISDIR,ok|denied|denied|denied
 mkdir d;rmdir d/.;ls .,ok|EINVAL|[d],ok|EINVAL|[d],ok|ok|[],ok|ok|[]
 mkdir d;mkdir d/e;rmdir d/e/..;ls .,ok|ok|ENOTEMPTY|[d],ok|ok|EINVAL|[d],ok|ok|EINVAL|[d],ok|ok|EINVAL|[d]
 mkdir d;write d/f x;rmdir d,ok|ok|ENOTEMPTY,ok|ok|ENOTEMPTY,ok|ok|ENOTEMPTY,ok|ok|ENOTEMPTY
 write f x;rmdir f;rmdir f/,ok|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR
 mkdir d;symlink d l;rmdir l;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|ENOTDIR|[d/l],ok|ok|ENOTDIR|[d/l],ok|ok|ENOTDIR|[d/l]
-mkdir d;symlink d l;rmdir l/;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|ok|[l],ok|ok|ENOTDIR|[d/l],ok|ok|ok|[l]
-mkdir d;symlink d l;unlink l/;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|denied|[d/l],ok|ok|ENOTDIR|[d/l],ok|ok|denied|[d/l]
-mkdir d;symlink d l;rename l/ m;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|ok|[l/m],ok|ok|ENOTDIR|[d/l],ok|ok|ok|[l/m]
-mkdir d;mkdir d;mkdir d/;write f x;mkdir f;mkdir f/,ok|EEXIST|EEXIST|ok|EEXIST|EEXIST,ok|EEXIST|EEXIST|ok|EEXIST|ENOTDIR,ok|EEXIST|EEXIST|ok|EEXIST|EEXIST,ok|EEXIST|EEXIST|ok|EEXIST|ENOTDIR
-symlink nowhere l;mkdir l;mkdir l/;ls .,ok|EEXIST|EEXIST|[l],ok|EEXIST|ok|[l/nowhere],ok|EEXIST|EEXIST|[l],ok|EEXIST|ok|[l/nowhere]
+mkdir d;symlink d l;rmdir l/;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|ok|[l],ok|ok|ENOTDIR|[d/l],ok|ok|ENOTDIR|[d/l]
+mkdir d;symlink d l;unlink l/;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|denied|[d/l],ok|ok|ok|[d],ok|ok|ok|[d]
+mkdir d;symlink d l;rename l/ m;ls .,ok|ok|ENOTDIR|[d/l],ok|ok|ok|[l/m],ok|ok|ok|[d/m],ok|ok|ok|[d/m]
+mkdir d;mkdir d;mkdir d/;write f x;mkdir f;mkdir f/,ok|EEXIST|EEXIST|ok|EEXIST|EEXIST,ok|EEXIST|EEXIST|ok|EEXIST|ENOTDIR,ok|EEXIST|EEXIST|ok|EEXIST|EEXIST,ok|EEXIST|EEXIST|ok|EEXIST|EEXIST
+symlink nowhere l;mkdir l;mkdir l/;ls .,ok|EEXIST|EEXIST|[l],ok|EEXIST|ok|[l/nowhere],ok|EEXIST|EEXIST|[l],ok|EEXIST|EEXIST|[l]
 mkdir n/;ls .,ok|[n],ok|[n],ok|[n],ok|[n]
 write f x;mkdir f/x,ok|ENOTDIR,ok|ENOTDIR,ok|ENOTDIR,ok|ENOTDIR
 mkdir .;mkdir d;mkdir d/.;mkdir d/..,EEXIST|ok|EEXIST|EEXIST,EEXIST|ok|EEXIST|EEXIST,EEXIST|ok|EEXIST|EEXIST,EEXIST|ok|EEXIST|EEXIST
 write f abc;open f r;open f w;open f c;open f x;open f t;read f,ok|ok|ok|ok|EEXIST|ok|,ok|ok|ok|ok|EEXIST|ok|,ok|ok|ok|ok|EEXIST|ok|,ok|ok|ok|ok|EEXIST|ok|
 open m r;open m w;open m c;ls .,ENOENT|ENOENT|ok|[m],ENOENT|ENOENT|ok|[m],ENOENT|ENOENT|ok|[m],ENOENT|ENOENT|ok|[m]
 mkdir d;open d r;open d w;open d c;open d x;open d t,ok|ok|EISDIR|EISDIR|EEXIST|EISDIR,ok|ok|EISDIR|EISDIR|EEXIST|EISDIR,ok|ok|EISDIR|EISDIR|EEXIST|EISDIR,ok|ok|EISDIR|EISDIR|EEXIST|EISDIR
-write f x;open f/ r;open f/ c;open n/ c;mkdir d;open d/ r;open d/ c;ls .,ok|ENOTDIR|EISDIR|EISDIR|ok|ok|EISDIR|[d/f],ok|ENOTDIR|ENOTDIR|ENOENT|ok|ok|EISDIR|[d/f],ok|ENOTDIR|EINVAL|EINVAL|ok|ok|EINVAL|[d/f],ok|ENOTDIR|EINVAL|EINVAL|ok|ok|EINVAL|[d/f]
+write f x;open f/ r;open f/ c;open n/ c;mkdir d;open d/ r;open d/ c;ls .,ok|ENOTDIR|EISDIR|EISDIR|ok|ok|EISDIR|[d/f],ok|ENOTDIR|ENOTDIR|ENOENT|ok|ok|EISDIR|[d/f],ok|ENOTDIR|ENOTDIR|ENOENT|ok|ok|EISDIR|[d/f],ok|ENOTDIR|EINVAL|EINVAL|ok|ok|EINVAL|[d/f]
 write f x;symlink f l;open l rn;open l wn;open l cn;open l xn;open l c,ok|ok|-|-|-|-|ok,ok|ok|-|-|-|-|ok,ok|ok|ELOOP|ELOOP|ELOOP|EEXIST|ok,ok|ok|ELOOP|ELOOP|ELOOP|EEXIST|ok
 symlink t l;open l c;ls .;symlink u m;open m x,ok|ok|[l/t]|ok|EEXIST,ok|ok|[l/t]|ok|EEXIST,ok|ok|[l/t]|ok|EEXIST,ok|ok|[l/t]|ok|EEXIST
-symlink t/ l;open l c;ls .,ok|EISDIR|[l],ok|ENOENT|[l],ok|EINVAL|[l],ok|ENOENT|[l]
+symlink t/ l;open l c;ls .,ok|EISDIR|[l],ok|ENOENT|[l],ok|ENOENT|[l],ok|ENOENT|[l]
 mkdir d;opendir d;write f x;opendir f;opendir m,ok|ok|ok|ENOTDIR|ENOENT,ok|ok|ok|ENOTDIR|ENOENT,ok|ok|ok|ENOTDIR|ENOENT,ok|ok|ok|ENOTDIR|ENOENT
 mkdir d;readd d,ok|EISDIR,ok|EISDIR,ok|EISDIR,ok|EISDIR
 write f abc;pwa f XY 0;read f;pwa f Z 10;read f,ok|-|abc|-|abc,ok|-|abc|-|abc,ok|ok|abcXY|ok|abcXYZ,ok|ok|XYc|ok|XYc\000\000\000\000\000\000\000Z
 symlink - l;readlink l;stat l;ls .,ENOENT|ENOENT|ENOENT|[],ok||ENOENT|[l],ENOENT|ENOENT|ENOENT|[],ok||dir|[l]
 symlink - l;open l r;ls l;open l c;ls .,ENOENT|ENOENT|ENOENT|ok|[l],ok|ENOENT|ENOENT|ENOENT|[l],ENOENT|ENOENT|ENOENT|ok|[l],ok|ENOENT|[l]|ENOENT|[l]
-write f x;symlink a f;symlink a f/;symlink a n/;ls .,ok|EEXIST|EEXIST|ENOENT|[f],ok|EEXIST|ENOTDIR|ENOENT|[f],ok|EEXIST|EEXIST|ENOENT|[f],ok|EEXIST|ENOTDIR|ENOENT|[f]
+write f x;symlink a f;symlink a f/;symlink a n/;ls .,ok|EEXIST|EEXIST|ENOENT|[f],ok|EEXIST|ENOTDIR|ENOENT|[f],ok|EEXIST|EEXIST|ok|[f/n],ok|EEXIST|EEXIST|ok|[f/n]
 write f x;readlink f;mkdir d;readlink d,ok|EINVAL|ok|EINVAL,ok|EINVAL|ok|EINVAL,ok|EINVAL|ok|EINVAL,ok|EINVAL|ok|EINVAL
 chain 32;stat l32;open l32 r;open l32 c,ok|file 1|ok|ok,ok|file 1|ok|ok,ok|file 1|ok|ok,ok|file 1|ok|ok
 chain 33;stat l33;open l33 r;open l33 c,ok|file 1|ok|ok,ok|ELOOP|ELOOP|ELOOP,ok|file 1|ok|ok,ok|file 1|ELOOP|ELOOP
 chain 40;stat l40;open l40 r,ok|file 1|ok,ok|ELOOP|ELOOP,ok|file 1|ok,ok|file 1|ELOOP
 chain 41;stat l41,ok|ELOOP,ok|ELOOP,ok|ELOOP,ok|ELOOP
 symlink a b;symlink b a;stat a;open a c,ok|ok|ELOOP|ELOOP,ok|ok|ELOOP|ELOOP,ok|ok|ELOOP|ELOOP,ok|ok|ELOOP|ELOOP
-write f x;stat f/;lstat f/;symlink f l;stat l/;mkdir d;symlink d m;lstat m/;stat f/.;stat f/..,ok|ENOTDIR|ENOTDIR|ok|ENOTDIR|ok|ok|dir|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR|ok|ENOTDIR|ok|ok|dir|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR|ok|ENOTDIR|ok|ok|dir|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR|ok|ENOTDIR|ok|ok|dir|ENOTDIR|ENOTDIR
+write f x;stat f/;lstat f/;symlink f l;stat l/;mkdir d;symlink d m;lstat m/;stat f/.;stat f/..,ok|ENOTDIR|ENOTDIR|ok|ENOTDIR|ok|ok|dir|ENOTDIR|ENOTDIR,ok|ENOTDIR|ENOTDIR|ok|ENOTDIR|ok|ok|dir|ENOTDIR|ENOTDIR,ok|ENOTDIR|file 1|ok|ENOTDIR|ok|ok|link|ENOTDIR|ENOTDIR,ok|ENOTDIR|file 1|ok|ENOTDIR|ok|ok|link|ENOTDIR|ENOTDIR
 mkdir d;mkdir d/e;rename d d/e/x;rename d/e d/e;ls d,ok|ok|EINVAL|ok|[e],ok|ok|EINVAL|ok|[e],ok|ok|EINVAL|ok|[e],ok|ok|EINVAL|ok|[e]
 mkdir a;mkdir b;write b/f x;rename a b;rename a b/,ok|ok|ok|ENOTEMPTY|ENOTEMPTY,ok|ok|ok|ENOTEMPTY|ENOTEMPTY,ok|ok|ok|ENOTEMPTY|ENOTEMPTY,ok|ok|ok|ENOTEMPTY|ENOTEMPTY
 mkdir d;write f x;rename d f;rename f d,ok|ok|ENOTDIR|EISDIR,ok|ok|ENOTDIR|EISDIR,ok|ok|ENOTDIR|EISDIR,ok|ok|ENOTDIR|EISDIR
 mkdir d;rename d/. e;ls .,ok|EBUSY|[d],ok|EINVAL|[d],ok|ok|[e],ok|ok|[e]
 mkdir d;rename d/.. e;ls .,ok|EBUSY|[d],ok|EINVAL|[d],ok|EBUSY|[d],ok|EINVAL|[d]
-mkdir d;write f x;rename f d/.;rename f d/..;rename f .;ls .,ok|ok|EBUSY|EBUSY|EBUSY|[d/f],ok|ok|EINVAL|EINVAL|EINVAL|[d/f],ok|ok|ENOTDIR|EBUSY|ENOTEMPTY|[d/f],ok|ok|EISDIR|EINVAL|EISDIR|[d/f]
-write f x;rename f/ g;rename f g/;mkdir d;rename d/ e/;ls .,ok|ENOTDIR|ENOTDIR|ok|ok|[e/f],ok|ENOTDIR|ENOENT|ok|ok|[e/f],ok|ENOTDIR|ENOTDIR|ok|ok|[e/f],ok|ENOTDIR|ENOENT|ok|ok|[e/f]
+mkdir d;write f x;rename f d/.;rename f d/..;rename f .;ls .,ok|ok|EBUSY|EBUSY|EBUSY|[d/f],ok|ok|EINVAL|EINVAL|EINVAL|[d/f],ok|ok|EISDIR|EBUSY|ENOTEMPTY|[d/f],ok|ok|EISDIR|EINVAL|EISDIR|[d/f]
+write f x;rename f/ g;rename f g/;mkdir d;rename d/ e/;ls .,ok|ENOTDIR|ENOTDIR|ok|ok|[e/f],ok|ENOTDIR|ENOENT|ok|ok|[e/f],ok|ok|ENOENT|ok|ok|[e/g],ok|ok|ENOENT|ok|ok|[e/g]
 rename m n;write f x;rename f f;ls .,ENOENT|ok|ok|[f],ENOENT|ok|ok|[f],ENOENT|ok|ok|[f],ENOENT|ok|ok|[f]
 mkdir a;mkdir a/b;rename a/b a;ls a,ok|ok|ENOTEMPTY|[b],ok|ok|ENOTEMPTY|[b],ok|ok|ENOTEMPTY|[b],ok|ok|ENOTEMPTY|[b]
 write f x;symlink f l;lchmod l 700;mode f;chmod l 600;mode f,ok|ok|-|644|ok|600,ok|ok|-|644|ok|600,ok|ok|ENOTSUP|644|ok|600,ok|ok|ok|644|ok|600

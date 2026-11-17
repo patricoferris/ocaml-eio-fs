@@ -39,7 +39,7 @@ type row = {
 
 let traces =
   lazy
-    (In_channel.with_open_text "traces/fs.csv" In_channel.input_lines
+    (In_channel.with_open_text "../../lib/kernel/fs.csv" In_channel.input_lines
     |> List.filter (fun l -> not (String.starts_with ~prefix:"#" l))
     |> List.tl
     |> List.map (fun line ->
@@ -58,20 +58,20 @@ let traces =
 let user =
   { Eio_fs.uid = 1000L; gid = 1000L; groups = [ 4242L ]; umask = 0o022 }
 
-let ids = { Os_seq.gid = 1000; other_gid = 4242 }
+let ids = { Eio_fs_kernel.gid = 1000; other_gid = 4242 }
 
 let replay ~os i ops =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs.run ~os ~user ~cwd:"/w" @@ fun env ->
   let dir = Eio.Path.(env#cwd / string_of_int i) in
   Eio.Path.mkdir ~perm:0o755 dir;
-  Os_seq.run ids dir ops
+  Eio_fs_kernel.run ids dir ops
 
 let check (os : os) i (name, ops) () =
   let row =
-    match List.assoc_opt (Os_seq.key ops) (Lazy.force traces) with
+    match List.assoc_opt (Eio_fs_kernel.key ops) (Lazy.force traces) with
     | Some r -> r
-    | None -> Alcotest.failf "%s: not in traces/fs.csv, regenerate" name
+    | None -> Alcotest.failf "%s: not in lib/kernel/fs.csv, regenerate" name
   in
   let kernel, eio =
     match os with
@@ -108,10 +108,10 @@ let check (os : os) i (name, ops) () =
       | None | Some _ -> ())
     ops
 
-(* record.ml and os_seq.ml decide every outcome; generate.sh decides only
+(* record.ml and eio_fs_kernel.ml decide every outcome; generate.sh decides only
    where they run, which the other lines record. *)
 let test_provenance () =
-  Provenance.check ~trace:"traces/fs.csv"
+  Provenance.check ~trace:"../../lib/kernel/fs.csv"
     ~keys:
       [
         "script";
@@ -130,14 +130,14 @@ let test_provenance () =
         "linux user";
         "linux eio_posix";
       ]
-    ~code:[ "scripts/record.ml"; "seq/os_seq.ml" ]
+    ~code:[ "scripts/record.ml"; "../../lib/kernel/eio_fs_kernel.ml" ]
     ~script:"scripts/generate.sh"
 
 let suite (os : os) =
   ( os_name os,
     List.mapi
       (fun i ((name, _) as s) -> Alcotest.test_case name `Quick (check os i s))
-      Os_seq.scenarios )
+      Eio_fs_kernel.scenarios )
 
 let () =
   Alcotest.run "os"

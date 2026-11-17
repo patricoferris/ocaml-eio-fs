@@ -1,14 +1,8 @@
 (test
  (name test)
- (libraries os_seq provenance eio eio.mock eio_fs fmt alcotest)
+ (libraries eio_fs_kernel provenance eio eio.mock eio_fs fmt alcotest)
  (deps
-  (source_tree traces)
+  ../../lib/kernel/fs.csv
   scripts/generate.sh
   scripts/record.ml
-  seq/os_seq.ml))
-
-(rule
- (alias regen-traces)
- (deps
-  (alias traces/regen))
- (action (progn)))
+  ../../lib/kernel/eio_fs_kernel.ml))
