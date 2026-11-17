@@ -316,6 +316,19 @@ module Tree : sig
 
       @raise Eio.Io when an entry cannot be read or changed. *)
 
+  val entries : _ Eio.Path.t -> string list
+  (** [entries dir] is the names in the directory [dir], and [[]] when nothing
+      stands at [dir].
+
+      @raise Eio.Io when [dir] cannot be listed for another reason. *)
+
+  val remove_empty : 'a Eio.Path.t list -> (unit, 'a Eio.Path.t * exn) result
+  (** [remove_empty dirs] removes each directory of [dirs] in turn while it is
+      empty, as Git removes the directories a deleted ref leaves: the first that
+      holds anything, or is gone, ends it with [Ok ()], and stays with those
+      after it. It is [Error (d, e)] for the first [d] whose removal failed for
+      another reason, [e] the {!Eio.Io} it raised. *)
+
   val name : _ Eio.Path.t -> string
   (** [name path] is what [path] is called outside the program: its native
       spelling when the capability has one, and the rendering {!Eio.Path.pp}

@@ -183,6 +183,24 @@ module Tree = struct
     | Some a, Some b -> Int64.equal a.dev b.dev && Int64.equal a.ino b.ino
     | _ -> false
 
+  let entries dir =
+    match Eio.Path.read_dir dir with
+    | names -> names
+    | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> []
+
+  (* A failed rmdir(2) is read again rather than by its errno, which POSIX
+     lets be EEXIST or ENOTEMPTY for a directory that holds anything. *)
+  let rec remove_empty = function
+    | [] -> Ok ()
+    | d :: rest -> (
+        match Eio.Path.rmdir d with
+        | () -> remove_empty rest
+        | exception (Eio.Io _ as e) -> (
+            match Eio.Path.read_dir d with
+            | _ :: _ -> Ok ()
+            | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> Ok ()
+            | [] | (exception Eio.Io _) -> Error (d, e)))
+
   type node = Node of string * node list
 
   (* Each child is drawn behind the guides of its ancestors: a branch, and
