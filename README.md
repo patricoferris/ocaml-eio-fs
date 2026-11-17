@@ -33,9 +33,9 @@ file.
 
 ## Testing a program
 
-Your program reads and writes files through `Eio.Path`. What does it do when
-the disk fails? `Eio_fs_chaos.run` takes the program as a function of its
-environment and runs it many times in memory.
+`Eio_fs_chaos.run` checks how a program that reads and writes files through
+`Eio.Path` copes when the disk fails. It takes the program as a function of
+its environment and runs it many times in memory.
 
 ```ocaml
 # Eio_fs_chaos.run @@ fun env ->
@@ -46,7 +46,9 @@ environment and runs it many times in memory.
 
 The `env` has the capabilities of `Eio.Stdenv`, each simulated
 ([How it works](#how-it-works)), so a `main` written against `Eio.Stdenv`
-runs unchanged.
+runs unchanged. `Eio_fs_chaos.disk ()` is the same disk as a part of
+[eio-chaos](https://github.com/samoht/ocaml-eio-chaos), to test a program on
+it and other simulated devices at once with `Eio_chaos.run`.
 
 The first run has no fault. Each later run starts from the same state and
 meets one fault:
@@ -131,10 +133,10 @@ still hold, after each fault and before the restart.
 
 ## Testing a filesystem
 
-You have written an Eio filesystem: a backend, a wrapper, a cache. Does it
-answer as Linux does? `Eio_fs_chaos.device` takes a function that makes a
-fresh, empty directory from the same simulated `env` and runs short
-scenarios in it, each recorded on a real Linux and a real macOS kernel.
+`Eio_fs_chaos.device` checks that an Eio filesystem of your own, such as a
+wrapper over another one, answers as Linux or macOS does. It takes a function
+that makes a fresh, empty directory from the same simulated `env` and runs
+short scenarios in it, each recorded on a real Linux and a real macOS kernel.
 
 ```ocaml
 # Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs.Fs.v ());;
@@ -254,7 +256,5 @@ across power cuts, or about on-disk layout.
 
 ISC, see [LICENSE.md](LICENSE.md). The in-memory filesystem started as Patrick
 Ferris's [eio_mem](https://git.sirref.org/eio_mem), and `eio-fs.path` adapts
-its modification of [fpath](https://github.com/dbuenzli/fpath). The scheduler
-that runs a check is a copy of
-[Eio](https://github.com/ocaml-multicore/eio)'s mock backend, and the tests
+its modification of [fpath](https://github.com/dbuenzli/fpath). The tests
 port the crash models of [Ferrite](https://github.com/uwplse/ferrite).
