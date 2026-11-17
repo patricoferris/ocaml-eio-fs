@@ -210,6 +210,36 @@ let test_no_hop () =
   Alcotest.(check bool) "the root hands off (control)" true (hops fs);
   Alcotest.(check bool) "inline_fs does not" false (hops inline)
 
+(* A link read at each name: the same target, or the same error. *)
+let test_read_link () =
+  with_tree @@ fun ~fs ~inline path ->
+  List.iter
+    (fun name ->
+      let read root () = Eio.Path.read_link Eio.Path.(root / path name) in
+      Alcotest.check string_r
+        (Fmt.str "read_link %s" name)
+        (outcome (read fs))
+        (outcome (read inline)))
+    (names @ [ "link/" ])
+
+(* A link read alone runs before the other fiber only when it stays on the
+   calling thread. *)
+let test_read_link_no_hop () =
+  with_tree @@ fun ~fs ~inline path ->
+  let hops root =
+    let ran = ref false in
+    fst
+      (Eio.Fiber.pair
+         (fun () ->
+           Alcotest.(check string)
+             "the link's target" "file"
+             (Eio.Path.read_link Eio.Path.(root / path "link"));
+           !ran)
+         (fun () -> ran := true))
+  in
+  Alcotest.(check bool) "the root hands off (control)" true (hops fs);
+  Alcotest.(check bool) "inline_fs does not" false (hops inline)
+
 let suite =
   ( "inline",
     [
@@ -219,4 +249,7 @@ let suite =
       Alcotest.test_case "read_dir" `Quick test_read_dir;
       Alcotest.test_case "the root's other calls" `Quick test_rest;
       Alcotest.test_case "no system-thread hop" `Quick test_no_hop;
+      Alcotest.test_case "read_link" `Quick test_read_link;
+      Alcotest.test_case "read_link with no system-thread hop" `Quick
+        test_read_link_no_hop;
     ] )
