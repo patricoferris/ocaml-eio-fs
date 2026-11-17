@@ -1627,7 +1627,7 @@ module Crash = struct
      counts the committed ones, which a crash replays over the snapshot too)
      names the path or a directory above it, or makes, moves or changes the
      attributes of the node, wherever a later rename took it; or a file there
-     has unsynced writes. *)
+     has unsynced writes, or writes a failed sync lost. *)
   let touched ?(committed = false) ctl =
     let root = root_segs ctl in
     let paths = Hashtbl.create 16 and inos = Hashtbl.create 16 in
@@ -1641,7 +1641,10 @@ module Crash = struct
       ctl.journal ();
     Hashtbl.iter
       (fun _ (fs : fstate) ->
-        if fs.pending <> [] then
+        if
+          fs.pending <> [] || fs.partial <> [] || Option.is_some fs.cache
+          || Option.is_some fs.evicted
+        then
           Option.iter
             (fun segs -> Hashtbl.replace paths segs ())
             (tree_path ~root fs.rel))
