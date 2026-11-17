@@ -50,8 +50,8 @@ let rules =
   ]
 
 let unix_cannot =
-  "the recorder asks the kernel through Unix, which cannot make an earlier \
-   operation, so from there the answer is eio_posix's"
+  "the recorder could not make an earlier operation of this scenario through \
+   Unix, so the kernel's own answer is unknown"
 
 type answer = { want : string; from : string; why : string option }
 
@@ -128,17 +128,36 @@ let ids (user : Eio_fs.user) =
         name
   | Some g -> { K.gid = Int64.to_int user.gid; other_gid = Int64.to_int g }
 
+(* An answer on one line: an error Eio prints on several is joined. *)
+let one_line s =
+  String.split_on_char '\n' s |> List.map String.trim |> String.concat " "
+
 (* A scenario that differs: its operations up to the first answer outside
-   what [os] gave, that answer, and the one expected. *)
-let differs ~scenario ~ops ~got j (a : answer) =
+   what [os] gave, that answer, and the one expected, marked when eio_posix
+   differs there too. *)
+let differs ~posix ~scenario ~ops ~got j (a : answer) =
   let upto = List.filteri (fun i _ -> i <= j) (List.map String.escaped ops) in
   let line =
-    Fmt.str "  %s: %s: expected one of {%s}, got %s" scenario
-      (String.concat "; " upto) a.want (List.nth got j)
+    Fmt.str "  %s: %s: expected %s, got %s%s" scenario (String.concat "; " upto)
+      a.want
+      (one_line (List.nth got j))
+      (if posix then " (eio_posix differs here too)" else "")
   in
   match a.why with
   | None -> line
-  | Some why -> Fmt.str "%s@\n    (%s: %s)" line a.from why
+  | Some why -> Fmt.str "%s@\n    (expected as %s answers: %s)" line a.from why
+
+let eio_posix_differs os =
+  let os : os = match os with `Macos -> `Macos | `Linux -> `Linux in
+  List.filter_map
+    (fun (scenario, ops) ->
+      let row = List.assoc (K.key ops) (Lazy.force rows) in
+      let eio =
+        match os with `Linux -> row.linux_eio | `Macos -> row.macos_eio
+      in
+      let want = List.map (fun a -> a.want) (answers os scenario ops) in
+      if eio <> want then Some scenario else None)
+    K.scenarios
 
 let check ?os ?user ~run:run_in f =
   let os : os =
@@ -150,6 +169,7 @@ let check ?os ?user ~run:run_in f =
     | None ->
         ({ K.gid = 0; other_gid = 0 }, fun s -> not (List.mem s needs_user))
   in
+  let posix = eio_posix_differs os in
   let differed =
     List.concat
       (List.mapi
@@ -168,12 +188,15 @@ let check ?os ?user ~run:run_in f =
                | [] -> []
                | (a : answer) :: rest ->
                    if List.nth got j <> a.want then
-                     [ differs ~scenario ~ops ~got j a ]
+                     [
+                       differs ~posix:(List.mem scenario posix) ~scenario ~ops
+                         ~got j a;
+                     ]
                    else first got (j + 1) rest
              in
              match got with
              | Ok got -> first got 0 answers
-             | Error e -> [ Fmt.str "  %s: %s" scenario e ])
+             | Error e -> [ Fmt.str "  %s: %s" scenario (one_line e) ])
          K.scenarios)
   in
   if differed <> [] then begin
@@ -189,15 +212,3 @@ let check ?os ?user ~run:run_in f =
       (ran - failed) failed left
       (if left > 0 then Fmt.str "; %d that need ~user" left else "")
   end
-
-let eio_posix_differs os =
-  let os : os = match os with `Macos -> `Macos | `Linux -> `Linux in
-  List.filter_map
-    (fun (scenario, ops) ->
-      let row = List.assoc (K.key ops) (Lazy.force rows) in
-      let eio =
-        match os with `Linux -> row.linux_eio | `Macos -> row.macos_eio
-      in
-      let want = List.map (fun a -> a.want) (answers os scenario ops) in
-      if eio <> want then Some scenario else None)
-    K.scenarios

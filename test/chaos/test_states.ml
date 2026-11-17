@@ -554,12 +554,20 @@ let suite =
       Alcotest.test_case "a report says what each written file holds" `Quick
         (fun () ->
           let m = Expect.report half_written in
-          let lines = String.split_on_char '\n' m |> List.map String.trim in
+          (* Each file's line, the first after the field's name. *)
+          let lines =
+            String.split_on_char '\n' m
+            |> List.map (fun l ->
+                let l = String.trim l in
+                if String.starts_with ~prefix:"left:" l then
+                  String.trim (String.sub l 5 (String.length l - 5))
+                else l)
+          in
           List.iter
             (fun want ->
               if not (List.exists (String.starts_with ~prefix:want) lines) then
                 Alcotest.failf "no %S in %s" want m)
-            [ "/a, 3 bytes"; "/b, 1024 bytes" ]);
+            [ "/a, 3 bytes, as its last sync left it"; "/b, 1024 bytes:" ]);
       Alcotest.test_case "a report says where a stale sector came from" `Quick
         (fun () ->
           let field f m = Expect.field m (Expect.report f) in

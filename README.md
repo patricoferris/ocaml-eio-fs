@@ -80,7 +80,7 @@ val save : [> Eio.Fs.dir_ty ] Eio.Path.t -> string -> unit = <fun>
   | () -> "passed"
   | exception Failure report -> List.hd (String.split_on_char '\n' report);;
 - : string =
-"Eio_fs_chaos.run: an acknowledged file lost what it held: after the cut, before the restart, it no longer holds what it held at its ack"
+"Eio_fs_chaos.run: a power cut lost an acknowledged file: /config held \"new\" when acknowledged after #4, and now is missing"
 ```
 
 The save above does not sync its directory, so a power cut loses the
@@ -111,7 +111,7 @@ The scenarios cover the corners where filesystems disagree:
 - the permission rules that an ordinary user meets.
 
 The check runs every scenario, then reports each one whose answer differs,
-as `case lookup: write a x; stat A: expected one of {file 1}, got ENOENT`,
+as `case lookup: write a x; stat A: expected file 1, got ENOENT`,
 with a summary. Pass ``~os:`Macos`` to compare with macOS on its default
 APFS volume, where `a` and `A` are the same name. The permission scenarios run
 only with `~user`, the user the directory's operations run as, as root

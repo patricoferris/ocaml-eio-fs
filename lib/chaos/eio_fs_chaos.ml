@@ -7,6 +7,13 @@ type env = Chaos_env.env
 module Op = Plan.Op
 module Fault = Plan.Fault
 
+(* A report raised as [Failure] prints as itself, its lines kept, wherever
+   an uncaught exception is printed. *)
+let () =
+  Printexc.register_printer (function
+    | Failure m when String.starts_with ~prefix:"Eio_fs_chaos." m -> Some m
+    | _ -> None)
+
 (* {1 Wrapper} *)
 
 let wrap f base =
@@ -1032,12 +1039,10 @@ let failed_check name ~hash ~matched ~trace s out =
            the faulty run left, did not return"
         ~error:(outcome_text o)
         [ faults; ended e ]
-  | Lost (e, _) ->
+  | Lost (e, s) ->
       report
-        ~title:
-          "an acknowledged file lost what it held: after the fault, before the \
-           restart, it no longer holds what it held at its ack"
-        ~error:(outcome_text out)
+        ~title:("a fault lost an acknowledged file: " ^ s)
+        ~error:""
         [ faults; ended e ]
   | Inspected (e, _) ->
       report ~title:"inspect rejected what the fault left"
@@ -1540,6 +1545,8 @@ module Crash = struct
       ( "left",
         match s.state with
         | Drop | Keep -> ""
+        | (Enum _ | Seed _ | Shape _) when r.left = [] ->
+            "no file written since its last sync"
         | Enum _ | Seed _ | Shape _ ->
             let n = List.length r.left in
             (List.take 8 r.left
@@ -1550,10 +1557,7 @@ module Crash = struct
   (* The title of a failed run's report, and its error. *)
   let error_text = function
     | Workload o -> ("the workload failed", outcome_text o)
-    | Settle (Lost _ as o) ->
-        ( "an acknowledged file lost what it held: after the cut, before the \
-           restart, it no longer holds what it held at its ack",
-          outcome_text o )
+    | Settle (Lost (_, s)) -> ("a power cut lost an acknowledged file: " ^ s, "")
     | Settle o -> ("inspect rejected what the cut left", outcome_text o)
     | Recover o ->
         ( "the restart failed: the workload, run again with no fault on what \

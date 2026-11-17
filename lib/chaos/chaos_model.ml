@@ -2113,11 +2113,12 @@ module Crash = struct
               List.take 8 parts @ [ Fmt.str "and %d more runs" (n - 8) ]
           | _ -> parts
         in
-        if parts <> [] || size <> durable then
-          left :=
-            Fmt.str "%s, %d bytes%s" fs.rel size
-              (if parts = [] then "" else ": " ^ String.concat "; " parts)
-            :: !left
+        let held =
+          if parts <> [] then ": " ^ String.concat "; " parts
+          else if size = durable then ", as its last sync left it"
+          else ""
+        in
+        left := Fmt.str "%s, %d bytes%s" fs.rel size held :: !left
       in
       let content fs =
         match Hashtbl.find_opt contents fs.id with

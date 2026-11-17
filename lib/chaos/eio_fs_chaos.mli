@@ -177,6 +177,26 @@ val device :
     the class Eio gives it ([Not_found], [Already_exists], [Permission_denied]
     and so on), else by its errno.
 
+    A report writes each operation as the traces do, a verb and its arguments,
+    paths relative to the scenario's directory:
+
+    - [write p d] saves [d] in [p], creating or truncating it, and [read p]
+      loads [p]; [readd p] is one read of up to 16 bytes, and [pwa p d off]
+      writes [d] at [off] in [p] opened for appending;
+    - [open p flags] opens [p] for reading with [r], else for writing, with [x]
+      exclusive, [t] truncating, [c] creating if missing and [a] appending, and
+      not following a final link with [n];
+    - [opendir p], [lsd p] (lists [p] opened as a directory) and [ls p];
+    - [mkdir p [mode]], [unlink p], [rmdir p], [rename a b], [symlink t p],
+      [readlink p], [chmod p mode], [lchmod p mode] and [chgrp p], which gives
+      [p] the user's supplementary group;
+    - [stat p] and [lstat p] answer the kind and size, [mode p] the mode, and
+      [group p] whether the group is the user's own, the supplementary one or
+      another;
+    - [chain n] makes [n] links [l1] to [ln], each to the one before, the first
+      to [f];
+    - [{s}n] is [s] repeated [n] times.
+
     The answers were recorded as a user other than root, with the umask [0o022]
     and a supplementary group. [user] is the {!Eio_fs.type-user} [dir]'s
     operations run as: with it, every scenario runs, and a scenario that changes
@@ -188,7 +208,9 @@ val device :
     Where Eio defines an answer the kernel cannot give, as for a path Eio
     resolves one component at a time, the expected answer is the one eio_posix
     gave on that kernel. eio_posix itself does not pass: it resolves a trailing
-    slash, ["."] and [".."] itself, where the kernel answers otherwise.
+    slash, ["."] and [".."] itself, where the kernel answers otherwise, and
+    differs on 12 of the 86 scenarios on Linux and 20 on macOS. A filesystem
+    that wraps eio_posix differs there too.
 
     [device] runs every scenario, whatever the earlier ones answered. In a
     scenario it stops at the first answer that differs, as the later ones depend
@@ -197,8 +219,11 @@ val device :
     @raise Failure
       if an answer differs, with one line for each such scenario: its name, its
       operations up to that one, the answer expected and the one given, as
-      [case lookup: write a x; stat A: expected one of {file 1}, got ENOENT];
-      then how many scenarios passed, differed and were left out, and why.
+      [case lookup: write a x; stat A: expected file 1, got ENOENT]. The line
+      ends with [(eio_posix differs here too)] where eio_posix fails that
+      scenario, and the next line says why when the answer expected is
+      eio_posix's rather than the kernel's. Then how many scenarios passed,
+      differed and were left out, and why.
     @raise Invalid_argument
       if [user] is root, its umask is not [0o022], or it has no supplementary
       group. *)

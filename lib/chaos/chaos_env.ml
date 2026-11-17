@@ -18,9 +18,15 @@ type env =
    at most twice that. *)
 let shown = 2048
 
-type side = { mutable envs : int; out : Buffer.t; mutable dropped : int }
+type side = {
+  mutable envs : int;
+  out : Buffer.t;
+  mutable dropped : int;
+  mutable printed : bool; (* whether a program printed anything *)
+}
 
-let side () = { envs = 0; out = Buffer.create 256; dropped = 0 }
+let side () =
+  { envs = 0; out = Buffer.create 256; dropped = 0; printed = false }
 
 let add t s =
   Buffer.add_string t.out s;
@@ -52,11 +58,13 @@ let from s i =
   (j, String.sub s j (n - j))
 
 let printed t =
-  let s = Buffer.contents t.out in
-  let n = String.length s in
-  let cut, tail = if n > shown then from s (n - shown) else (0, s) in
-  let dropped = t.dropped + cut in
-  if dropped = 0 then tail else Fmt.str "... %d bytes before\n%s" dropped tail
+  if not t.printed then ""
+  else
+    let s = Buffer.contents t.out in
+    let n = String.length s in
+    let cut, tail = if n > shown then from s (n - shown) else (0, s) in
+    let dropped = t.dropped + cut in
+    if dropped = 0 then tail else Fmt.str "... %d bytes before\n%s" dropped tail
 
 type Eio.Exn.Backend.t += Refused of string
 
@@ -82,6 +90,7 @@ module Output = struct
   let single_write t bufs =
     List.fold_left
       (fun n b ->
+        t.printed <- true;
         add t (Cstruct.to_string b);
         n + Cstruct.length b)
       0 bufs
@@ -158,7 +167,12 @@ let within t f =
   let traceln =
     {
       Eio.Debug.traceln =
-        (fun ?__POS__:_ fmt -> Format.kasprintf (fun s -> mark t s) fmt);
+        (fun ?__POS__:_ fmt ->
+          Format.kasprintf
+            (fun s ->
+              t.printed <- true;
+              mark t s)
+            fmt);
     }
   in
   Eio.Fiber.with_binding Eio.Private.Debug.v#traceln traceln f
