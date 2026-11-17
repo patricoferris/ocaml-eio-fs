@@ -54,6 +54,22 @@ let test_crash_seed_replay () =
         [ "cut"; "faults"; "error" ])
     [ None; Some 7; Some 8 ]
 
+(* The linear tier grows with the program's structure, not its square: the
+   cuts during a restart are drawn in the sampled tier. *)
+let saves n env =
+  for i = 1 to n do
+    Eio.Path.save ~create:(`Or_truncate 0o644)
+      Eio.Path.(env#fs / Fmt.str "f%d" i)
+      "x"
+  done
+
+let publishes n env =
+  for i = 1 to n do
+    Eio_fs_sync.publish ~max_bytes:16L
+      Eio.Path.(env#fs / Fmt.str "f%d" i)
+      (Eio.Flow.copy_string "x")
+  done
+
 let suite =
   ( "sampling",
     [
@@ -68,4 +84,8 @@ let suite =
         `Quick test_seed_replay;
       Alcotest.test_case "a power cut found under seed 7 replays under any seed"
         `Quick test_crash_seed_replay;
+      Alcotest.test_case "64 saves fit the default budget" `Quick
+        (Expect.passes (check (saves 64)));
+      Alcotest.test_case "16 publications fit the default budget" `Quick
+        (Expect.passes (check (publishes 16)));
     ] )
