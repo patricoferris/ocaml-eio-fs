@@ -73,6 +73,26 @@ let crash_as_user () =
       | exception Eio.Io _ when acked = [] -> ()
       | v, _ -> Fmt.failwith "home/f is %S" v)
 
+(* A publication through a temporary file whose name the program draws:
+   each run of a check may name it differently. *)
+let publish name env =
+  let tmp = P.(env#fs / name) in
+  P.with_open_out ~create:(`Exclusive 0o644) tmp (fun f ->
+      Eio.Flow.copy_string "v" f;
+      Eio.File.sync f);
+  P.rename tmp P.(env#fs / "target")
+
+let random_name () =
+  Eio_fs_chaos.run (fun env ->
+      publish (Fmt.str "target.%d" (Random.int 1_000_000_000)) env)
+
+(* A counter that outlives the run, as a module's own sequence does. *)
+let counter_name () =
+  let n = ref 0 in
+  Eio_fs_chaos.run (fun env ->
+      incr n;
+      publish (Fmt.str "target.%d" !n) env)
+
 let suite =
   ( "env",
     [
@@ -84,4 +104,8 @@ let suite =
         (Expect.caught check_as_user_faults);
       Alcotest.test_case "crash: a workload runs as a user" `Quick
         (Expect.passes crash_as_user);
+      Alcotest.test_case "a temporary named by Random" `Quick
+        (Expect.passes random_name);
+      Alcotest.test_case "a temporary named by a counter" `Quick
+        (Expect.passes counter_name);
     ] )
