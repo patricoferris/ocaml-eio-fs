@@ -526,6 +526,46 @@ let test_append_posix () =
   Eio_fs_sync.append_lines p [ "3" ];
   Alcotest.(check string) "repaired" "1\n2\n3\n" (Eio.Path.load p)
 
+(* A journal whose LF commits a record drops a torn last line before it
+   appends: complete lines stay as they are, malformed ones included, and a
+   tail longer than a read block goes whole. *)
+let append_discards_a_torn_tail p =
+  List.iter
+    (fun (before, expected) ->
+      Eio.Path.save ~create:(`Or_truncate 0o600) p before;
+      Eio_fs_sync.append_lines ~tail:`Discard p [ "new" ];
+      Alcotest.(check string)
+        (Fmt.str "after %S" before)
+        expected (Eio.Path.load p))
+    [
+      ("", "new\n");
+      ("pending\n", "pending\nnew\n");
+      ("pending\nfinished", "pending\nnew\n");
+      ("finished", "new\n");
+      ("bad committed JSON\npartial", "bad committed JSON\nnew\n");
+      ("pending\n" ^ String.make 9000 'x', "pending\nnew\n");
+    ];
+  Eio.Path.save ~create:(`Or_truncate 0o600) p "pending\ntorn";
+  Eio_fs_sync.append_lines ~tail:`Discard p [];
+  Alcotest.(check string)
+    "an empty append drops the torn line" "pending\n" (Eio.Path.load p);
+  Eio.Path.unlink p;
+  Eio_fs_sync.append_lines ~tail:`Discard p [];
+  Alcotest.(check bool)
+    "an empty append makes no file" true
+    (Eio.Path.kind ~follow:true p = `Not_found)
+
+let test_append_discards_a_torn_tail () = with_mem append_discards_a_torn_tail
+
+let test_append_discards_a_torn_tail_posix () =
+  Eio_main.run @@ fun env ->
+  let fs = Eio.Stdenv.fs env in
+  let dir = Filename.temp_file "eio-fs-sync-tail" "" in
+  Sys.remove dir;
+  Eio.Path.mkdir ~perm:0o755 (fs / dir);
+  Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / dir))
+  @@ fun () -> append_discards_a_torn_tail (fs / dir / "journal")
+
 (* The directory barrier that makes a created log's entry durable can fail
    after the file is written. The next durable append barriers the directory
    again, or the file it was told is durable is lost at a crash. *)
@@ -970,6 +1010,10 @@ let suite =
       Alcotest.test_case "append refuses a line holding LF" `Quick
         test_append_refuses_lf;
       Alcotest.test_case "append on posix" `Quick test_append_posix;
+      Alcotest.test_case "append discards a torn tail" `Quick
+        test_append_discards_a_torn_tail;
+      Alcotest.test_case "append discards a torn tail on posix" `Quick
+        test_append_discards_a_torn_tail_posix;
       Alcotest.test_case "append nothing retries the barriers" `Quick
         test_append_nothing_retries_the_barriers;
       Alcotest.test_case "append retries a failed parent barrier" `Quick
