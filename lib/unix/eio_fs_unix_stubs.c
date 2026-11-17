@@ -34,12 +34,15 @@
 #include <unistd.h>
 
 #if defined(__APPLE__)
+#include <sys/attr.h>
 #include <sys/clonefile.h>
+#include <sys/mount.h>
 #endif
 
 #if defined(__linux__)
 #include <linux/fiemap.h>
 #include <linux/fs.h>
+#include <sys/vfs.h>
 #include <sys/ioctl.h>
 #include <sys/syscall.h>
 #include <sys/uio.h>
@@ -429,6 +432,65 @@ CAMLprim value caml_eio_fs_statvfsat(value dirfd_v, value name_v)
   Store_field(result, 2, free_blocks);
   Store_field(result, 3, available_blocks);
   CAMLreturn(result);
+}
+
+/* What the volume holding the entry [name] beneath [dirfd] uses itself, the
+   entry never followed. On Darwin it is the volume's ATTR_VOL_SPACEUSED: an
+   APFS volume shares its container's space, and fstatfs and fstatvfs both
+   give the container's size and free blocks, so their difference is all the
+   container holds. Elsewhere a filesystem is a volume of its own: fstatfs's
+   blocks less its free blocks. */
+CAMLprim value caml_eio_fs_volume_used_at(value dirfd_v, value name_v)
+{
+  CAMLparam2(dirfd_v, name_v);
+#if defined(__APPLE__)
+  const char *call = "getattrlist";
+#else
+  const char *call = "statfs";
+#endif
+  caml_unix_check_path(name_v, call);
+  char *name = caml_stat_strdup(String_val(name_v));
+  int dirfd = Int_val(dirfd_v);
+  int64_t used = 0;
+  int r = -1;
+  caml_release_runtime_system();
+  int fd = eio_fs_open_entry(dirfd, name);
+  if (fd != -1) {
+#if defined(__APPLE__)
+    struct attrlist attrs;
+    struct {
+      uint32_t length;
+      off_t used;
+    } __attribute__((aligned(4), packed)) buf;
+    memset(&attrs, 0, sizeof attrs);
+    attrs.bitmapcount = ATTR_BIT_MAP_COUNT;
+    attrs.volattr = ATTR_VOL_INFO | ATTR_VOL_SPACEUSED;
+    r = fgetattrlist(fd, &attrs, &buf, sizeof buf, 0);
+    if (r == 0)
+      used = (int64_t)buf.used;
+#else
+    struct statfs buf;
+    r = fstatfs(fd, &buf);
+    if (r == 0) {
+#if defined(__linux__)
+      uint64_t block = buf.f_frsize ? (uint64_t)buf.f_frsize
+                                    : (uint64_t)buf.f_bsize;
+#else
+      uint64_t block = (uint64_t)buf.f_bsize;
+#endif
+      used = (int64_t)(((uint64_t)buf.f_blocks - (uint64_t)buf.f_bfree) * block);
+    }
+#endif
+    int e = errno;
+    close(fd);
+    errno = e;
+  }
+  int saved_errno = errno;
+  caml_acquire_runtime_system();
+  caml_stat_free(name);
+  if (r == -1)
+    caml_unix_error(saved_errno, (char *)call, name_v);
+  CAMLreturn(caml_copy_int64(used));
 }
 
 /* --- The sparse map: which bytes a file has, and where they are ---

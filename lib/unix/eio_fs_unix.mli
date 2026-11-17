@@ -87,6 +87,35 @@ val statvfs : _ Eio.Path.t -> statvfs
       directory has no host descriptor.
     @raise Invalid_argument if [path] holds a NUL byte. *)
 
+val volume_used : _ Eio.Path.t -> int64
+(** [volume_used path] is the bytes the volume holding [path] uses itself. On
+    Darwin it is the volume's [ATTR_VOL_SPACEUSED] ([getattrlist]), what
+    [diskutil] gives as its Volume Used Space: an APFS volume shares its
+    container's space with the container's other volumes, and {!val-statvfs}
+    gives the container's size and free blocks, so their difference is what all
+    of them hold. Elsewhere a filesystem is a volume of its own, and this is
+    [statfs]'s blocks less its free blocks. [path] is reached as {!val-statvfs}
+    reaches it, and the call is made on a system thread.
+
+    @raise Eio.Io
+      as [fgetattrlist] or [fstatfs] fails, with {!Eio.Fs.Permission_denied} if
+      [path] leads outside its directory, and with {!Eio.Fs.Not_native} if the
+      directory has no host descriptor.
+    @raise Invalid_argument if [path] holds a NUL byte. *)
+
+type space = {
+  free : int64;
+      (** The bytes an unprivileged writer can still use: {!val-statvfs}'s
+          available blocks. *)
+  used : int64;  (** The bytes the volume uses itself ({!volume_used}). *)
+}
+(** The type for the space of a volume: what is free to a writer and what the
+    volume uses, never the size of a container it shares. *)
+
+val space : _ Eio.Path.t -> space
+(** [space path] is the space of the volume holding [path], read by
+    {!val-statvfs} and {!volume_used}, which it raises as. *)
+
 (** {1:clones Copy-on-write clones} *)
 
 val clone_tree : _ Eio.Path.t -> _ Eio.Path.t -> bool
