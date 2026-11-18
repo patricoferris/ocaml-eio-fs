@@ -1,0 +1,29 @@
+(rule
+ (alias regen)
+ (mode promote)
+ (enabled_if
+  (and
+   (= %{env:REGEN=0} 1)
+   (= %{os_type} Win32)))
+ (targets paths.csv provenance)
+ (deps
+  ../scripts/paths.exe
+  (source_tree ../scripts)
+  (source_tree ../../kernel/scripts)
+  ../../../provenance/write.sh)
+ (action
+  (run
+   bash
+   ../../../provenance/write.sh
+   test/interop/windows
+   scripts/probe.sh
+   scripts/generate.sh
+   scripts/paths.ml
+   scripts/win_paths.ml
+   --
+   %{targets}
+   --
+   bash
+   ../scripts/generate.sh
+   .
+   ../scripts/paths.exe)))

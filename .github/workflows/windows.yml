@@ -1,0 +1,60 @@
+name: Windows trace
+
+# Records the kernel scenarios and the Win32 paths through eio_windows on a
+# Windows runner, and uploads test/interop/kernel/traces and
+# test/interop/windows/traces: with the released Eio, the traces to commit,
+# and with Eio's main branch, to tell what it has fixed since.
+on:
+  workflow_dispatch:
+  push:
+    branches: [r-windows]
+
+permissions:
+  contents: read
+
+jobs:
+  record:
+    name: Record through eio_windows ${{ matrix.eio }}
+    runs-on: windows-latest
+    timeout-minutes: 120
+    strategy:
+      fail-fast: false
+      matrix:
+        eio: ['1.7', 'main']
+    steps:
+      # The provenance pins its inputs by MD5: check them out as committed.
+      - run: git config --global core.autocrlf false
+
+      - uses: actions/checkout@v4
+
+      - uses: ocaml/setup-ocaml@v3
+        with:
+          ocaml-compiler: '5.4'
+
+      - if: matrix.eio == 'main'
+        run: |
+          opam pin add -yn eio git+https://github.com/ocaml-multicore/eio.git#07069de0954fd2d991d7b2f6ea555f28c7abc2d4
+          opam pin add -yn eio_windows git+https://github.com/ocaml-multicore/eio.git#07069de0954fd2d991d7b2f6ea555f28c7abc2d4
+
+      - if: matrix.eio == '1.7'
+        run: opam install dune eio_windows.1.7 fmt cstruct optint
+
+      - if: matrix.eio == 'main'
+        run: opam install dune eio_windows fmt cstruct optint
+
+      # The runner has Developer Mode on, which lets any user make symbolic
+      # links; Windows' default is off, where only a user who holds
+      # SeCreateSymbolicLinkPrivilege may. windows-host.sh records which.
+      - run: Set-ItemProperty -Path HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\AppModelUnlock -Name AllowDevelopmentWithoutDevLicense -Value 0
+
+      - run: opam exec -- dune build @test/interop/kernel/regen-traces @test/interop/windows/regen-traces
+        env:
+          REGEN: '1'
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-traces-${{ matrix.eio }}
+          path: |
+            test/interop/kernel/traces/
+            test/interop/windows/traces/

@@ -1,0 +1,11 @@
+(library
+ (name win_paths)
+ (modules win_paths)
+ (libraries eio eio.utils fmt))
+
+(executable
+ (name paths)
+ (modules paths)
+ (enabled_if
+  (= %{os_type} Win32))
+ (libraries eio eio_windows win_paths))
