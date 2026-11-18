@@ -88,6 +88,7 @@ module Private = struct
 
   let scenarios = Device.scenarios
   let eio_posix_differs = Device.eio_posix_differs
+  let expected = Device.expected
 
   module Crash = Crash
   module Law = Law

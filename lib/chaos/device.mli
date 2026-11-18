@@ -16,6 +16,12 @@ val check :
 (** [check ~os ~user ~run dir] is {!Eio_fs_chaos.device}, each scenario run by
     [run], which is its answers, or why its run did not end. *)
 
+val expected :
+  ?trace:string -> [< `Linux | `Macos ] -> string -> string list option
+(** [expected ~trace os name] is the answers {!check} expects of the scenario
+    [name] on [os], from the trace [trace] (defaults to the one the library
+    holds), or [None] if it was not recorded there. *)
+
 val eio_posix_differs : [< `Linux | `Macos ] -> string list
 (** [eio_posix_differs os] is the scenarios where the recorded eio_posix answers
     on [os] differ from those {!check} expects. *)

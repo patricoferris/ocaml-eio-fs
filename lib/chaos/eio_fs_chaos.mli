@@ -705,6 +705,13 @@ module Private : sig
   (** [eio_posix_differs os] is the scenarios whose answers eio_posix gave on
       [os] differ from those {!val-device} expects. *)
 
+  val expected :
+    ?trace:string -> [< `Linux | `Macos ] -> string -> string list option
+  (** [expected ~trace os name] is the answers {!val-device} expects of the
+      scenario [name] on [os], read from the CSV text [trace] (defaults to the
+      trace the library holds), or [None] if it was not recorded there. A column
+      is found by its name. *)
+
   val check_faults :
     ?os:[< Eio_chaos.os ] ->
     ?budget:int ->

@@ -12,23 +12,24 @@ type row = {
   macos_eio : string list;
 }
 
-let rows =
-  lazy
-    (String.split_on_char '\n' Device_traces.csv
-    |> List.filter (fun l -> l <> "" && not (String.starts_with ~prefix:"#" l))
-    |> List.tl
-    |> List.map (fun line ->
-        let outcomes s = String.split_on_char '|' s in
-        match String.split_on_char ',' line with
-        | [ ops; l; m; le; me ] ->
-            ( ops,
-              {
-                linux = outcomes l;
-                macos = outcomes m;
-                linux_eio = outcomes le;
-                macos_eio = outcomes me;
-              } )
-        | _ -> Fmt.failwith "Eio_fs: a malformed kernel trace line: %s" line))
+let parse csv =
+  String.split_on_char '\n' csv
+  |> List.filter (fun l -> l <> "" && not (String.starts_with ~prefix:"#" l))
+  |> List.tl
+  |> List.map (fun line ->
+      let outcomes s = String.split_on_char '|' s in
+      match String.split_on_char ',' line with
+      | [ ops; l; m; le; me ] ->
+          ( ops,
+            {
+              linux = outcomes l;
+              macos = outcomes m;
+              linux_eio = outcomes le;
+              macos_eio = outcomes me;
+            } )
+      | _ -> Fmt.failwith "Eio_fs: a malformed kernel trace line: %s" line)
+
+let rows = lazy (parse Device_traces.csv)
 
 (* Operations where an Eio directory answers as eio_posix does, not as the
    kernel, and why. *)
@@ -57,9 +58,9 @@ type answer = { want : string; from : string; why : string option }
 
 (* Each operation's answer: the kernel's, or eio_posix's where a rule says
    so and from an operation [Unix] cannot make on. *)
-let answers (os : os) name ops =
+let answers ?(trace = rows) (os : os) name ops =
   let row =
-    match List.assoc_opt (K.key ops) (Lazy.force rows) with
+    match List.assoc_opt (K.key ops) (Lazy.force trace) with
     | Some r -> r
     | None -> Fmt.failwith "Eio_fs: no kernel trace for the scenario %S" name
   in
@@ -90,6 +91,13 @@ let answers (os : os) name ops =
           { want = List.nth eio j; from = posix; why = Some unix_cannot }
       | None -> { want = List.nth kernel j; from = os_name os; why = None })
     ops
+
+let expected ?trace os name =
+  let os = (os :> os) in
+  let trace = Option.map (fun csv -> lazy (parse csv)) trace in
+  match List.assoc_opt name K.scenarios with
+  | None -> Fmt.invalid_arg "Eio_fs: no scenario %S" name
+  | Some ops -> Some (List.map (fun a -> a.want) (answers ?trace os name ops))
 
 let scenarios = List.map fst K.scenarios
 let name = "Eio_fs_chaos.device"

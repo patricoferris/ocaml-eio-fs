@@ -148,6 +148,38 @@ let test_left_out () =
     "left out" true
     (String.ends_with ~suffix:"11 left out; 11 that need ~user" last)
 
+(* The trace with its columns in reverse order but the operations', and one
+   added: the device finds each column by its name. *)
+let test_columns_by_name () =
+  let lines =
+    In_channel.with_open_bin
+      (Filename.concat "traces" "fs.csv")
+      In_channel.input_lines
+  in
+  let shuffle line extra =
+    match String.split_on_char ',' line with
+    | ops :: cols -> String.concat "," ((ops :: List.rev cols) @ [ extra ])
+    | [] -> line
+  in
+  let trace =
+    String.concat "\n"
+      (match lines with
+      | header :: rows ->
+          shuffle header "a column added later"
+          :: List.map (fun r -> shuffle r "?") rows
+      | [] -> [])
+  in
+  List.iter
+    (fun os ->
+      List.iter
+        (fun name ->
+          Alcotest.(check (option (list string)))
+            name
+            (Chaos.Private.expected os name)
+            (Chaos.Private.expected ~trace os name))
+        Chaos.Private.scenarios)
+    [ `Linux; `Macos ]
+
 let invalid name f =
   match f () with
   | () -> Alcotest.failf "%s: the check passed" name
@@ -253,6 +285,7 @@ let () =
           Alcotest.test_case "the other os" `Quick test_wrong_os;
           Alcotest.test_case "left out" `Quick test_left_out;
           Alcotest.test_case "refused arguments" `Quick test_refused;
+          Alcotest.test_case "columns found by name" `Quick test_columns_by_name;
         ] );
       ("host", [ Alcotest.test_case "eio_posix" `Quick test_host ]);
     ]
