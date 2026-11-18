@@ -1352,6 +1352,454 @@ let locate_preexisting ctl ((_, rel) as location) ~ino =
           if in_delta e then e.op.recorded <- location :: e.op.recorded)
         ctl.journal ()
 
+let page_of c p =
+  if Cstruct.length c > p * page then
+    Some (Cstruct.sub c (p * page) (min page (Cstruct.length c - (p * page))))
+  else None
+
+let pages c =
+  List.init
+    ((Cstruct.length c + page - 1) / page)
+    (fun p -> (p, Option.get (page_of c p)))
+
+(* The contents of [l] that differ, the first [max_stale] of them. *)
+let distinct l =
+  let rec go n acc = function
+    | _ when n = max_stale -> List.rev acc
+    | [] -> List.rev acc
+    | ((pg, _) as c) :: rest ->
+        if List.exists (fun (q, _) -> Cstruct.equal pg q) acc then go n acc rest
+        else go (n + 1) (c :: acc) rest
+  in
+  go 0 [] l
+
+(* What a cut decided of the journal, from which it draws the files' data. *)
+type cut = {
+  ctl : t;
+  data_rng : draw option;
+  bytes : bool;
+  lost : int;
+      (* Where the cut first loses a journal entry: a length a change from
+         there on sets does not land, nor a block it allocates. An overwrite
+         within the length may land without it. *)
+  kept : int;
+      (* The last place the cut keeps: a truncation up to it lands, as ext4
+         journals it in the syscall's own handle. *)
+  removed : (string * Cstruct.t) list;
+      (* The files the image no longer holds, whose blocks are free, by
+         path. *)
+  unsynced_removed : (string * Cstruct.t * Cstruct.t) list;
+      (* Those that held unsynced pages, with their durable and live
+         bytes. *)
+  elsewhere : (Cstruct.t * string) list Lazy.t;
+  olds : (int * int, (Cstruct.t * string) list) Hashtbl.t;
+  contents : (int, Cstruct.t) Hashtbl.t;
+  mutable described : string list;
+      (* What the cut left of each file's unsynced writes, latest first. *)
+}
+
+(* What a block the page [p] of [fs] may have been given held: a page a
+   shrink of [fs] freed, else the first removed file that had one there; and
+   the pages a removed file held unsynced, which writeback may have put on
+   disk before the removal. *)
+let same cut (fs : fstate) p =
+  (match List.assoc_opt p fs.freed with
+    | Some pg -> [ (pg, fs.rel ^ " held there before its truncation") ]
+    | None ->
+        Option.to_list
+          (List.find_map
+             (fun (path, c) ->
+               Option.map
+                 (fun pg -> (pg, "the removed " ^ path ^ " held there"))
+                 (page_of c p))
+             cut.removed))
+  @ List.filter_map
+      (fun (path, durable, live) ->
+        match (page_of live p, page_of durable p) with
+        | Some pg, Some d when Cstruct.equal pg d -> None
+        | Some pg, _ -> Some (pg, "the removed " ^ path ^ " held there unsynced")
+        | None, _ -> None)
+      cut.unsynced_removed
+
+(* As ext4 may give a freed block to any offset of any file, the pages other
+   shrinks freed, and those of removed files. *)
+let elsewhere ctl ~removed ~unsynced_removed =
+  let freed =
+    Hashtbl.fold (fun _ (fs : fstate) acc -> fs :: acc) ctl.known []
+    |> List.sort (fun (a : fstate) b -> Int.compare b.id a.id)
+    |> List.concat_map (fun (fs : fstate) ->
+        List.map
+          (fun (p, pg) ->
+            (pg, Fmt.str "%s held at %d before its truncation" fs.rel (p * page)))
+          fs.freed)
+  and gone =
+    List.concat_map
+      (fun (path, c) ->
+        List.map
+          (fun (p, pg) ->
+            (pg, Fmt.str "the removed %s held at %d" path (p * page)))
+          (pages c))
+      removed
+  and unsynced =
+    List.concat_map
+      (fun (path, durable, live) ->
+        List.filter_map
+          (fun (p, pg) ->
+            match page_of durable p with
+            | Some d when Cstruct.equal pg d -> None
+            | _ ->
+                Some
+                  ( pg,
+                    Fmt.str "the removed %s held at %d unsynced" path (p * page)
+                  ))
+          (pages live))
+      unsynced_removed
+  in
+  gone @ unsynced @ freed
+
+(* The stale contents the page [p] of [fs] may hold: [same], then
+   [elsewhere], each content once. *)
+let old cut (fs : fstate) p =
+  match Hashtbl.find_opt cut.olds (fs.id, p) with
+  | Some l -> l
+  | None ->
+      let l = distinct (same cut fs p @ Lazy.force cut.elsewhere) in
+      Hashtbl.replace cut.olds (fs.id, p) l;
+      l
+
+let describe cut (fs : fstate) mine size runs =
+  let durable = Cstruct.length (bytes_of fs.durable) in
+  let run (off, n, src) =
+    let at = Fmt.str "@%d+%d" off n in
+    match src with
+    | `Durable when off >= durable -> Some (at ^ " zeros")
+    | `Durable -> None
+    | `Change k -> (
+        match (List.nth mine k : entry).change with
+        | Write { offset; data } ->
+            Fmt.kstr Option.some "%s as the write @%d+%d left it" at offset
+              (Cstruct.length data)
+        | Resize m when off >= m ->
+            Fmt.kstr Option.some "%s zeros, from the truncation to %d" at m
+        | Resize m when m < off + n ->
+            Fmt.kstr Option.some
+              "%s as the truncation to %d left it, zeros from %d" at m m
+        | Resize m ->
+            Fmt.kstr Option.some "%s as the truncation to %d left it" at m)
+    | `Over -> Some (at ^ " as a failed sync wrote it")
+    | `Stale None -> Fmt.kstr Option.some "%s stale %C" at stale
+    | `Stale (Some from) -> Fmt.kstr Option.some "%s stale (what %s)" at from
+  in
+  let parts = List.filter_map run runs in
+  let parts =
+    match List.length parts with
+    | n when n > 8 -> List.take 8 parts @ [ Fmt.str "and %d more runs" (n - 8) ]
+    | _ -> parts
+  in
+  let held =
+    if parts <> [] then ": " ^ String.concat "; " parts
+    else if size = durable then ", as its last sync left it"
+    else ""
+  in
+  cut.described <- Fmt.str "%s, %d bytes%s" fs.rel size held :: cut.described
+
+(* Under a scripted policy, a change from [upto] on that would set the
+   length does not survive. *)
+let keep_length (fs : fstate) ~upto survivors =
+  match upto with
+  | None -> survivors
+  | Some c ->
+      let _, kept =
+        List.fold_left
+          (fun (len, acc) (e : entry) ->
+            let len' =
+              match e.change with
+              | Write { offset; data } -> max len (offset + Cstruct.length data)
+              | Resize m -> m
+            in
+            if e.seq >= c && len' <> len then (len, acc) else (len', e :: acc))
+          (Cstruct.length (bytes_of fs.durable), [])
+          survivors
+      in
+      List.rev kept
+
+(* The bytes of [fs] with the changes of [mine] for which [pred] holds and
+   the truncations that land. *)
+let survive cut (fs : fstate) ~mine ~truncated ~upto pred =
+  let kept =
+    List.filter (fun e -> pred e || truncated e) mine |> keep_length fs ~upto
+  in
+  List.map (fun e -> (e.change, e.cached)) kept
+  |> replay_cached ~bs:cut.ctl.block_size ~cache:fs.cache (bytes_of fs.durable)
+  |> fst
+  |> sectors_together ~cache:fs.cache (bytes_of fs.durable)
+       (List.map (fun e -> (e.change, e.cached, List.memq e kept)) mine)
+
+(* The bytes of [fs] with the changes of [mine] written back in blocks drawn
+   from [rng]. *)
+let written_back cut (fs : fstate) ~mine ~len_upto ~len_from rng =
+  let changes = List.map (fun e -> (e.change, e.cached)) mine in
+  (* A writeback that failed only partly wrote any of the blocks it lost. *)
+  let over =
+    List.sort_uniq Int.compare (List.map (fun (b, _, _) -> b) fs.partial)
+    |> List.filter_map (fun b ->
+        (* Any failed writeback's version of the block, or none. *)
+        let vs =
+          List.filter_map
+            (fun (b', _, blk) -> if b' = b then Some blk else None)
+            fs.partial
+        in
+        match rng.int (List.length vs + 1) with
+        | 0 -> None
+        | i -> Some (b, List.nth vs (i - 1)))
+  in
+  (* The page cache kept what a failed sync lost, or evicted it, whether a
+     later sync ran or not. *)
+  if (Option.is_some fs.cache || Option.is_some fs.evicted) && rng.bool () then
+    writeback ~over ~len_upto ~len_from ~bytes:cut.bytes ~held:fs.held
+      ~old:(old cut fs) ~describe:(describe cut fs mine) ~rng
+      ~bs:cut.ctl.block_size ~cache:None
+      (Option.value ~default:(bytes_of fs.durable) fs.evicted)
+      (List.map (fun (c, _) -> (c, false)) changes)
+  else
+    writeback ~over ~len_upto ~len_from ~bytes:cut.bytes ~held:fs.held
+      ~old:(old cut fs) ~describe:(describe cut fs mine) ~rng
+      ~bs:cut.ctl.block_size ~cache:fs.cache (bytes_of fs.durable) changes
+
+(* What the cut left in [fs], drawn once. *)
+let content cut (fs : fstate) =
+  match Hashtbl.find_opt cut.contents fs.id with
+  | Some data -> data
+  | None ->
+      let mine = List.rev fs.pending in
+      let truncated (e : entry) =
+        match e.change with Resize _ -> e.seq <= cut.kept | Write _ -> false
+      in
+      (* The changes up to the last truncation that lands set the length,
+         wherever the cut first loses an entry. *)
+      let from =
+        List.fold_left
+          (fun m (e : entry) -> if truncated e then e.seq else m)
+          min_int mine
+      in
+      let count s =
+        List.length (List.filter (fun (e : entry) -> e.seq < s) mine)
+      in
+      let upto =
+        if cut.lost = max_int then None else Some (max cut.lost (from + 1))
+      in
+      let len_upto = match upto with None -> max_int | Some s -> count s in
+      let len_from = if from = min_int then 0 else count (from + 1) in
+      let data =
+        match (cut.ctl.policy, cut.data_rng) with
+        | (Reorder_unsynced _ | Choose _), Some rng ->
+            written_back cut fs ~mine ~len_upto ~len_from rng
+        | Survive pred, _ ->
+            survive cut fs ~mine ~truncated ~upto (fun e ->
+                pred (to_unsynced e))
+        | Drop_unsynced, _ when List.exists truncated mine ->
+            survive cut fs ~mine ~truncated ~upto (fun _ -> false)
+        | _ -> copy_cs (bytes_of fs.durable)
+      in
+      Hashtbl.replace cut.contents fs.id data;
+      data
+
+(* The uncommitted entries of [pending] the policy keeps: a prefix of
+   program order. *)
+let surviving ctl pending =
+  match ctl.policy with
+  | Drop_unsynced -> []
+  | Survive pred ->
+      List.take_while (fun (e : metadata_entry) -> pred e.op.meta) pending
+  | Reorder_unsynced seed ->
+      (* "META" (0x4d455441) as a shift: the literal overflows a 31-bit int
+         (js_of_ocaml, wasm_of_ocaml). *)
+      let salt = (0x4d45 lsl 16) lor 0x5441 in
+      let rng = Random.State.make [| seed; salt |] in
+      (* A uniform length: late crash points are as likely as early ones. *)
+      let n = Random.State.int rng (List.length pending + 1) in
+      List.take n pending
+  | Choose f ->
+      let n = f (List.length pending + 1) in
+      List.filteri (fun i _ -> i < n) pending
+
+(* The snapshot with, in program order, every committed entry, every
+   surviving one, and every one a barrier reached that holds in the image by
+   then, with the entries it needs, as [settle] commits it: a deferred
+   barrier holds once its directory does, wherever the cut fell. An entry
+   pulled in that way may come before entries already replayed, so the
+   replay starts again with it. The entries it replayed are by seq in
+   [included]. *)
+let replay_cut ctl journal ~survives =
+  let included = Hashtbl.create 16 in
+  let snapshot =
+    match ctl.snapshot with Some st -> st | None -> assert false
+  in
+  List.iter
+    (fun (e : metadata_entry) ->
+      if e.committed || survives e then Hashtbl.replace included e.seq ())
+    journal;
+  let rec build () =
+    let again = ref false in
+    let st =
+      List.fold_left
+        (fun st (e : metadata_entry) ->
+          if !again then st
+          else if Hashtbl.mem included e.seq then replay_in ctl st e
+          else if reached st e then begin
+            let clears = Journal.clears_before ctl.journal e.seq in
+            List.iter
+              (fun (d : metadata_entry) ->
+                if not (Hashtbl.mem included d.seq) then begin
+                  Hashtbl.replace included d.seq ();
+                  if d != e then again := true
+                end)
+              (clears @ Journal.closure ctl.journal e);
+            replay_in ctl st e
+          end
+          else st)
+        snapshot journal
+    in
+    if !again then build () else st
+  in
+  (build (), included)
+
+(* The files [tree] no longer holds, whose blocks are free, by path, and
+   those of them that held unsynced pages, with their durable and their live
+   bytes. *)
+let removed_files ctl tree locs =
+  let inos = index [] tree Inos.empty in
+  let located = Hashtbl.create 8 in
+  Paths.iter
+    (fun _ ls -> List.iter (fun (fs, _) -> Hashtbl.replace located fs.id ()) ls)
+    locs.at;
+  (* A file the program still names keeps its blocks, even where the cut
+     lost its creation: only a removal frees them. *)
+  let live = Hashtbl.create 8 in
+  Hashtbl.iter (fun _ (fs : fstate) -> Hashtbl.replace live fs.id ()) ctl.files;
+  (* Nor does a removed file still open: ext4 frees its blocks at its last
+     close. *)
+  let is_open ino = Hashtbl.mem ctl.opened ino in
+  let kept id =
+    Hashtbl.mem located id || Hashtbl.mem live id
+    || Option.fold ~none:false ~some:is_open (Hashtbl.find_opt ctl.file_inos id)
+  in
+  let gone_files =
+    Hashtbl.fold
+      (fun id (fs : fstate) acc ->
+        if kept id then acc else (fs.rel, bytes_of fs.durable) :: acc)
+      ctl.known []
+  and gone_nodes =
+    Inos.fold
+      (fun ino (path, data) acc ->
+        if Inos.mem ino inos || is_open ino then acc else (path, data) :: acc)
+      ctl.snapped []
+  in
+  let unsynced_removed =
+    Hashtbl.fold
+      (fun id (fs : fstate) acc ->
+        if kept id || fs.pending = [] then acc
+        else
+          let durable = bytes_of fs.durable in
+          let pending =
+            List.rev_map (fun e -> (e.change, e.cached)) fs.pending
+          in
+          let _, live =
+            replay_cached ~bs:ctl.block_size durable ~cache:fs.cache pending
+          in
+          (fs.rel, durable, live) :: acc)
+      ctl.known []
+  in
+  (gone_files @ gone_nodes, unsynced_removed)
+
+(* The tree to restore, and whether the cut rewrites the file at a key:
+   under [Kept], what the store holds where the model touched nothing
+   stays. *)
+let with_outside ctl ~owner ~root_path tree =
+  match ctl.outside with
+  | Dropped -> (tree, fun _ -> true)
+  | Kept -> (
+      let touched = touched ctl in
+      match snapshot_at owner root_path with
+      | Dir _ as d ->
+          let tree = kept_dir ~touched ~model:tree [] d in
+          ( tree,
+            fun key ->
+              let segs = path_segments key in
+              touched (tree_find tree segs) segs )
+      | File _ | Link _ -> err_base_not_dir ())
+
+(* Each tracked file is rewritten where the image holds it, which a rename
+   may have made another name than the one it was met at. *)
+let rewrite_files cut ~owner ~root_path ~tree ~locs ~rewrites =
+  let rel_of key = Eio_fs_path.append root_path key in
+  let proot = Option.get cut.ctl.root_box in
+  Paths.iter
+    (fun key ls ->
+      if (not (in_limbo (path_segments key))) && rewrites key then
+        let rel = rel_of key in
+        List.iter
+          (fun (fs, _) ->
+            let content = content cut fs in
+            let (Base_dir ((module B), bv)) = owner in
+            match B.stat bv ~follow:false rel with
+            | { kind = `Regular_file; _ } ->
+                fs.owner <- proot;
+                fs.rel <- rel;
+                rewrite cut.ctl fs content;
+                (* The later of the versions the image and its last sync
+                   hold. *)
+                let times =
+                  List.filter_map Fun.id
+                    [
+                      Option.map times_of_node
+                        (tree_find tree (path_segments key));
+                      Option.map times_of fs.synced;
+                    ]
+                  |> List.sort (fun a b -> Float.compare b.ctime a.ctime)
+                in
+                Option.iter (cut.ctl.set_times rel) (List.nth_opt times 0)
+            | _ | (exception Eio.Io _) -> ())
+          ls)
+    locs.at
+
+let rebuilt_image cut ~tree ~locs =
+  fold_nodes
+    (fun segs node acc ->
+      match segs with
+      | [] -> acc
+      | _ ->
+          let key = String.concat "/" segs in
+          let kind =
+            match node with
+            | Dir _ -> `Dir
+            | Link l -> `Link l.target
+            | File f -> (
+                match Paths.find_opt key locs.at with
+                | Some ((fs, _) :: _) ->
+                    `File (Cstruct.to_string (content cut fs))
+                | Some [] | None -> `File (Cstruct.to_string f.data))
+          in
+          (key, ino_of node, kind) :: acc)
+    [] tree []
+
+(* The draws the files' data is made of under a policy that writes back in
+   blocks. *)
+let data_draws = function
+  | Reorder_unsynced seed -> Some (draw_of_state (Random.State.make [| seed |]))
+  | Choose f -> Some (draw_of_fun f)
+  | Drop_unsynced | Survive _ -> None
+
+(* [tree] without the nodes a rename left in limbo. *)
+let without_limbo = function
+  | Dir d ->
+      Dir
+        {
+          d with
+          entries = Paths.filter (fun k _ -> not (is_limbo k)) d.entries;
+        }
+  | t -> t
+
 (* The image is rebuilt whole even in a fiber being cancelled, as the one
    whose operation cuts the power often is. *)
 let do_crash ctl =
@@ -1360,266 +1808,8 @@ let do_crash ctl =
     ctl.crashed <- true;
     ctl.queued <- [];
     Eio.Cancel.protect @@ fun () ->
-    let data_rng =
-      match ctl.policy with
-      | Reorder_unsynced seed ->
-          Some (draw_of_state (Random.State.make [| seed |]))
-      | Choose f -> Some (draw_of_fun f)
-      | Drop_unsynced | Survive _ -> None
-    in
+    let data_rng = data_draws ctl.policy in
     let bytes = match ctl.policy with Choose _ -> true | _ -> false in
-    let contents = Hashtbl.create 16 in
-    (* Where the cut first loses a journal entry: a length a change from
-       there on sets does not land, nor a block it allocates. An overwrite
-       within the length may land without it. *)
-    let lost = ref max_int in
-    (* The last place the cut keeps: a truncation up to it lands, as ext4
-       journals it in the syscall's own handle. *)
-    let kept = ref min_int in
-    (* The files the image no longer holds, whose blocks are free, by
-       path. *)
-    let removed = ref [] and unsynced_removed = ref [] in
-    let page_of c p =
-      if Cstruct.length c > p * page then
-        Some
-          (Cstruct.sub c (p * page) (min page (Cstruct.length c - (p * page))))
-      else None
-    in
-    let pages c =
-      List.init
-        ((Cstruct.length c + page - 1) / page)
-        (fun p -> (p, Option.get (page_of c p)))
-    in
-    (* What a block the page [p] of [fs] may have been given held: a page
-       a shrink of [fs] freed, else the first removed file that had one
-       there; and the pages a removed file held unsynced, which writeback
-       may have put on disk before the removal. Then, as ext4 may give a
-       freed block to any offset of any file, the pages of [elsewhere]:
-       those other shrinks freed, and those of removed files. Each content
-       comes once, and no more than [max_stale] of them. *)
-    let same fs p =
-      (match List.assoc_opt p fs.freed with
-        | Some pg -> [ (pg, fs.rel ^ " held there before its truncation") ]
-        | None ->
-            Option.to_list
-              (List.find_map
-                 (fun (path, c) ->
-                   Option.map
-                     (fun pg -> (pg, "the removed " ^ path ^ " held there"))
-                     (page_of c p))
-                 !removed))
-      @ List.filter_map
-          (fun (path, durable, live) ->
-            match (page_of live p, page_of durable p) with
-            | Some pg, Some d when Cstruct.equal pg d -> None
-            | Some pg, _ ->
-                Some (pg, "the removed " ^ path ^ " held there unsynced")
-            | None, _ -> None)
-          !unsynced_removed
-    in
-    let elsewhere =
-      lazy
-        (let freed =
-           Hashtbl.fold (fun _ (fs : fstate) acc -> fs :: acc) ctl.known []
-           |> List.sort (fun (a : fstate) b -> Int.compare b.id a.id)
-           |> List.concat_map (fun (fs : fstate) ->
-               List.map
-                 (fun (p, pg) ->
-                   ( pg,
-                     Fmt.str "%s held at %d before its truncation" fs.rel
-                       (p * page) ))
-                 fs.freed)
-         and gone =
-           List.concat_map
-             (fun (path, c) ->
-               List.map
-                 (fun (p, pg) ->
-                   (pg, Fmt.str "the removed %s held at %d" path (p * page)))
-                 (pages c))
-             !removed
-         and unsynced =
-           List.concat_map
-             (fun (path, durable, live) ->
-               List.filter_map
-                 (fun (p, pg) ->
-                   match page_of durable p with
-                   | Some d when Cstruct.equal pg d -> None
-                   | _ ->
-                       Some
-                         ( pg,
-                           Fmt.str "the removed %s held at %d unsynced" path
-                             (p * page) ))
-                 (pages live))
-             !unsynced_removed
-         in
-         gone @ unsynced @ freed)
-    in
-    let distinct l =
-      let rec go n acc = function
-        | _ when n = max_stale -> List.rev acc
-        | [] -> List.rev acc
-        | ((pg, _) as c) :: rest ->
-            if List.exists (fun (q, _) -> Cstruct.equal pg q) acc then
-              go n acc rest
-            else go (n + 1) (c :: acc) rest
-      in
-      go 0 [] l
-    in
-    let olds = Hashtbl.create 8 in
-    let old fs p =
-      match Hashtbl.find_opt olds (fs.id, p) with
-      | Some l -> l
-      | None ->
-          let l = distinct (same fs p @ Lazy.force elsewhere) in
-          Hashtbl.replace olds (fs.id, p) l;
-          l
-    in
-    (* What the crash left of each file's unsynced writes. *)
-    let left = ref [] in
-    let describe (fs : fstate) mine size runs =
-      let durable = Cstruct.length (bytes_of fs.durable) in
-      let run (off, n, src) =
-        let at = Fmt.str "@%d+%d" off n in
-        match src with
-        | `Durable when off >= durable -> Some (at ^ " zeros")
-        | `Durable -> None
-        | `Change k -> (
-            match (List.nth mine k : entry).change with
-            | Write { offset; data } ->
-                Fmt.kstr Option.some "%s as the write @%d+%d left it" at offset
-                  (Cstruct.length data)
-            | Resize m when off >= m ->
-                Fmt.kstr Option.some "%s zeros, from the truncation to %d" at m
-            | Resize m when m < off + n ->
-                Fmt.kstr Option.some
-                  "%s as the truncation to %d left it, zeros from %d" at m m
-            | Resize m ->
-                Fmt.kstr Option.some "%s as the truncation to %d left it" at m)
-        | `Over -> Some (at ^ " as a failed sync wrote it")
-        | `Stale None -> Fmt.kstr Option.some "%s stale %C" at stale
-        | `Stale (Some from) ->
-            Fmt.kstr Option.some "%s stale (what %s)" at from
-      in
-      let parts = List.filter_map run runs in
-      let parts =
-        match List.length parts with
-        | n when n > 8 ->
-            List.take 8 parts @ [ Fmt.str "and %d more runs" (n - 8) ]
-        | _ -> parts
-      in
-      let held =
-        if parts <> [] then ": " ^ String.concat "; " parts
-        else if size = durable then ", as its last sync left it"
-        else ""
-      in
-      left := Fmt.str "%s, %d bytes%s" fs.rel size held :: !left
-    in
-    let content fs =
-      match Hashtbl.find_opt contents fs.id with
-      | Some c -> c
-      | None ->
-          let mine = List.rev fs.pending in
-          let truncated (e : entry) =
-            match e.change with Resize _ -> e.seq <= !kept | Write _ -> false
-          in
-          (* The changes up to the last truncation that lands set the
-             length, wherever the cut first loses an entry. *)
-          let from =
-            List.fold_left
-              (fun m (e : entry) -> if truncated e then e.seq else m)
-              min_int mine
-          in
-          let count c =
-            List.length (List.filter (fun (e : entry) -> e.seq < c) mine)
-          in
-          let cut =
-            if !lost = max_int then None else Some (max !lost (from + 1))
-          in
-          let len_upto = match cut with None -> max_int | Some c -> count c in
-          let len_from = if from = min_int then 0 else count (from + 1) in
-          (* Under a scripted policy, a change past the cut that would set
-             the length does not survive. *)
-          let keep_length survivors =
-            match cut with
-            | None -> survivors
-            | Some c ->
-                let _, kept =
-                  List.fold_left
-                    (fun (len, acc) (e : entry) ->
-                      let len' =
-                        match e.change with
-                        | Write { offset; data } ->
-                            max len (offset + Cstruct.length data)
-                        | Resize m -> m
-                      in
-                      if e.seq >= c && len' <> len then (len, acc)
-                      else (len', e :: acc))
-                    (Cstruct.length (bytes_of fs.durable), [])
-                    survivors
-                in
-                List.rev kept
-          in
-          (* The changes for which [pred] holds and the truncations that
-             land. *)
-          let survive pred =
-            let kept =
-              List.filter (fun e -> pred e || truncated e) mine |> keep_length
-            in
-            List.map (fun e -> (e.change, e.cached)) kept
-            |> replay_cached ~bs:ctl.block_size ~cache:fs.cache
-                 (bytes_of fs.durable)
-            |> fst
-            |> sectors_together ~cache:fs.cache (bytes_of fs.durable)
-                 (List.map
-                    (fun e -> (e.change, e.cached, List.memq e kept))
-                    mine)
-          in
-          let c =
-            match (ctl.policy, data_rng) with
-            | (Reorder_unsynced _ | Choose _), Some rng ->
-                let changes = List.map (fun e -> (e.change, e.cached)) mine in
-                (* A writeback that failed only partly wrote any of the
-                   blocks it lost. *)
-                let over =
-                  List.sort_uniq Int.compare
-                    (List.map (fun (b, _, _) -> b) fs.partial)
-                  |> List.filter_map (fun b ->
-                      (* Any failed writeback's version of the block, or
-                         none. *)
-                      let vs =
-                        List.filter_map
-                          (fun (b', _, blk) ->
-                            if b' = b then Some blk else None)
-                          fs.partial
-                      in
-                      match rng.int (List.length vs + 1) with
-                      | 0 -> None
-                      | i -> Some (b, List.nth vs (i - 1)))
-                in
-                (* The page cache kept what a failed sync lost, or evicted
-                   it, whether a later sync ran or not. *)
-                if
-                  (Option.is_some fs.cache || Option.is_some fs.evicted)
-                  && rng.bool ()
-                then
-                  writeback ~over ~len_upto ~len_from ~bytes ~held:fs.held
-                    ~old:(old fs) ~describe:(describe fs mine) ~rng
-                    ~bs:ctl.block_size ~cache:None
-                    (Option.value ~default:(bytes_of fs.durable) fs.evicted)
-                    (List.map (fun (c, _) -> (c, false)) changes)
-                else
-                  writeback ~over ~len_upto ~len_from ~bytes ~held:fs.held
-                    ~old:(old fs) ~describe:(describe fs mine) ~rng
-                    ~bs:ctl.block_size ~cache:fs.cache (bytes_of fs.durable)
-                    changes
-            | Survive pred, _ -> survive (fun e -> pred (to_unsynced e))
-            | Drop_unsynced, _ when List.exists truncated mine ->
-                survive (fun _ -> false)
-            | _ -> copy_cs (bytes_of fs.durable)
-          in
-          Hashtbl.replace contents fs.id c;
-          c
-    in
     let journal =
       List.rev
         (Journal.fold (fun (e : metadata_entry) acc -> e :: acc) ctl.journal [])
@@ -1627,194 +1817,122 @@ let do_crash ctl =
     let pending =
       List.filter (fun (e : metadata_entry) -> not e.committed) journal
     in
-    let survivors =
-      match ctl.policy with
-      | Drop_unsynced -> []
-      | Survive pred ->
-          List.take_while (fun (e : metadata_entry) -> pred e.op.meta) pending
-      | Reorder_unsynced seed ->
-          (* "META" (0x4d455441) as a shift: the literal overflows a 31-bit
-             int (js_of_ocaml, wasm_of_ocaml). *)
-          let salt = (0x4d45 lsl 16) lor 0x5441 in
-          let rng = Random.State.make [| seed; salt |] in
-          (* A uniform length: late crash points are as likely as early
-             ones. *)
-          let n = Random.State.int rng (List.length pending + 1) in
-          List.take n pending
-      | Choose f ->
-          let n = f (List.length pending + 1) in
-          List.filteri (fun i _ -> i < n) pending
-    in
+    let survivors = surviving ctl pending in
     let survives e = List.memq e survivors in
     let owner, root_path = root ctl in
-    (* The snapshot with, in program order, every committed entry, every
-       surviving one, and every one a barrier reached that holds in the
-       image by then, with the entries it needs, as [settle] commits it: a
-       deferred barrier holds once its directory does, wherever the cut
-       fell. An entry pulled in that way may come before entries already
-       replayed, so the replay starts again with it. *)
-    let included = Hashtbl.create 16 in
-    let { tree; locs; _ } =
-      let snapshot =
-        match ctl.snapshot with Some st -> st | None -> assert false
-      in
-      List.iter
-        (fun (e : metadata_entry) ->
-          if e.committed || survives e then Hashtbl.replace included e.seq ())
-        journal;
-      let rec build () =
-        let again = ref false in
-        let st =
-          List.fold_left
-            (fun st (e : metadata_entry) ->
-              if !again then st
-              else if Hashtbl.mem included e.seq then replay_in ctl st e
-              else if reached st e then begin
-                let clears = Journal.clears_before ctl.journal e.seq in
-                List.iter
-                  (fun (d : metadata_entry) ->
-                    if not (Hashtbl.mem included d.seq) then begin
-                      Hashtbl.replace included d.seq ();
-                      if d != e then again := true
-                    end)
-                  (clears @ Journal.closure ctl.journal e);
-                replay_in ctl st e
-              end
-              else st)
-            snapshot journal
-        in
-        if !again then build () else st
-      in
-      build ()
-    in
-    lost :=
-      Journal.first_lost ctl.journal ~kept:(fun e -> Hashtbl.mem included e.seq);
-    kept :=
-      Journal.last_kept ctl.journal ~kept:(fun e -> Hashtbl.mem included e.seq);
-    let tree =
-      match tree with
-      | Dir d ->
-          Dir
-            {
-              d with
-              entries = Paths.filter (fun k _ -> not (is_limbo k)) d.entries;
-            }
-      | t -> t
-    in
-    (let inos = index [] tree Inos.empty in
-     let located = Hashtbl.create 8 in
-     Paths.iter
-       (fun _ ls ->
-         List.iter (fun (fs, _) -> Hashtbl.replace located fs.id ()) ls)
-       locs.at;
-     (* A file the program still names keeps its blocks, even where the
-        cut lost its creation: only a removal frees them. *)
-     let live = Hashtbl.create 8 in
-     Hashtbl.iter
-       (fun _ (fs : fstate) -> Hashtbl.replace live fs.id ())
-       ctl.files;
-     (* Nor does a removed file still open: ext4 frees its blocks at its
-        last close. *)
-     let is_open ino = Hashtbl.mem ctl.opened ino in
-     let kept id =
-       Hashtbl.mem located id || Hashtbl.mem live id
-       || Option.fold ~none:false ~some:is_open
-            (Hashtbl.find_opt ctl.file_inos id)
-     in
-     let gone_files =
-       Hashtbl.fold
-         (fun id (fs : fstate) acc ->
-           if kept id then acc else (fs.rel, bytes_of fs.durable) :: acc)
-         ctl.known []
-     and gone_nodes =
-       Inos.fold
-         (fun ino (path, data) acc ->
-           if Inos.mem ino inos || is_open ino then acc else (path, data) :: acc)
-         ctl.snapped []
-     in
-     removed := gone_files @ gone_nodes;
-     unsynced_removed :=
-       Hashtbl.fold
-         (fun id (fs : fstate) acc ->
-           if kept id || fs.pending = [] then acc
-           else
-             let durable = bytes_of fs.durable in
-             let pending =
-               List.rev_map (fun e -> (e.change, e.cached)) fs.pending
-             in
-             let _, live =
-               replay_cached ~bs:ctl.block_size durable ~cache:fs.cache pending
-             in
-             (fs.rel, durable, live) :: acc)
-         ctl.known []);
-    let tree, rewrites =
-      match ctl.outside with
-      | Dropped -> (tree, fun _ -> true)
-      | Kept -> (
-          let touched = touched ctl in
-          match snapshot_at owner root_path with
-          | Dir _ as d ->
-              let tree = kept_dir ~touched ~model:tree [] d in
-              ( tree,
-                fun key ->
-                  let segs = path_segments key in
-                  touched (tree_find tree segs) segs )
-          | File _ | Link _ -> err_base_not_dir ())
-    in
+    let { tree; locs; _ }, included = replay_cut ctl journal ~survives in
+    let in_cut (e : metadata_entry) = Hashtbl.mem included e.seq in
+    let lost = Journal.first_lost ctl.journal ~kept:in_cut in
+    let kept = Journal.last_kept ctl.journal ~kept:in_cut in
+    let tree = without_limbo tree in
+    let removed, unsynced_removed = removed_files ctl tree locs in
+    let tree, rewrites = with_outside ctl ~owner ~root_path tree in
     restore_root ~stamp:ctl.set_times owner root_path tree;
-    (* Each tracked file is rewritten where the image holds it, which a
-       rename may have made another name than the one it was met at. *)
-    let rel_of key = Eio_fs_path.append root_path key in
-    let proot = Option.get ctl.root_box in
-    Paths.iter
-      (fun key ls ->
-        if (not (in_limbo (path_segments key))) && rewrites key then
-          let rel = rel_of key in
-          List.iter
-            (fun (fs, _) ->
-              let content = content fs in
-              let (Base_dir ((module B), bv)) = owner in
-              match B.stat bv ~follow:false rel with
-              | { kind = `Regular_file; _ } ->
-                  fs.owner <- proot;
-                  fs.rel <- rel;
-                  rewrite ctl fs content;
-                  (* The later of the versions the image and its last sync
-                     hold. *)
-                  let times =
-                    List.filter_map Fun.id
-                      [
-                        Option.map times_of_node
-                          (tree_find tree (path_segments key));
-                        Option.map times_of fs.synced;
-                      ]
-                    |> List.sort (fun a b -> Float.compare b.ctime a.ctime)
-                  in
-                  Option.iter (ctl.set_times rel) (List.nth_opt times 0)
-              | _ | (exception Eio.Io _) -> ())
-            ls)
-      locs.at;
-    ctl.left <- List.rev !left;
-    ctl.image <-
-      fold_nodes
-        (fun segs node acc ->
-          match segs with
-          | [] -> acc
-          | _ ->
-              let key = String.concat "/" segs in
-              let kind =
-                match node with
-                | Dir _ -> `Dir
-                | Link l -> `Link l.target
-                | File f -> (
-                    match Paths.find_opt key locs.at with
-                    | Some ((fs, _) :: _) ->
-                        `File (Cstruct.to_string (content fs))
-                    | Some [] | None -> `File (Cstruct.to_string f.data))
-              in
-              (key, ino_of node, kind) :: acc)
-        [] tree []
+    let cut =
+      {
+        ctl;
+        data_rng;
+        bytes;
+        lost;
+        kept;
+        removed;
+        unsynced_removed;
+        elsewhere = lazy (elsewhere ctl ~removed ~unsynced_removed);
+        olds = Hashtbl.create 8;
+        contents = Hashtbl.create 16;
+        described = [];
+      }
+    in
+    rewrite_files cut ~owner ~root_path ~tree ~locs ~rewrites;
+    ctl.left <- List.rev cut.described;
+    ctl.image <- rebuilt_image cut ~tree ~locs
   end
+
+(* The inodes of the directories a rename to [dst] lands under, from the
+   root down. *)
+let rename_ancestors owner ~root dst =
+  let segs = path_segments (parent_path dst) in
+  let lead = if Eio_fs_path.is_abs dst then "/" else "" in
+  List.init
+    (List.length segs + 1 - List.length root)
+    (fun i -> List.length root + i)
+  |> List.filter_map (fun n ->
+      ino_at owner (lead ^ String.concat "/" (List.take n segs)))
+
+(* New attributes on the node: committed by a barrier on the node itself,
+   for a directory, or by its sync, for a file. A barrier on its parent does
+   not: ext4's fsync of a directory completes only that directory's own last
+   transaction. *)
+let attrs_delta owner ~root p =
+  let (Base_dir ((module B), bv)) = owner in
+  let st = B.stat bv ~follow:false p in
+  match tree_path ~root p with
+  | Some segs ->
+      let edit =
+        Attrs
+          {
+            ino = st.ino;
+            perm = st.perm;
+            uid = st.uid;
+            gid = st.gid;
+            times = times_of st;
+          }
+      in
+      ([ (segs, edit) ], [ st.ino ], Some st.ino)
+  | None -> ([], [], None)
+
+(* A rename moves the image's own node: nothing of what it holds live comes
+   with it. It is committed by a barrier on either directory. *)
+let rename_delta ~gone ?victim ~root ~parent src dst =
+  match
+    (List.assoc_opt src gone, tree_path ~root dst, parent src, parent dst)
+  with
+  | Some ino, Some segs, Some from, Some up ->
+      (* The node it replaces goes first: a directory the image still fills
+         stops the rename, and the entries that emptied it come with it. *)
+      let replaced =
+        match victim with
+        | Some v when not (Int64.equal v ino) -> [ (segs, Remove v) ]
+        | Some _ | None -> []
+      in
+      (replaced @ [ (segs, Move { parent = up; ino }) ], [ from; up ], None)
+  | _ -> ([], [], None)
+
+(* Each path [resolved] names leaves its directory, or enters it as the
+   store now holds it. *)
+let place_delta ~gone owner ~root ~parent resolved =
+  let halves =
+    List.filter_map
+      (fun p ->
+        match (tree_path ~root p, parent p) with
+        | None, _ | _, None -> None
+        | Some segs, Some up -> (
+            match List.assoc_opt p gone with
+            | Some ino -> Some (up, (segs, Remove ino))
+            | None -> (
+                match snapshot_at owner p with
+                | node -> Some (up, (segs, Place { parent = up; node }))
+                | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> None)))
+      resolved
+  in
+  (List.map snd halves, List.map fst halves, None)
+
+(* The times the change gave the directories it changed, and the node a
+   rename moved: they land with it, as ext4 journals them together. *)
+let stamps owner ~kind ~delta resolved =
+  match (kind, delta) with
+  | (Chmod _ | Chown _), _ | _, [] -> []
+  | _ ->
+      let (Base_dir ((module B), bv)) = owner in
+      let moved =
+        match (kind, resolved) with Rename _, [ _; dst ] -> [ dst ] | _ -> []
+      in
+      List.filter_map
+        (fun p ->
+          match B.stat bv ~follow:false p with
+          | st -> Some ([], Times { ino = st.ino; times = times_of st })
+          | exception Eio.Io _ -> None)
+        (List.map parent_path resolved @ moved)
 
 (* [path] and [kind] as the caller spelt them, [resolved] the paths the
    operation touched, resolved: its own first. [gone] gives the inode a
@@ -1828,76 +1946,14 @@ let record_metadata ?(gone = []) ?victim ctl ~path ~kind ~resolved =
   let parent p = ino_at owner (parent_path p) in
   let ancestors =
     match (kind, resolved) with
-    | Rename _, [ _; dst ] ->
-        let segs = path_segments (parent_path dst) in
-        let lead = if Eio_fs_path.is_abs dst then "/" else "" in
-        List.init
-          (List.length segs + 1 - List.length root)
-          (fun i -> List.length root + i)
-        |> List.filter_map (fun n ->
-            ino_at owner (lead ^ String.concat "/" (List.take n segs)))
+    | Rename _, [ _; dst ] -> rename_ancestors owner ~root dst
     | _ -> []
   in
   let delta, dirs, attrs_ino =
     match (kind, resolved) with
-    | (Chmod _ | Chown _), [ p ] -> (
-        (* New attributes on the node: committed by a barrier on the node
-           itself, for a directory, or by its sync, for a file. A barrier on
-           its parent does not: ext4's fsync of a directory completes only
-           that directory's own last transaction. *)
-        let (Base_dir ((module B), bv)) = owner in
-        let st = B.stat bv ~follow:false p in
-        match tree_path ~root p with
-        | Some segs ->
-            let edit =
-              Attrs
-                {
-                  ino = st.ino;
-                  perm = st.perm;
-                  uid = st.uid;
-                  gid = st.gid;
-                  times = times_of st;
-                }
-            in
-            ([ (segs, edit) ], [ st.ino ], Some st.ino)
-        | None -> ([], [], None))
-    | Rename _, [ src; dst ] -> (
-        (* A rename moves the image's own node: nothing of what it holds
-           live comes with it. It is committed by a barrier on either
-           directory. *)
-        match
-          (List.assoc_opt src gone, tree_path ~root dst, parent src, parent dst)
-        with
-        | Some ino, Some segs, Some from, Some up ->
-            (* The node it replaces goes first: a directory the image
-               still fills stops the rename, and the entries that emptied
-               it come with it. *)
-            let replaced =
-              match victim with
-              | Some v when not (Int64.equal v ino) -> [ (segs, Remove v) ]
-              | Some _ | None -> []
-            in
-            ( replaced @ [ (segs, Move { parent = up; ino }) ],
-              [ from; up ],
-              None )
-        | _ -> ([], [], None))
-    | _ ->
-        let halves =
-          List.filter_map
-            (fun p ->
-              match (tree_path ~root p, parent p) with
-              | None, _ | _, None -> None
-              | Some segs, Some up -> (
-                  match List.assoc_opt p gone with
-                  | Some ino -> Some (up, (segs, Remove ino))
-                  | None -> (
-                      match snapshot_at owner p with
-                      | node -> Some (up, (segs, Place { parent = up; node }))
-                      | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) ->
-                          None)))
-            resolved
-        in
-        (List.map snd halves, List.map fst halves, None)
+    | (Chmod _ | Chown _), [ p ] -> attrs_delta owner ~root p
+    | Rename _, [ src; dst ] -> rename_delta ~gone ?victim ~root ~parent src dst
+    | _ -> place_delta ~gone owner ~root ~parent resolved
   in
   let recorded =
     List.concat_map (files_under ctl) resolved
@@ -1918,26 +1974,7 @@ let record_metadata ?(gone = []) ?victim ctl ~path ~kind ~resolved =
     | Chmod _ | Chown _ -> []
     | _ -> List.sort_uniq Int64.compare dirs
   in
-  (* The times the change gave the directories it changed, and the node a
-     rename moved: they land with it, as ext4 journals them together. *)
-  let stamps =
-    match (kind, delta) with
-    | (Chmod _ | Chown _), _ | _, [] -> []
-    | _ ->
-        let (Base_dir ((module B), bv)) = owner in
-        let moved =
-          match (kind, resolved) with
-          | Rename _, [ _; dst ] -> [ dst ]
-          | _ -> []
-        in
-        List.filter_map
-          (fun p ->
-            match B.stat bv ~follow:false p with
-            | st -> Some ([], Times { ino = st.ino; times = times_of st })
-            | exception Eio.Io _ -> None)
-          (List.map parent_path resolved @ moved)
-  in
-  let delta = delta @ stamps in
+  let delta = delta @ stamps owner ~kind ~delta resolved in
   let moved, removed =
     List.fold_right
       (fun (_, edit) (moved, removed) ->
@@ -2018,6 +2055,62 @@ let split_young ctl fs ~upto =
 let keep_young ctl fs young =
   List.iter (fun e -> push ctl fs { e with egen = fs.gen }) (List.rev young)
 
+(* Evicted, the pages that failed read as the disk holds them: the durable
+   bytes, with what was flushed and the truncations kept, at the length [len]
+   the file has. None of their writeback landed. *)
+let evicted_pages (fs : fstate) ~flushed ~len pending =
+  let e =
+    replay_changes (bytes_of fs.durable)
+      (List.filter_map
+         (fun e ->
+           match e.change with
+           | _ when flushed e -> Some e.change
+           | Resize _ -> Some e.change
+           | Write _ -> None)
+         pending)
+  in
+  let img = Cstruct.create len in
+  Cstruct.blit e 0 img 0 (min len (Cstruct.length e));
+  img
+
+(* The blocks of a failed sync's pages, which are clean and unwritten: the
+   dirty changes', over the length [cache] and the flushed changes give. *)
+let failed_blocks ctl ~cache ~flushed pending =
+  let bs = ctl.block_size in
+  let flushed, dirty = List.partition flushed pending in
+  let uncached l =
+    List.filter_map (fun e -> if e.cached then None else Some e.change) l
+  in
+  let len =
+    List.fold_left
+      (fun n -> function
+        | Write { offset; data } -> max n (offset + Cstruct.length data)
+        | Resize m -> m)
+      (Cstruct.length cache) (uncached flushed)
+  in
+  dirty_blocks ~writes:true ~bs len (uncached dirty)
+
+(* The versions of the block [b] a partly failed writeback may have put on
+   disk: as it stands in [live], and in [evicted] where it differs. *)
+let block_versions ctl ~live ~evicted b =
+  let bs = ctl.block_size in
+  let version src b =
+    let off = b * bs in
+    let n = min bs (Cstruct.length src - off) in
+    (* A page cut away by then is written no more; the tail of the last
+       one past the end is zero. *)
+    if n <= 0 then None else Some (b, ctl.seq, copy_cs (Cstruct.sub src off n))
+  in
+  let v = version live b in
+  match Option.bind evicted (fun e -> version e b) with
+  | Some (_, _, e) as w
+    when not
+           (Option.fold ~none:false
+              ~some:(fun (_, _, l) -> Cstruct.equal l e)
+              v) ->
+      Option.to_list v @ Option.to_list w
+  | _ -> Option.to_list v
+
 (* A failed barrier loses the pending writes, which the page cache keeps:
    a later change that dirties one of their blocks writes it whole. On
    macOS, the changes an earlier fsync flushed are in the drive's cache,
@@ -2044,66 +2137,19 @@ let fail_sync ?(upto = max_int) ?(evict = false) ?(relive = ignore) ctl fs =
              (Option.value ~default:(bytes_of fs.durable) e)
              (List.map (fun e -> e.change) pending))
   in
-  (* Evicted, the pages that failed read as the disk holds them: the
-     durable bytes, with what was flushed and the truncations kept, at the
-     length the file has. None of their writeback landed. *)
   let live =
     if not evict then live
     else
-      let e =
-        replay_changes (bytes_of fs.durable)
-          (List.filter_map
-             (fun e ->
-               match e.change with
-               | _ when flushed e -> Some e.change
-               | Resize _ -> Some e.change
-               | Write _ -> None)
-             pending)
-      in
-      let n = Cstruct.length live in
-      let img = Cstruct.create n in
-      Cstruct.blit e 0 img 0 (min n (Cstruct.length e));
+      let img = evicted_pages fs ~flushed ~len:(Cstruct.length live) pending in
       relive img;
       fs.evicted <- None;
       img
   in
   fs.cache <- Some live;
-  (* The pages that failed are clean and unwritten; those that did not
-     may be on disk, as they stood. *)
-  let bs = ctl.block_size in
-  let written =
-    let flushed, dirty = List.partition flushed pending in
-    let uncached l =
-      List.filter_map (fun e -> if e.cached then None else Some e.change) l
-    in
-    let len =
-      List.fold_left
-        (fun n -> function
-          | Write { offset; data } -> max n (offset + Cstruct.length data)
-          | Resize m -> m)
-        (Cstruct.length cache) (uncached flushed)
-    in
-    dirty_blocks ~writes:true ~bs len (uncached dirty)
-  in
-  let version src b =
-    let off = b * bs in
-    let n = min bs (Cstruct.length src - off) in
-    (* A page cut away by then is written no more; the tail of the last
-       one past the end is zero. *)
-    if n <= 0 then None else Some (b, ctl.seq, copy_cs (Cstruct.sub src off n))
-  in
-  let versions b =
-    let v = version live b in
-    match Option.bind evicted (fun e -> version e b) with
-    | Some (_, _, e) as w
-      when not
-             (Option.fold ~none:false
-                ~some:(fun (_, _, l) -> Cstruct.equal l e)
-                v) ->
-        Option.to_list v @ Option.to_list w
-    | _ -> Option.to_list v
-  in
-  if not evict then fs.partial <- List.concat_map versions written @ fs.partial;
+  let written = failed_blocks ctl ~cache ~flushed pending in
+  if not evict then
+    fs.partial <-
+      List.concat_map (block_versions ctl ~live ~evicted) written @ fs.partial;
   lose ctl fs;
   (* A truncation is metadata, journalled apart from the data: the failure
      does not lose it, and it stays pending in program order. *)
@@ -2116,20 +2162,9 @@ let fail_sync ?(upto = max_int) ?(evict = false) ?(relive = ignore) ctl fs =
     pending;
   keep_young ctl fs young
 
-(* A barrier makes the file's pending changes durable, replayed over its
-   durable bytes, with the lost bytes in the blocks they dirty: a change
-   lost to a failed barrier, or made around the wrapper, never becomes
-   durable by itself. *)
-let commit_file ctl fs ~upto ~(stat : Eio.File.Stat.t) =
-  let young = split_young ctl fs ~upto in
-  if
-    fs.pending <> [] || fs.partial <> [] || Option.is_some fs.cache
-    || Option.is_some fs.evicted
-  then ctl.effects <- ctl.effects + 1;
-  let pending = List.rev_map (fun e -> (e.change, e.cached)) fs.pending in
-  (* A block written now is no longer one a failed sync may have
-     left. *)
-  (match fs.partial with
+(* A block written now is no longer one a failed sync may have left. *)
+let drop_partial ctl (fs : fstate) pending =
+  match fs.partial with
   | [] -> ()
   | partial ->
       let cache = Option.value ~default:(bytes_of fs.durable) fs.cache in
@@ -2156,9 +2191,11 @@ let commit_file ctl fs ~upto ~(stat : Eio.File.Stat.t) =
                  (List.exists
                     (fun (seq, m) -> seq > at && b * ctl.block_size >= m)
                     shrinks))
-          partial);
-  (* The pages a shrink freed, as the disk held them: only those from
-     the lowest shrink on may be. *)
+          partial
+
+(* The pages a shrink freed, as the disk held them: only those from the
+   lowest shrink on may be. *)
+let free_pages (fs : fstate) pending =
   let held = fs.held and before = bytes_of fs.durable in
   fs.held <- List.fold_left (fun h (c, _) -> hold h c) fs.held pending;
   let from =
@@ -2180,8 +2217,10 @@ let commit_file ctl fs ~upto ~(stat : Eio.File.Stat.t) =
                    (min page (Cstruct.length before - off))) )
             :: List.remove_assoc p fs.freed
       done)
-    held ();
-  (match (fs.cache, fs.evicted) with
+    held ()
+
+let make_durable ctl (fs : fstate) pending =
+  match (fs.cache, fs.evicted) with
   | None, None -> List.iter (fun (c, _) -> apply fs.durable c) pending
   | cache, evicted ->
       let c, live =
@@ -2197,7 +2236,22 @@ let commit_file ctl fs ~upto ~(stat : Eio.File.Stat.t) =
       fs.durable.buf <- c;
       fs.durable.len <- Cstruct.length c;
       fs.cache <- (if Cstruct.equal c live then None else Some live);
-      fs.evicted <- (if Cstruct.equal c e then None else Some e));
+      fs.evicted <- (if Cstruct.equal c e then None else Some e)
+
+(* A barrier makes the file's pending changes durable, replayed over its
+   durable bytes, with the lost bytes in the blocks they dirty: a change
+   lost to a failed barrier, or made around the wrapper, never becomes
+   durable by itself. *)
+let commit_file ctl fs ~upto ~(stat : Eio.File.Stat.t) =
+  let young = split_young ctl fs ~upto in
+  if
+    fs.pending <> [] || fs.partial <> [] || Option.is_some fs.cache
+    || Option.is_some fs.evicted
+  then ctl.effects <- ctl.effects + 1;
+  let pending = List.rev_map (fun e -> (e.change, e.cached)) fs.pending in
+  drop_partial ctl fs pending;
+  free_pages fs pending;
+  make_durable ctl fs pending;
   lose ctl fs;
   keep_young ctl fs young;
   fs.synced <- Some stat;
