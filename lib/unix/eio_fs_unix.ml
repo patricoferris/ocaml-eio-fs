@@ -676,7 +676,7 @@ let removed_dir r b rel =
   | [ Error e ] -> gone r rel e
   | l ->
       Fmt.invalid_arg
-        "Eio_fs_unix.remove_tree: Batch.run answered %d results, not one per \
+        "Eio_fs_unix.rmtree: Batch.run answered %d results, not one per \
          operation"
         (List.length l)
 
@@ -699,7 +699,7 @@ and removed_tree r b (rel, perm) =
       removed_entries r b (List.map (fun n -> rel ^ "/" ^ n) names)
       && removed_dir r b rel
 
-let remove_tree ?(grant = false) ?last (path : [> Eio.Fs.dir_ty ] Eio.Path.t) =
+let rmtree ?(grant = false) ?last (path : [> Eio.Fs.dir_ty ] Eio.Path.t) =
   let root = (path :> Eio.Fs.dir_ty Eio.Path.t) in
   let r =
     {

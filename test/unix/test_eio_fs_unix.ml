@@ -310,12 +310,12 @@ let test_clone_tree () =
         | _ -> false
         | exception Eio.Io (Eio.Fs.E (Eio.Fs.Already_exists _), _) -> true)
 
-(* remove_tree removes a whole tree: with [~grant] a directory its owner can
+(* rmtree removes a whole tree: with [~grant] a directory its owner can
    neither read nor search is granted first, and a symbolic link is removed,
    never followed. Three files of five bytes, a link and three directories are
    seven entries, and 15 bytes and the link's target. A path that does not exist
    removes nothing. *)
-let test_remove_tree () =
+let test_rmtree () =
   with_real_dir @@ fun dir ->
   let tree = Eio.Path.(dir / "tree") and kept = Eio.Path.(dir / "kept") in
   Eio.Path.mkdirs ~perm:0o755 Eio.Path.(tree / "a" / "b");
@@ -327,7 +327,7 @@ let test_remove_tree () =
   Eio.Path.symlink ~link_to:(snd kept) Eio.Path.(tree / "a" / "link");
   Eio.Path.chmod ~follow:false ~perm:0o000 Eio.Path.(tree / "a" / "b");
   Eio.Path.chmod ~follow:false ~perm:0o500 Eio.Path.(tree / "a");
-  let r = Eio_fs_unix.remove_tree ~grant:true tree in
+  let r = Eio_fs_unix.rmtree ~grant:true tree in
   Alcotest.(check (list string)) "nothing refused" [] r.refused;
   Alcotest.(check (pair int int))
     "every entry and byte"
@@ -339,7 +339,7 @@ let test_remove_tree () =
   Alcotest.(check string)
     "the link's target stays" "kept!"
     (Eio.Path.load Eio.Path.(kept / "f"));
-  let again = Eio_fs_unix.remove_tree tree in
+  let again = Eio_fs_unix.rmtree tree in
   Alcotest.(check (pair int (list string)))
     "a path that does not exist" (0, [])
     (again.entries, again.refused)
@@ -349,7 +349,7 @@ let test_remove_tree () =
    [last], and the sibling goes. The next call, granting, removes the rest. A
    removal that goes on past a refusal loses [last], and one that stops at the
    first leaves the sibling. *)
-let test_remove_tree_refused () =
+let test_rmtree_refused () =
   with_real_dir @@ fun dir ->
   let tree = Eio.Path.(dir / "tree") in
   let shut = Eio.Path.(tree / "shut") and open_ = Eio.Path.(tree / "open") in
@@ -359,7 +359,7 @@ let test_remove_tree_refused () =
     (fun p -> Eio.Path.save ~create:(`Exclusive 0o644) p "bytes")
     Eio.Path.[ shut / "f"; open_ / "f"; tree / "last" ];
   Eio.Path.chmod ~follow:false ~perm:0o500 shut;
-  let r = Eio_fs_unix.remove_tree ~last:"last" tree in
+  let r = Eio_fs_unix.rmtree ~last:"last" tree in
   Alcotest.(check int) "one refusal" 1 (List.length r.refused);
   Alcotest.(check bool)
     "it names the file refused" true
@@ -369,7 +369,7 @@ let test_remove_tree_refused () =
   Alcotest.(check string)
     "last stays" "bytes"
     (Eio.Path.load Eio.Path.(tree / "last"));
-  let rest = Eio_fs_unix.remove_tree ~grant:true ~last:"last" tree in
+  let rest = Eio_fs_unix.rmtree ~grant:true ~last:"last" tree in
   Alcotest.(check (pair int (list string)))
     "the rest goes" (4, [])
     (rest.entries, rest.refused);
@@ -380,7 +380,7 @@ let test_remove_tree_refused () =
 (* The hops a removal makes follow its directories, not its files: a directory
    of 1,000 files costs what one of 100 does. One hop per entry is the cost of
    the tree Eio.Path walks. *)
-let test_remove_tree_hops () =
+let test_rmtree_hops () =
   with_real_dir @@ fun dir ->
   let hops n =
     let tree = Eio.Path.(dir / Fmt.str "tree-%d" n) in
@@ -391,7 +391,7 @@ let test_remove_tree_hops () =
         "x"
     done;
     let before = Eio_fs_unix.Private.batch_hops () in
-    let r = Eio_fs_unix.remove_tree tree in
+    let r = Eio_fs_unix.rmtree tree in
     Alcotest.(check (pair int (list string)))
       "every entry"
       (n + 1, [])
@@ -405,7 +405,7 @@ let test_remove_tree_hops () =
    lands within a directory's entries, where a removal made in one hop would
    run to the tree's end, since a system thread under way is never
    cancelled. *)
-let test_remove_tree_cancelled () =
+let test_rmtree_cancelled () =
   with_real_dir @@ fun dir ->
   let tree = Eio.Path.(dir / "tree") in
   Eio.Path.mkdir ~perm:0o755 tree;
@@ -418,7 +418,7 @@ let test_remove_tree_cancelled () =
   let ended =
     Eio.Fiber.first
       (fun () ->
-        ignore (Eio_fs_unix.remove_tree tree);
+        ignore (Eio_fs_unix.rmtree tree);
         `Whole)
       (fun () ->
         while Eio_fs_unix.Private.batch_hops () = before do
@@ -1165,13 +1165,13 @@ let suite =
       Alcotest.test_case "statvfs reports raw block capacity" `Quick
         test_statvfs_reports_raw_block_capacity;
       Alcotest.test_case "clone_tree" `Quick test_clone_tree;
-      Alcotest.test_case "remove_tree" `Quick test_remove_tree;
-      Alcotest.test_case "remove_tree stops above a refusal" `Quick
-        test_remove_tree_refused;
-      Alcotest.test_case "remove_tree's hops follow its directories" `Quick
-        test_remove_tree_hops;
-      Alcotest.test_case "remove_tree ends at a cancellation" `Quick
-        test_remove_tree_cancelled;
+      Alcotest.test_case "rmtree" `Quick test_rmtree;
+      Alcotest.test_case "rmtree stops above a refusal" `Quick
+        test_rmtree_refused;
+      Alcotest.test_case "rmtree's hops follow its directories" `Quick
+        test_rmtree_hops;
+      Alcotest.test_case "rmtree ends at a cancellation" `Quick
+        test_rmtree_cancelled;
       Alcotest.test_case "calls on a path raise Eio.Io" `Quick
         test_path_calls_raise_eio_io;
       Alcotest.test_case "path calls stay in their directory" `Quick
