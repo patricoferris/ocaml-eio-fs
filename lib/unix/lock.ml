@@ -1090,16 +1090,14 @@ module Lease = struct
         Printexc.raise_with_backtrace e bt
 
   let take ~sw ?gate ?block ?create ?contents ?on_wait path =
-    match gate with
-    | Some gate ->
-        let block =
-          (Option.value block ~default:`Yes :> [ block | `Readers ])
-        in
+    match (gate, block) with
+    | Some gate, _ ->
+        let block = Option.value block ~default:`Yes in
         gated ~sw ~gate ~block ?create ?contents ?on_wait path
-    | None -> taken ~sw ~lease:`Exclusive ?block ?create ?contents ?on_wait path
-
-  let take_after_readers ~sw ~gate ?create ?contents ?on_wait path =
-    gated ~sw ~gate ~block:`Readers ?create ?contents ?on_wait path
+    | None, Some `Readers ->
+        invalid_arg "Eio_fs_unix.Lease.take: block is `Readers, with no gate"
+    | None, (Some #block as block) | None, (None as block) ->
+        taken ~sw ~lease:`Exclusive ?block ?create ?contents ?on_wait path
 
   let with_exclusive ?gate ?block ?create ?contents ?on_wait path fn =
     Eio.Switch.run @@ fun sw ->

@@ -199,10 +199,10 @@ let test_switch_lease_exception () =
   | exception End -> ());
   Eio_fs_unix.Lease.with_exclusive ~block:`No lock (fun _ -> ())
 
-(* [Lease.take_after_readers], held for the call of [fn]. *)
+(* [Lease.take ~block:`Readers], held for the call of [fn]. *)
 let after_readers ?on_wait ~gate lock fn =
   Eio.Switch.run @@ fun sw ->
-  let lease = Eio_fs_unix.Lease.take_after_readers ~sw ~gate ?on_wait lock in
+  let lease = Eio_fs_unix.Lease.take ~sw ~gate ~block:`Readers ?on_wait lock in
   Fun.protect
     ~finally:(fun () -> Eio_fs_unix.Lease.release lease)
     (fun () -> fn lease)
@@ -235,7 +235,10 @@ let test_lease_waits_out_readers () =
   Eio_fs_unix.Lease.with_exclusive lock (fun _ ->
       match after_readers ~gate lock ignore with
       | () -> Alcotest.fail "an exclusive holder did not refuse the take"
-      | exception Eio_fs_unix.Lock_unavailable _ -> ())
+      | exception Eio_fs_unix.Lock_unavailable _ -> ());
+  match Eio_fs_unix.Lease.with_exclusive ~block:`Readers lock ignore with
+  | () -> Alcotest.fail "a wait for readers was taken with no gate"
+  | exception Invalid_argument _ -> ()
 
 (* A take that waits for readers waits for nothing else, whichever instant
    another take comes in: a reader holds the lease shared, so a take after
@@ -368,14 +371,14 @@ let _ : Eio_fs_unix.Lease.t -> unit = Eio_fs_unix.Lease.unlock
 let _ :
     sw:Eio.Switch.t -> gate:_ Eio.Path.t -> _ Eio.Path.t -> Eio_fs_unix.Lease.t
     =
- fun ~sw ~gate path -> Eio_fs_unix.Lease.take_after_readers ~sw ~gate path
+ fun ~sw ~gate path -> Eio_fs_unix.Lease.take ~sw ~gate ~block:`Readers path
 
 (* A lease may belong to a switch while its caller goes on; [release] closes
    the owner's descriptor, which an inherited one outlives. *)
 let _ :
     sw:Eio.Switch.t ->
     ?gate:_ Eio.Path.t ->
-    ?block:Eio_fs_unix.block ->
+    ?block:[ Eio_fs_unix.block | `Readers ] ->
     ?create:Eio_fs_unix.create ->
     ?contents:string ->
     ?on_wait:(unit -> unit) ->

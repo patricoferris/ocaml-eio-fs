@@ -99,7 +99,7 @@ module Lease : sig
   val take :
     sw:Eio.Switch.t ->
     ?gate:_ Eio.Path.t ->
-    ?block:block ->
+    ?block:[ block | `Readers ] ->
     ?create:create ->
     ?contents:string ->
     ?on_wait:(unit -> unit) ->
@@ -107,22 +107,12 @@ module Lease : sig
     t
   (** See {!Eio_fs_unix.Lease.take}. *)
 
-  val take_after_readers :
-    sw:Eio.Switch.t ->
-    gate:_ Eio.Path.t ->
-    ?create:create ->
-    ?contents:string ->
-    ?on_wait:(unit -> unit) ->
-    _ Eio.Path.t ->
-    t
-  (** See {!Eio_fs_unix.Lease.take_after_readers}. *)
-
   val release : t -> unit
   (** See {!Eio_fs_unix.Lease.release}. *)
 
   val with_exclusive :
     ?gate:_ Eio.Path.t ->
-    ?block:block ->
+    ?block:[ block | `Readers ] ->
     ?create:create ->
     ?contents:string ->
     ?on_wait:(unit -> unit) ->

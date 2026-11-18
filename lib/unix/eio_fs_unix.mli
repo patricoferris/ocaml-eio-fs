@@ -531,7 +531,7 @@ module Lease : sig
   val take :
     sw:Eio.Switch.t ->
     ?gate:_ Eio.Path.t ->
-    ?block:block ->
+    ?block:[ block | `Readers ] ->
     ?create:create ->
     ?contents:string ->
     ?on_wait:(unit -> unit) ->
@@ -543,30 +543,6 @@ module Lease : sig
       same defaults, cancellation and refusals as {!with_exclusive}, and raises
       as it does. *)
 
-  val take_after_readers :
-    sw:Eio.Switch.t ->
-    gate:_ Eio.Path.t ->
-    ?create:create ->
-    ?contents:string ->
-    ?on_wait:(unit -> unit) ->
-    _ Eio.Path.t ->
-    t
-  (** [take_after_readers ~sw ~gate path] is [take ~sw ~gate path] that waits
-      for [path]'s shared holders alone: a lease only shared holders hold is
-      waited for as [`Yes] waits, and an exclusive holder, or another take
-      through [gate] under way, refuses it as [`No] does. A reader's look, a
-      shared lease taken and let go at once, delays the take and never refuses
-      it. [gate] is tried without waiting and held throughout the wait, so no
-      exclusive take comes in between this take's look at the holders and its
-      own; the wait is sound only if every exclusive take of [path] passes
-      [gate]. [create], [contents] and [on_wait] are {!with_exclusive}'s.
-
-      @raise Lock_unavailable
-        when an exclusive holder or another take through [gate] refuses it.
-      @raise Eio.Io as {!with_exclusive} raises it.
-      @raise Invalid_argument when the filesystem provides no Unix descriptor.
-  *)
-
   val release : t -> unit
   (** [release lease] closes this holder's descriptor and gives back its
       process-local admission, then lets its gate go. Repeated calls do nothing.
@@ -576,7 +552,7 @@ module Lease : sig
 
   val with_exclusive :
     ?gate:_ Eio.Path.t ->
-    ?block:block ->
+    ?block:[ block | `Readers ] ->
     ?create:create ->
     ?contents:string ->
     ?on_wait:(unit -> unit) ->
@@ -598,12 +574,12 @@ module Lease : sig
       take of [path] passes: the take holds it exclusively before it takes
       [path], and for as long as this descriptor holds [path], until {!release}
       or the callback's return, so no take of [path] is made between another's
-      look at its holders and its take, as {!take_after_readers} needs. A held
-      gate is waited for or refused as [block] says of [path], and the refusal
-      is that of [path]'s holder when an exclusive one holds it, else that of
-      the take under way, whose [contents] (or nothing) the gate's file holds.
-      The file is created when absent, with [create]'s permissions or [0o600];
-      its directory must exist. A take that finds [path] absent with [create]
+      look at its holders and its take, as [`Readers] needs. A held gate is
+      waited for or refused as [block] says of [path], and the refusal is that
+      of [path]'s holder when an exclusive one holds it, else that of the take
+      under way, whose [contents] (or nothing) the gate's file holds. The file
+      is created when absent, with [create]'s permissions or [0o600]; its
+      directory must exist. A take that finds [path] absent with [create]
       [`Never] removes the gate it holds. A caller that removes [path] holding
       it removes [gate] first, holding it too: a take that waited on a removed
       gate takes the file its name holds then.
@@ -619,6 +595,15 @@ module Lease : sig
       this process, and [on_wait ()] is called before that wait too. A cancelled
       wait answers at the cancel and, like a wait that reached its bound, leaves
       no thread, descriptor or kernel request behind.
+
+      With [block] [`Readers], which needs [gate], only [path]'s shared holders
+      are waited for, as [`Yes] waits: an exclusive holder, or another take
+      through [gate] under way, refuses the take as [`No] does. A reader's look,
+      a shared lease taken and let go at once, delays the take and never refuses
+      it. [gate] is tried without waiting and held throughout the wait, so no
+      exclusive take comes in between this take's look at the holders and its
+      own; the wait is sound only if every exclusive take of [path] passes
+      [gate].
 
       Only a path backed by a native Unix descriptor can hold a lease. The path
       must name its own regular file; a link, directory, FIFO, or name changed
@@ -637,8 +622,9 @@ module Lease : sig
         with {!Eio.Fs.Permission_denied} carrying {!Not_a_lock_file} when the
         path or the gate is not its own regular file.
       @raise Eio.Io as [flock] fails otherwise.
-      @raise Invalid_argument when the filesystem provides no Unix descriptor.
-  *)
+      @raise Invalid_argument
+        when the filesystem provides no Unix descriptor, or when [block] is
+        [`Readers] and no [gate] is given. *)
 
   val with_shared :
     ?block:block ->
