@@ -41,24 +41,6 @@ let test_not_its_container () =
       true
       (Int64.compare others gib >= 0)
 
-(* [space] is statvfs's available bytes, as read a moment later, and the
-   volume's used bytes. *)
-let test_space () =
-  with_tmp @@ fun dir ->
-  let space = Eio_fs_unix.space dir in
-  let s = Eio_fs_unix.statvfs dir in
-  let total = bytes s.total_blocks s and free = bytes s.available_blocks s in
-  Alcotest.(check bool)
-    (Fmt.str "%Ld free, %Ld available a moment later" space.free free)
-    true
-    (Int64.compare (Int64.abs (Int64.sub space.free free)) gib < 0);
-  Alcotest.(check bool)
-    (Fmt.str "%Ld used and %Ld free fit in %Ld" space.used space.free total)
-    true
-    (Int64.compare space.used 0L > 0
-    && Int64.compare (Int64.add space.used space.free) (Int64.add total gib)
-       <= 0)
-
 let suite =
   ( "volume",
     [
@@ -66,5 +48,4 @@ let suite =
         test_fits_its_container;
       Alcotest.test_case "used is not the container's" `Quick
         test_not_its_container;
-      Alcotest.test_case "space is free and used" `Quick test_space;
     ] )

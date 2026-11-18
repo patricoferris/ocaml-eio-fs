@@ -144,12 +144,6 @@ let volume_used path =
   Eio_unix.run_in_systhread ~label:"eio-fs-volume-used" @@ fun () ->
   volume_used_at dir name
 
-type space = { free : int64; used : int64 }
-
-let space path =
-  let s = statvfs path in
-  { free = Int64.mul s.available_blocks s.block_size; used = volume_used path }
-
 external clone_at :
   Unix.file_descr -> string -> Unix.file_descr -> string -> bool
   = "caml_eio_fs_clone_at"

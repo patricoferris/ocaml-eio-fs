@@ -102,19 +102,6 @@ val volume_used : _ Eio.Path.t -> int64
       directory has no host descriptor.
     @raise Invalid_argument if [path] holds a NUL byte. *)
 
-type space = {
-  free : int64;
-      (** The bytes an unprivileged writer can still use: {!val-statvfs}'s
-          available blocks. *)
-  used : int64;  (** The bytes the volume uses itself ({!volume_used}). *)
-}
-(** The type for the space of a volume: what is free to a writer and what the
-    volume uses, never the size of a container it shares. *)
-
-val space : _ Eio.Path.t -> space
-(** [space path] is the space of the volume holding [path], read by
-    {!val-statvfs} and {!volume_used}, which it raises as. *)
-
 (** {1:clones Copy-on-write clones} *)
 
 val clone_tree : _ Eio.Path.t -> _ Eio.Path.t -> bool
