@@ -1,9 +1,9 @@
 # Where the traces beside this file come from. write.sh rewrites it on
 # REGEN=1; test/provenance checks it.
-generator: test/interop/kernel/scripts/generate.sh
+generator: test/interop/kernel/scripts/generate-windows.sh
 regenerate: REGEN=1 dune build @test/interop/kernel/regen-traces
-revision: c795cbca27733d79e475a00df815f60040f87958
-recorded: 2026-11-18T17:15:25Z
+revision: 7ae262ec3ef9797501ef3c9331d850ff54778600
+recorded: 2026-11-18T21:58:00Z
 uid: 197108
 host: CYGWIN_NT-10.0-26100 3.6.12-1.x86_64 x86_64
 eio_windows: 1.7
