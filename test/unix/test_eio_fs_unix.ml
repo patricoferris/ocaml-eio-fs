@@ -1130,6 +1130,52 @@ let test_revoke_writes () =
     (Eio.Path.read_link (tree / "link"));
   Eio_fs.Tree.grant_owner tree
 
+(* POSIX truncate leaves unwritten ranges zero. The independent operation
+   trace pins the data extents, so filling those gaps with zero writes fails
+   even if the published bytes still look right. *)
+let test_sparse_cost size =
+  renames @@ fun () ->
+  Eio_main.run @@ fun env ->
+  let fs = Eio.Stdenv.fs env in
+  let dir =
+    fs / Filename.get_temp_dir_name () / Eio_fs.Sync.fresh_name "sparse"
+  in
+  Eio.Path.mkdir ~perm:0o700 dir;
+  Fun.protect ~finally:(fun () -> Eio.Path.rmtree dir) @@ fun () ->
+  let writes = ref [] in
+  let schedule (op : Eio_fs_chaos.Op.t) =
+    if op.kind = `Write then writes := (op.offset, op.length) :: !writes;
+    None
+  in
+  (* The wrapper closes what it wraps: an opened directory, which the switch
+     closes, not the root of [fs]. *)
+  Eio.Switch.run @@ fun sw ->
+  let observed = Eio_fs_chaos.wrap schedule (Eio.Path.open_dir ~sw dir) in
+  Eio_fs.Sync.publish_sparse ~max_bytes:(Int64.of_int size)
+    ~exclusive:Eio_fs_unix.exclusive_rename ~size_bytes:(Int64.of_int size)
+    (observed / "image")
+    [
+      (0L, Cstruct.of_string "HDR");
+      (Int64.of_int (size - 4), Cstruct.of_string "TAIL");
+    ];
+  Alcotest.(check (list (pair int int)))
+    "only seven supplied bytes are written, independent of logical size"
+    [ (0, 3); (size - 4, 4) ]
+    (List.rev !writes);
+  Eio.Path.with_open_in (dir / "image") @@ fun file ->
+  Alcotest.(check int64)
+    "logical size" (Int64.of_int size)
+    (Optint.Int63.to_int64 (Eio.File.size file));
+  let read offset length =
+    let data = Cstruct.create length in
+    Eio.File.pread_exact file ~file_offset:(Optint.Int63.of_int offset) [ data ];
+    Cstruct.to_string data
+  in
+  Alcotest.(check string) "header" "HDR" (read 0 3);
+  Alcotest.(check string)
+    "hole reads as zero" (String.make 4 '\000') (read 4096 4);
+  Alcotest.(check string) "tail at the final extent" "TAIL" (read (size - 4) 4)
+
 let suite =
   ( "eio_fs_unix",
     [
@@ -1224,4 +1270,8 @@ let suite =
         test_xattr_does_not_follow;
       Alcotest.test_case "a revoked tree keeps no write bit" `Quick
         test_revoke_writes;
+      Alcotest.test_case "sparse 8 MiB extents and cost" `Quick (fun () ->
+          test_sparse_cost (8 * 1024 * 1024));
+      Alcotest.test_case "sparse 80 MiB extents and cost" `Quick (fun () ->
+          test_sparse_cost (80 * 1024 * 1024));
     ] )

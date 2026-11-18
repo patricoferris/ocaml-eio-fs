@@ -4,13 +4,11 @@
  (libraries
   eio
   eio.mock
-  eio.unix
   eio_main
   eio-fs.mem
   eio-fs.chaos
   eio-fs
   eio_fs_sync
-  eio-fs.unix
   cstruct
   optint
   alcotest
