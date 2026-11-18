@@ -1,7 +1,7 @@
 (test
  (name test)
  (package eio-fs)
- (libraries eio eio.mock eio-fs.mem win_paths alcotest)
+ (libraries eio eio.mock eio-fs.mem win_paths csv alcotest)
  (deps
   (source_tree traces)))
 

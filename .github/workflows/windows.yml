@@ -37,10 +37,10 @@ jobs:
           opam pin add -yn eio_windows git+https://github.com/ocaml-multicore/eio.git#07069de0954fd2d991d7b2f6ea555f28c7abc2d4
 
       - if: matrix.eio == '1.7'
-        run: opam install dune eio_windows.1.7 fmt cstruct optint
+        run: opam install dune eio_windows.1.7 fmt cstruct optint csv
 
       - if: matrix.eio == 'main'
-        run: opam install dune eio_windows fmt cstruct optint
+        run: opam install dune eio_windows fmt cstruct optint csv
 
       # The runner has Developer Mode on, which lets any user make symbolic
       # links; Windows' default is off, where only a user who holds

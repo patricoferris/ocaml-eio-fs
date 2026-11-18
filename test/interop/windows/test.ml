@@ -7,8 +7,7 @@ let work = {|C:\tmp\paths|}
 let other = {|D:\elsewhere|}
 
 (* A row without its last column, each error by its class alone. *)
-let comparable row =
-  let cols = String.split_on_char ',' row in
+let comparable cols =
   let cols = List.filteri (fun i _ -> i < 6) cols in
   let outcome o =
     match String.index_opt o ':' with
@@ -25,11 +24,7 @@ let comparable row =
       else c)
     cols
 
-let recorded () =
-  In_channel.with_open_bin
-    (Filename.concat "traces" "paths.csv")
-    In_channel.input_lines
-  |> List.tl
+let recorded () = List.tl (Csv.load (Filename.concat "traces" "paths.csv"))
 
 let test_paths () =
   Eio_mock.Backend.run @@ fun () ->
@@ -39,8 +34,7 @@ let test_paths () =
   List.iter2
     (fun want got ->
       Alcotest.(check (list string))
-        (List.hd (String.split_on_char ',' want))
-        (comparable want) (comparable got))
+        (List.hd want) (comparable want) (comparable got))
     (recorded ()) got
 
 let () =

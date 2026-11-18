@@ -55,7 +55,8 @@ let error exn =
   in
   cls ^ ": " ^ Printexc.to_string exn
 
-let header = "case,path,native,split dir,split name,outcomes,stdlib"
+let header =
+  [ "case"; "path"; "native"; "split dir"; "split name"; "outcomes"; "stdlib" ]
 
 let rows ~fs ~work ?other ?(win32 = fun _ -> "-") () =
   let drive = String.sub work 0 2 in
@@ -79,7 +80,7 @@ let rows ~fs ~work ?other ?(win32 = fun _ -> "-") () =
     List.fold_left un s
       (((work, "<work>") :: other)
       @ [ (Eio_utils.Nt_path.dirname work, "<parent>"); (root, "<root>") ])
-    |> String.map (function ',' | '\n' | '\r' | '|' -> ' ' | c -> c)
+    |> String.map (function '\n' | '\r' | '|' -> ' ' | c -> c)
   in
   let ( / ) = Eio.Path.( / ) in
   let names_other (_, path, ops) =
@@ -89,10 +90,7 @@ let rows ~fs ~work ?other ?(win32 = fun _ -> "-") () =
   List.map
     (fun ((case, path, ops) as c) ->
       if other = None && names_other c then
-        Fmt.str
-          "%s,%s,not recorded,not recorded,not recorded,not recorded,not \
-           recorded"
-          case path
+        case :: path :: List.init 5 (fun _ -> "not recorded")
       else
         let p = fs / spell path in
         let native = Option.value ~default:"none" (Eio.Path.native p) in
@@ -119,15 +117,18 @@ let rows ~fs ~work ?other ?(win32 = fun _ -> "-") () =
                 ^ String.concat "/"
                     (List.sort String.compare (Eio.Path.read_dir p))
                 ^ "]"
-          with
-          | Eio.Cancel.Cancelled _ as e -> raise e
-          | exn -> error exn
+          with Eio.Io _ as exn -> error exn
         in
         let win32 = function Read -> win32 (spell path) | _ -> "-" in
         let outcomes = List.map (fun op -> unspell (outcome op)) ops in
         let win32 = List.map (fun op -> unspell (win32 op)) ops in
-        Fmt.str "%s,%s,%s,%s,%s,%s,%s" case path (unspell native) (unspell dir)
-          (unspell name)
-          (String.concat "|" outcomes)
-          (String.concat "|" win32))
+        [
+          case;
+          path;
+          unspell native;
+          unspell dir;
+          unspell name;
+          String.concat "|" outcomes;
+          String.concat "|" win32;
+        ])
     cases

@@ -1,8 +1,8 @@
 (** The Win32 paths [paths.exe] records through an unrestricted filesystem, and
     the in-memory filesystem's test replays. *)
 
-val header : string
-(** [header] is the CSV header of [traces/paths.csv]. *)
+val header : string list
+(** [header] is the header row of [traces/paths.csv]. *)
 
 val rows :
   fs:Eio.Fs.dir_ty Eio.Path.t ->
@@ -10,8 +10,9 @@ val rows :
   ?other:string ->
   ?win32:(string -> string) ->
   unit ->
-  string list
+  string list list
 (** [rows ~fs ~work ~other ~win32 ()] runs each case through [fs], from the
     empty directory [work], the current one, with the empty directory [other] on
-    another drive, and is a CSV row per case. [win32 p] is what a read of the
-    Win32 path [p] answers outside Eio (defaults to ["-"]). *)
+    another drive, and is a row of fields per case. An operation that raises
+    [Eio.Io] has the error as its outcome. [win32 p] is what a read of the Win32
+    path [p] answers outside Eio (defaults to ["-"]). *)

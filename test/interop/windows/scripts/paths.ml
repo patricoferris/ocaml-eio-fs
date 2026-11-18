@@ -21,7 +21,7 @@ let () =
         exit 2
   in
   Eio_windows.run @@ fun env ->
-  print_endline Win_paths.header;
-  List.iter print_endline
-    (Win_paths.rows ~fs:(Eio.Stdenv.fs env) ~work:(Sys.getcwd ()) ?other ~win32
-       ())
+  Csv.output_all (Csv.to_channel stdout)
+    (Win_paths.header
+    :: Win_paths.rows ~fs:(Eio.Stdenv.fs env) ~work:(Sys.getcwd ()) ?other
+         ~win32 ())
