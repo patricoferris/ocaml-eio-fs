@@ -3,10 +3,24 @@
  (mode promote)
  (enabled_if
   (= %{env:REGEN=0} 1))
- (targets linux.csv)
+ (targets linux.csv provenance)
  (deps
   ../scripts/record.exe
   (source_tree ../scripts)
-  (source_tree ../workload))
+  (source_tree ../workload)
+  ../../../provenance/write.sh)
  (action
-  (run bash ../scripts/generate.sh linux.csv)))
+  (run
+   bash
+   ../../../provenance/write.sh
+   test/interop/stat
+   scripts/probe.sh
+   scripts/generate.sh
+   scripts/record.ml
+   workload/stat_workload.ml
+   --
+   %{targets}
+   --
+   bash
+   ../scripts/generate.sh
+   .)))

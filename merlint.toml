@@ -81,3 +81,9 @@ exclude = ["E606"]
 [[rules]]
 files = ["fuzz/fuzz_extents.ml"]
 exclude = ["E710"]
+
+# The provenance test checks the committed traces and their generators, not a
+# library module.
+[[rules]]
+files = ["test/provenance/*"]
+exclude = ["E610"]

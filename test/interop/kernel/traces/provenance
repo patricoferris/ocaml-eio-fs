@@ -1,0 +1,21 @@
+# Where the traces beside this file come from. write.sh rewrites it on
+# REGEN=1; test/provenance checks it.
+#
+# fs.csv predates write.sh: the generate.sh of 1517d52 recorded it, from a
+# clean tree, and wrote what it measured as the "# key: value" lines fs.csv
+# starts with, which name the Mac and the Linux it ran on. They give the date,
+# the last commit to the scripts and the Mac's uid and uname below; HEAD at
+# the recording is not recorded. Its "script digest" is the MD5 of record.ml
+# and eio_fs_kernel.ml joined, as the input lines pin them. generate.sh is
+# pinned as this commit leaves it, measuring nothing since probe.sh does, so
+# that a change to any input from now on asks for a regeneration.
+generator: test/interop/kernel/scripts/generate.sh
+regenerate: REGEN=1 dune build @test/interop/kernel/regen-traces
+revision: unknown; the last commit to the scripts was 1517d52747a0ca0aae2489eb13445db8c0b233db
+recorded: 2026-11-17
+uid: 501
+host: Darwin 27.3.0 arm64
+input: scripts/generate.sh e182e9e3482a438de07410302c38cb0e
+input: scripts/record.ml 770420e2f66a9e1e30028cb69175f9b9
+input: ../../../lib/kernel/eio_fs_kernel.ml 57cea030c95aacc610d4560caaf523e0
+trace: traces/fs.csv 017d255236d075dd7191aa4da3fe4a75

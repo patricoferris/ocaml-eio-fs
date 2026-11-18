@@ -3,11 +3,26 @@
  (mode promote)
  (enabled_if
   (= %{env:REGEN=0} 1))
- (targets fs.csv)
+ (targets fs.csv provenance)
  (deps
   ../scripts/record.exe
   (source_tree ../scripts)
   ../../../../lib/kernel/eio_fs_kernel.ml
-  ../../../../lib/kernel/eio_fs_kernel.mli)
+  ../../../../lib/kernel/eio_fs_kernel.mli
+  ../../../provenance/write.sh)
  (action
-  (run bash ../scripts/generate.sh fs.csv ../scripts/record.exe)))
+  (run
+   bash
+   ../../../provenance/write.sh
+   test/interop/kernel
+   scripts/probe.sh
+   scripts/generate.sh
+   scripts/record.ml
+   ../../../lib/kernel/eio_fs_kernel.ml
+   --
+   %{targets}
+   --
+   bash
+   ../scripts/generate.sh
+   .
+   ../scripts/record.exe)))

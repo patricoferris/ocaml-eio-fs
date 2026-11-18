@@ -78,28 +78,9 @@ let test_counts () =
     (Int64.mul 512L (List.fold_left Int64.add 0L in_d))
     (Eio_fs.Tree.usage (root / "d")).allocated_bytes
 
-let test_trace () =
-  Provenance.check ~trace
-    ~keys:
-      [
-        "script";
-        "script revision";
-        "script digest";
-        "recorded";
-        "linux os";
-        "linux image";
-        "linux user";
-        "linux eio_posix";
-        "tmpfs";
-        "ext4";
-      ]
-    ~code:[ "scripts/record.ml"; "workload/stat_workload.ml" ]
-    ~script:"scripts/generate.sh"
-
 let suite =
   ( "stat",
     [
-      Alcotest.test_case "the trace names its provenance" `Quick test_trace;
       Alcotest.test_case "times move as on Linux" `Quick
         (as_linux "times" ~on:[ "tmpfs"; "ext4" ]);
       Alcotest.test_case "times of moved and removed inodes" `Quick

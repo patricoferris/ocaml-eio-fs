@@ -14,29 +14,24 @@ With Docker running:
 `scripts/generate.sh` records in the Docker image it pins by digest, through
 the eio_posix of the opam switch dune builds in, as an ordinary user: once on
 a tmpfs and once on an ext4 image with 4096-byte blocks, as on a disk, that
-the container loop-mounts, which takes `docker run --privileged`. Each row is
+[`scripts/ext4.sh`](scripts/ext4.sh) makes and the container loop-mounts,
+which takes `docker run --privileged`. Each row is
 a workload, then its answer on each filesystem. dune promotes the result into
-`traces/linux.csv`.
+`traces/linux.csv`, beside its `traces/provenance`.
 
 `relatime` moving atime again once a day is not recorded: it takes a day.
 
 ## Provenance
 
-The trace starts with `# key: value` lines, written by `generate.sh`:
+[`traces/provenance`](traces/provenance) says where the trace comes from: the
+revision, date, user and host, the Linux kernel of Docker's VM and the image,
+the container's user, the tmpfs and the ext4 image with their mount options
+and how the image was made, and the eio_posix the recorder was built with
+(from [`scripts/probe.sh`](scripts/probe.sh)), and the MD5 of the trace and of
+`generate.sh`, `record.ml` and `workload/stat_workload.ml`. Regenerating
+rewrites it and drops the `# key: value` lines the trace recorded before
+write.sh starts with.
 
-| key | value |
-|-----|-------|
-| `script` | the script that recorded it |
-| `script revision` | the last commit to `scripts/` or `workload/`, noting uncommitted changes |
-| `script digest` | MD5 of `scripts/record.ml` then `workload/stat_workload.ml` |
-| `recorded` | the date, UTC |
-| `linux os` | `uname -srm`: Docker's VM kernel |
-| `linux image` | the Docker image, by digest |
-| `linux user` | uid and groups |
-| `linux eio_posix` | the eio_posix version the recorder was built with |
-| `tmpfs`, `ext4` | the type and mount options; for ext4, how it was made |
-
-The `trace names its provenance` test fails when a line is missing or not
-measured, when the digest is not that of the current `record.ml` and
-`stat_workload.ml`, or when the image is not the one `generate.sh` pins. A
-failing check means re-recording; never edit a value by hand.
+[`test/provenance`](../../provenance) fails when the trace or a pinned input
+differs from what the file records. A failing check means re-recording; never
+edit a value by hand.

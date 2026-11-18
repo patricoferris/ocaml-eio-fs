@@ -228,36 +228,9 @@ let test_host () =
         Alcotest.failf "eio_posix on %s:@\n%s" (os_name os)
           (String.concat "\n" wrong)
 
-(* record.ml and eio_fs_kernel.ml decide every outcome; generate.sh decides
-   only where they run, which the other lines record. *)
-let test_provenance () =
-  Provenance.check ~trace:"traces/fs.csv"
-    ~keys:
-      [
-        "script";
-        "script revision";
-        "script digest";
-        "recorded";
-        "macos os";
-        "macos filesystem";
-        "macos mount";
-        "macos user";
-        "macos eio_posix";
-        "linux os";
-        "linux image";
-        "linux filesystem";
-        "linux mount";
-        "linux user";
-        "linux eio_posix";
-      ]
-    ~code:[ "scripts/record.ml"; "../../../lib/kernel/eio_fs_kernel.ml" ]
-    ~script:"scripts/generate.sh"
-
 let () =
   Alcotest.run "eio-fs.kernel"
     [
-      ( "trace",
-        [ Alcotest.test_case "names its provenance" `Quick test_provenance ] );
       ( "memfs",
         [
           Alcotest.test_case "Linux" `Quick (memfs `Linux);

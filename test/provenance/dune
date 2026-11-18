@@ -1,3 +1,7 @@
-(library
- (name provenance)
- (libraries alcotest fmt))
+(test
+ (name test)
+ (package eio-fs)
+ (libraries fmt alcotest)
+ (deps
+  (source_tree ../interop)
+  ../../lib/kernel/eio_fs_kernel.ml))
