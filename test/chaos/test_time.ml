@@ -93,9 +93,7 @@ let fsync_ro ~sw env =
 let dirsync ~sw:_ env = Eio.Path.sync_dir env#fs
 
 (* F_FULLFSYNC of another file: on macOS it drains every fsync(2) before. *)
-let drain env =
-  P.with_open_out ~create:`Never P.(env#fs / "g") Eio_fs_unix.sync_file
-
+let drain env = P.with_open_out ~create:`Never P.(env#fs / "g") Full.file
 let chmod env = P.chmod ~follow:false ~perm:0o400 P.(env#fs / "f")
 let chmodded env = Int.equal (P.stat ~follow:false P.(env#fs / "f")).perm 0o400
 

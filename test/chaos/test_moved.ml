@@ -144,10 +144,10 @@ let renamed_before_drain () =
            P.(fs / "d/f")
            (fun f ->
              Eio.Flow.copy_string "F" f;
-             Eio_fs_unix.sync_file f);
+             Full.file f);
          Eio.Path.sync_dir P.(fs / "d");
          P.rename P.(fs / "d") P.(fs / "e");
-         P.with_open_out ~create:`Never P.(fs / "g") Eio_fs_unix.sync_file))
+         P.with_open_out ~create:`Never P.(fs / "g") Full.file))
 
 (* A write and a truncation, then renames of the file and of its
    directory: each change names the file as it was named when it was made. *)

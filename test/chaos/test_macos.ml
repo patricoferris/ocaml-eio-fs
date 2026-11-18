@@ -12,7 +12,7 @@ type barrier = {
 let plain = { file = Eio.File.sync; dir = Eio.Path.sync_dir }
 
 (* F_FULLFSYNC on Darwin. *)
-let full = { file = Eio_fs_unix.sync_file; dir = Eio_fs_unix.sync_dir }
+let full = { file = Full.file; dir = Full.dir }
 
 (* A value made durable with [b], then acknowledged: recover must find it. *)
 let save ?os b () =
@@ -47,7 +47,7 @@ let drained () =
         write "a" Eio.File.sync;
         write "b" Eio.File.sync;
         Eio.Path.sync_dir env#fs;
-        write "c" Eio_fs_unix.sync_file
+        write "c" Full.file
       with
       | () -> ack ()
       | exception Eio.Io _ -> ())
@@ -95,11 +95,11 @@ let spellings () =
           P.(env#fs / "D/f")
           (fun f ->
             Eio.Flow.copy_string "v1" f;
-            Eio_fs_unix.sync_file f);
-        Eio_fs_unix.sync_dir P.(env#fs / "d");
-        Eio_fs_unix.sync_dir env#fs;
+            Full.file f);
+        Full.dir P.(env#fs / "d");
+        Full.dir env#fs;
         P.rename P.(env#fs / "d/f") P.(env#fs / "D/g");
-        Eio_fs_unix.sync_dir P.(env#fs / "D")
+        Full.dir P.(env#fs / "D")
       with
       | () -> ack ()
       | exception Eio.Io _ -> ())
@@ -124,7 +124,7 @@ let flushed ?os ~more () =
             Eio.File.sync f;
             if more then Eio.Flow.copy_string "two" f;
             try Eio.File.sync f with Eio.Io _ -> ());
-        P.with_open_out ~create:`Never P.(env#fs / "g") Eio_fs_unix.sync_file
+        P.with_open_out ~create:`Never P.(env#fs / "g") Full.file
       with
       | () -> ack ()
       | exception Eio.Io _ -> ())
@@ -148,7 +148,7 @@ let retried ?os () =
           (fun f ->
             Eio.Flow.copy_string "one" f;
             try Eio.File.sync f with Eio.Io _ -> Eio.File.sync f);
-        P.with_open_out ~create:`Never P.(env#fs / "g") Eio_fs_unix.sync_file
+        P.with_open_out ~create:`Never P.(env#fs / "g") Full.file
       with
       | () -> ack ()
       | exception Eio.Io _ -> ())
@@ -164,7 +164,7 @@ let config () =
         Eio.Flow.copy_string v f;
         Eio.File.sync f);
     P.rename tmp P.(dir / "config");
-    Eio_fs_unix.sync_dir dir
+    Full.dir dir
   in
   Eio_fs_chaos.Private.check_cuts ~os:`Macos
     ~setup:(fun env -> save env#fs "old")
