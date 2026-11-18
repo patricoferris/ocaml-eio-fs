@@ -35,12 +35,11 @@ file.
 
 `Eio_fs_chaos.run` checks how a program that reads and writes files through
 `Eio.Path` copes when the disk fails. It takes the program as a function of
-its environment and runs it many times in memory.
+its environment and runs it many times in memory:
 
 ```ocaml
 # Eio_fs_chaos.run @@ fun env ->
-  let fs = Eio.Stdenv.fs env in
-  Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(fs / "hello") "world";;
+  Eio.Path.save ~create:(`Or_truncate 0o644) Eio.Path.(env#fs / "hello") "world";;
 - : unit = ()
 ```
 
@@ -110,18 +109,28 @@ val save : [> Eio.Fs.dir_ty ] Eio.Path.t -> string -> unit = <fun>
         save env#fs "new";
         Eio_fs_chaos.ack env Eio.Path.(env#fs / "config"))
   with
-  | () -> "passed"
-  | exception Failure report -> List.hd (String.split_on_char '\n' report);;
-- : string =
-"Eio_fs_chaos.run: a power cut lost an acknowledged file: /config held \"new\" when acknowledged after #4, and now is missing"
+  | () -> print_endline "passed"
+  | exception Failure report -> print_endline report;;
+Eio_fs_chaos.run: a power cut lost an acknowledged file: /config held "new" when acknowledged after #4, and now is missing
+  cut:      at the end, every unsynced change lost
+  faults:   none
+  acked:    1 value, after #4
+  lost:     #1 create /config.tmp; #4 rename /config.tmp to /config
+  trace:
+    #1 open-write /config.tmp
+    #2 write /config.tmp@0+3
+    #3 sync /config.tmp
+    #4 rename /config.tmp to /config
+  replay:   Eio_fs_chaos.run ~replay:"fs/7a2e6ba7/none|end|drop" app
+- : unit = ()
 ```
 
 The save above does not sync its directory, so a power cut loses the
 rename. `Eio_fs_sync.save` writes a file atomically and syncs its directory
 too, and `Eio.Path.sync_dir` syncs a directory by hand. A report gives the
-fault, the operations of the run, what the program printed, and one line to
-paste that runs that case again; to find it, a replay may run the program a
-few times first, and the failing run is the last.
+fault, the operations of the run, what the program printed, if anything, and
+one line to paste that runs that case again; to find it, a replay may run the
+program a few times first, and the failing run is the last.
 
 Faults fall only on the operations the first run makes, and that run starts
 on an empty filesystem. Code that runs only at a restart, such as the read
@@ -153,6 +162,8 @@ val start : < fs : [> Eio.Fs.dir_ty ] Eio.Path.t; .. > -> unit = <fun>
 
 `~inspect` checks what only the test knows, such as the records a log must
 still hold, after each fault and before the restart.
+[`eio_fs_chaos.mli`](lib/chaos/eio_fs_chaos.mli) says how the faults are
+picked and what a program may and may not do.
 
 ## Testing a filesystem
 
@@ -219,9 +230,9 @@ pass means. On the disk:
 
 ### What is simulated
 
-The program receives each device as an Eio
-capability, through `env`. The package replaces each capability with a
-simulated one; the program is not changed.
+The program receives each device as an Eio capability, through `env`. The
+package replaces each capability with a simulated one; the program is not
+changed.
 
 - The filesystem is a page cache over a simulated disk. Writes stay in the
   cache until `fsync` or a directory sync makes them durable. A power cut
@@ -257,15 +268,14 @@ across power cuts, or about on-disk layout.
 
 ## Libraries
 
+- `eio-fs` has `Eio_fs`: `Crunch` loads into an in-memory filesystem a
+  directory tree its `eio-fs-crunch` binary embeds in an executable, `Tree`
+  walks, measures, copies and formats a tree on any Eio backend, and
+  `Nofollow` reads a file, bounded, refusing a symbolic link at the final
+  path component.
 - `eio-fs.mem` has `Eio_fs_mem`, the in-memory filesystem.
   [`eio_fs_mem.mli`](lib/mem/eio_fs_mem.mli) says how closely it follows
   each kernel.
-- `eio-fs` has `Eio_fs.Crunch`, which loads into an in-memory filesystem a
-  directory tree its `eio-fs-crunch` binary embeds in an executable.
-  - `Eio_fs.Tree` walks, measures, copies and formats a tree on any Eio
-    backend.
-  - `Eio_fs.Nofollow` reads a file, bounded, refusing a symbolic link at the
-    final path component.
 - `eio-fs.chaos` has `Eio_fs_chaos`, the two checks above and the faults
   they are made of, so a program that uses only the filesystem links none of
   it.
@@ -276,12 +286,15 @@ across power cuts, or about on-disk layout.
   locks and extended attributes.
 - `eio-fs.path` works on path strings, without touching a filesystem.
 
+Each library documents itself in its `.mli`, under [`lib/`](lib/).
+
 ## Limitations
 
 - A file's bytes live in memory, and a file holds at most 4 GiB
   ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
-- The filesystem answers as Linux does, or as macOS does with ``~os:`Macos``.
-  Code that runs on both needs a test under each.
+- The filesystem follows one kernel at a time, Linux, or macOS with
+  ``~os:`Macos``: code that runs on both needs a check under each
+  ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
 - eio_posix differs from the kernel on a few paths, such as one that ends in
   `..`, and the in-memory filesystem follows the kernel
   ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
