@@ -1578,16 +1578,23 @@ let suite =
       Alcotest.test_case "crash: write-only file" `Quick
         test_crash_write_only_file;
       Alcotest.test_case "crash: read-only file (real fs)" `Quick
-        test_crash_readonly_real;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_readonly_real);
       Alcotest.test_case "crash: closed subtree (real fs)" `Quick
-        test_crash_closed_subtree_real;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_closed_subtree_real);
       Alcotest.test_case "crash: a spared file keeps its identity (real fs)"
-        `Quick test_crash_spared_identity_real;
+        `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_spared_identity_real);
       Alcotest.test_case "crash: a cancelled crash restores its image (real fs)"
-        `Quick test_crash_cancelled_real;
+        `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_cancelled_real);
       Alcotest.test_case
         "crash: a replaced file under a pending operation (real fs)" `Quick
-        test_crash_replaced_under_pending_real;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_replaced_under_pending_real);
       Alcotest.test_case "crash: committed unlink stays deleted" `Quick
         test_crash_committed_unlink_stays_deleted;
       Alcotest.test_case "crash: uncommitted unlink rolls back" `Quick
@@ -1643,9 +1650,12 @@ let suite =
       Alcotest.test_case "crash: dir sync keeps a pending replacement" `Quick
         test_crash_dir_sync_keeps_a_pending_replacement;
       Alcotest.test_case "crash: rename revert (real fs)" `Quick
-        test_crash_rename_revert_real;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_rename_revert_real);
       Alcotest.test_case "crash: a bare descriptor's write is not journalled"
-        `Quick test_crash_omits_a_write_through_a_bare_descriptor;
+        `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_omits_a_write_through_a_bare_descriptor);
       Alcotest.test_case "crash: a bare descriptor's barrier is not the model's"
         `Quick
         (Host.posix_only "eio_windows 1.7 has no positioned read"

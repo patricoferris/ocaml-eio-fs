@@ -580,8 +580,9 @@ let suite =
         test_read_nofollow_follows_growth_to_the_bound;
       Alcotest.test_case "wipes a failed read" `Quick
         test_read_nofollow_wipes_a_failed_read;
-      Alcotest.test_case "a held parent on a native backend" `Quick (fun () ->
-          native held_parent);
+      Alcotest.test_case "a held parent on a native backend" `Quick
+        (Host.posix_only "Windows renames no directory a handle holds open"
+           (fun () -> native held_parent));
       Alcotest.test_case "a held parent in memory" `Quick (fun () ->
           memory held_parent);
       Alcotest.test_case "a direct leaf on a native backend" `Quick (fun () ->

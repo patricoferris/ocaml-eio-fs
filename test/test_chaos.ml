@@ -539,7 +539,8 @@ let suite =
         test_change_error_on_chmod_chown;
       Alcotest.test_case "opens for reading and writing" `Quick test_open_kinds;
       Alcotest.test_case "stat error" `Quick test_stat_error;
-      Alcotest.test_case "real child cwd" `Quick test_real_child_cwd;
+      Alcotest.test_case "real child cwd" `Quick
+        (Host.posix_only "eio_windows 1.7 spawns no process" test_real_child_cwd);
       Alcotest.test_case "directory error" `Quick (test_directory_error false);
       Alcotest.test_case "directory entries error" `Quick
         (test_directory_error true);
@@ -559,9 +560,12 @@ let suite =
       Alcotest.test_case "swap on a symlink subtree (real fs)" `Quick
         test_swap_on_real_symlink_subtree;
       Alcotest.test_case "swap on an empty directory subtree (real fs)" `Quick
-        test_swap_on_real_empty_directory_subtree;
+        (Host.posix_only "Windows removes no directory a handle holds open"
+           test_swap_on_real_empty_directory_subtree);
       Alcotest.test_case "swap on a populated directory subtree (real fs)"
-        `Quick test_swap_on_real_populated_directory_subtree;
+        `Quick
+        (Host.posix_only "Windows removes no directory a handle holds open"
+           test_swap_on_real_populated_directory_subtree);
       Alcotest.test_case "nth operation on a path" `Quick test_nth_op_on_path;
       Alcotest.test_case "pass-through" `Quick test_pass_through;
       Alcotest.test_case "change error" `Quick test_change_error;

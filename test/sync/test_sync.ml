@@ -1070,7 +1070,8 @@ let link_suite =
       Alcotest.test_case "final raw observation preserves late foreign target"
         `Quick Links.test_last_observation;
       Alcotest.test_case "native POSIX raw link publication" `Quick
-        Links.test_posix;
+        (Host.posix_only "Windows reads back a POSIX link target otherwise"
+           Links.test_posix);
       Alcotest.test_case "exact raw publication and restoration" `Quick
         Links.test_raw;
       Alcotest.test_case "changed missing and regular portals refuse" `Quick
