@@ -48,7 +48,11 @@ The `env` has the capabilities of `Eio.Stdenv`, each simulated
 ([How it works](#how-it-works)), so a `main` written against `Eio.Stdenv`
 runs unchanged. `Eio_fs_chaos.disk ()` is the same disk as a part of
 [eio-chaos](https://github.com/samoht/ocaml-eio-chaos), to test a program on
-it and other simulated devices at once with `Eio_chaos.run`.
+it and other simulated devices at once: a program that also talks to a peer
+is checked with
+`Eio_chaos.run [ Eio_fs_chaos.disk (); Eio_net_chaos.network () ] main`,
+whose runs fail the disk, the network of
+[eio-net](https://github.com/samoht/ocaml-eio-net), or both.
 
 The first run has no fault. Each later run starts from the same state and
 meets one fault:
@@ -164,6 +168,13 @@ The permission scenarios run only with `~user`, as root passes every
 permission check. `~user` says which user the directory's operations run as;
 it does not change that user. The in-memory filesystem needs
 `Eio_fs.Fs.v ~user` to match.
+
+A filesystem built over other devices, such as a remote filesystem over a
+network, is checked over faulty ones with `~under`:
+`Eio_fs_chaos.device ~under:[ Eio_net_chaos.network () ] remote` runs the
+scenarios on a healthy network first, then on one that fails, where an
+answer may also be an error a disk could give, such as an input/output
+error, but never one of the network's, such as `Connection_reset`.
 
 eio_posix itself differs from the kernel on 12 of the 86 scenarios on Linux
 and 20 on macOS, as it resolves a trailing slash, `.` and `..` itself. A
