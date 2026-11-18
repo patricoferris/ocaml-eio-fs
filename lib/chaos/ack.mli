@@ -5,17 +5,17 @@
 type entry
 (** The type for an acknowledged file with what it held. *)
 
-type t = {
-  base : Eio.Fs.dir_ty Eio.Path.t;
-  at : unit -> int;  (** The last operation's index. *)
-  mutable alive : unit -> bool;  (** [false] once the power is cut. *)
-  mutable on_ack : unit -> unit;  (** Runs after each acknowledgement. *)
-  mutable live : entry list;  (** Latest first. *)
-  mutable paths : string list;  (** Latest first, each once. *)
-}
+type t
+(** The type for the files a run acknowledged. *)
 
-val v : at:(unit -> int) -> Eio.Fs.dir_ty Eio.Path.t -> t
-(** [v ~at base] has acknowledged no file of [base]. *)
+val v :
+  at:(unit -> int) -> alive:(unit -> bool) -> Eio.Fs.dir_ty Eio.Path.t -> t
+(** [v ~at ~alive base] has acknowledged no file of [base]. [at ()] is the index
+    of the last operation, and [alive ()] is [false] once the power is cut. *)
+
+val on_ack : t -> (unit -> unit) -> unit
+(** [on_ack t f] runs [f] after each later acknowledgement, in place of what ran
+    before. *)
 
 val add : string -> t -> _ Eio.Path.t -> unit
 (** [add name t file] records what [file] holds now, unless the power is cut.

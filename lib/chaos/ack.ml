@@ -4,22 +4,24 @@ type entry = { path : string; held : string; at : int }
 
 type t = {
   base : Eio.Fs.dir_ty Eio.Path.t;
-  at : unit -> int; (* the last operation's index *)
-  mutable alive : unit -> bool; (* false once the power is cut *)
+  at : unit -> int;
+  alive : unit -> bool;
   mutable on_ack : unit -> unit;
   mutable live : entry list; (* latest first *)
   mutable paths : string list; (* latest first, each once *)
 }
 
-let v ~at base =
+let v ~at ~alive base =
   {
     base :> Eio.Fs.dir_ty Eio.Path.t;
     at;
-    alive = (fun () -> true);
+    alive;
     on_ack = ignore;
     live = [];
     paths = [];
   }
+
+let on_ack t f = t.on_ack <- f
 
 (* A path as the root names it, with no [""], ["."] or [".."]. *)
 let norm path =

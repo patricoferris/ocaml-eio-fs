@@ -291,22 +291,24 @@ let tracked t keep =
 
 let alive t () = not (crashed t)
 
+(* An acknowledgement, of a value or a file, changes what a cut must keep. *)
+let note_ack t =
+  let i = Eio_chaos.index t.chaos in
+  Eio_chaos.changed t.chaos i;
+  t.acked_at <- i :: t.acked_at
+
 let run t ~cut ~faults =
   let base = base t in
-  let ack = Ack.v ~at:(fun () -> Eio_chaos.index t.chaos) base in
+  let ack =
+    Ack.v ~at:(fun () -> Eio_chaos.index t.chaos) ~alive:(alive t) base
+  in
   t.ack <- Some ack;
   t.keep <- cut;
   let fs =
     match cut with
     | Some keep ->
         let fs = tracked t keep in
-        ack.alive <- alive t;
-        (* A file's ack changes what a cut must keep, as a value's does. *)
-        ack.on_ack <-
-          (fun () ->
-            let i = Eio_chaos.index t.chaos in
-            Eio_chaos.changed t.chaos i;
-            t.acked_at <- i :: t.acked_at);
+        Ack.on_ack ack (fun () -> note_ack t);
         fs
     | None ->
         (* Pages a failed sync evicts read as the disk holds them, which
@@ -399,11 +401,7 @@ let restart t ~power ~cut =
     t.ack;
   let fs =
     if power then begin
-      Option.iter
-        (fun (a : Ack.t) ->
-          a.on_ack <- ignore;
-          a.alive <- alive t)
-        t.ack;
+      Option.iter (fun a -> Ack.on_ack a ignore) t.ack;
       tracked t (match cut with Some k -> k | None -> Eio_chaos.Lose_unsynced)
     end
     else begin
@@ -436,12 +434,9 @@ let acks name (env : Eio_chaos.env) =
   | Some _ | None ->
       Fmt.invalid_arg "%s: env is not that of a run of Eio_fs_chaos.run" name
 
-(* An acknowledged value changes what a cut must keep, until the cut. *)
 let acknowledge (env : Eio_chaos.env) =
   match Part.find env#chaos with
   | Some d when not (crashed d) ->
-      let i = Eio_chaos.index d.chaos in
-      Eio_chaos.changed d.chaos i;
-      d.acked_at <- i :: d.acked_at;
+      note_ack d;
       true
   | Some _ | None -> false
