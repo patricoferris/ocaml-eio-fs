@@ -1,0 +1,20 @@
+# Where the traces beside this file come from. write.sh rewrites it on
+# REGEN=1; test/provenance checks it.
+generator: test/interop/windows/scripts/generate.sh
+regenerate: REGEN=1 dune build @test/interop/windows/regen-traces
+revision: c795cbca27733d79e475a00df815f60040f87958
+recorded: 2026-11-18T17:15:21Z
+uid: 197108
+host: CYGWIN_NT-10.0-26100 3.6.12-1.x86_64 x86_64
+eio_windows: 1.7
+windows: Microsoft Windows Server 2025 Datacenter 10.0.26100
+windows.image: win25-vs2026 20261103.298.1
+windows.filesystem: NTFS, case-insensitive
+windows.developer-mode: off
+windows.user: administrator True, SeCreateSymbolicLinkPrivilege Disabled
+windows.basic-user: SeCreateSymbolicLinkPrivilege absent
+windows.other-drive: D:, NTFS
+input: scripts/generate.sh 6a81778b8d0e59311f2ce4ba736d8a34
+input: scripts/paths.ml 4f3d349d593bbf019b254c46b0f6e2b0
+input: scripts/win_paths.ml 881f93c58ca2a4bbd10961b4e52af2bf
+trace: traces/paths.csv 0daa4de4dda94ff98386960381631955

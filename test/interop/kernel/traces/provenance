@@ -2,10 +2,22 @@
 # REGEN=1; test/provenance checks it.
 generator: test/interop/kernel/scripts/generate.sh
 regenerate: REGEN=1 dune build @test/interop/kernel/regen-traces
-revision: 078dd64399706c4489688522d21ee856c97f55fc
-recorded: 2026-11-18T13:45:54Z
-uid: 501
-host: Darwin 27.3.0 arm64
+revision: c795cbca27733d79e475a00df815f60040f87958
+recorded: 2026-11-18T17:15:25Z
+uid: 197108
+host: CYGWIN_NT-10.0-26100 3.6.12-1.x86_64 x86_64
+eio_windows: 1.7
+windows: Microsoft Windows Server 2025 Datacenter 10.0.26100
+windows.image: win25-vs2026 20261103.298.1
+windows.filesystem: NTFS, case-insensitive
+windows.developer-mode: off
+windows.user: administrator True, SeCreateSymbolicLinkPrivilege Disabled
+windows.basic-user: SeCreateSymbolicLinkPrivilege absent
+posix.revision: c98aa3140ed8e0603f03eb5c8245c681a925918d
+posix.recorded: 2026-11-18T17:03:09Z
+posix.input: scripts/generate.sh f364c5c7f832a9f1c54b14ecca198801
+posix.input: scripts/record.ml a033cf6b6d2b64255b76e8fe4285fde9
+posix.input: ../../../lib/kernel/eio_fs_kernel.ml d6434dd70d47dc546f4f68c6afa8f746
 eio_posix: 1.7 from git+https://github.com/ocaml-multicore/eio.git#v1.7
 macos: 27.3 (26C5035r)
 macos.filesystem: apfs, case-insensitive
@@ -17,7 +29,9 @@ linux: Linux 7.2.12-orbstack-00394-gbecdd6130068 #1 SMP PREEMPT Thu Oct 22 22:17
 linux.filesystem: tmpfs, case-sensitive
 linux.mount: rw,nosuid,nodev,relatime
 linux.user: uid 1000, groups 1000 4242
-input: scripts/generate.sh e182e9e3482a438de07410302c38cb0e
-input: scripts/record.ml 770420e2f66a9e1e30028cb69175f9b9
-input: ../../../lib/kernel/eio_fs_kernel.ml 57cea030c95aacc610d4560caaf523e0
-trace: traces/fs.csv 072701820e8509071b8940ec46ddfb3b
+input: scripts/generate-windows.sh 5f1784e79095f591064729bd28d2098f
+input: scripts/basic-user.sh 9516fcd9ffe5d07feaac98f3714741a9
+input: scripts/record.ml a033cf6b6d2b64255b76e8fe4285fde9
+input: scripts/backend.windows.ml 83c4facc56fa761e777d37c028b66ce5
+input: ../../../lib/kernel/eio_fs_kernel.ml d6434dd70d47dc546f4f68c6afa8f746
+trace: traces/fs.csv bd962738eb7cdf7ae09b8c346a641632

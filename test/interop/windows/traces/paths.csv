@@ -1,0 +1,15 @@
+case,path,native,split dir,split name,outcomes,stdlib
+absolute,<work>\a,<work>\a,<work>,a,ok|x,-|x
+absolute with slashes,<work>/a,<work>/a,<work>,a,x,x
+rooted,<root>\b,<root>\b,<root>,b,ok|x,-|x
+drive-relative,<drive>c,C:c,C:,c,ok|x,-|x
+verbatim trailing dot,\\?\<work>\d.,\\?\<work>\d.,\\?\<work>,d.,ok|x,-|x
+trailing dot,<work>\d.,<work>\d.,<work>,d.,ENOENT: Eio.Io Fs Not_found Unix_error (No such file or directory  "openat"  "\\??\\<work>\\d")    opening <fs:<work>\\d.>,Sys_error: <work>\d.: No such file or directory
+trailing dot trimmed,<work>\d,<work>\d,<work>,d,ENOENT: Eio.Io Fs Not_found Unix_error (No such file or directory  "openat"  "\\??\\<work>\\d")    opening <fs:<work>\\d>,Sys_error: <work>\d: No such file or directory
+verbatim reserved,\\?\<work>\NUL,\\?\<work>\NUL,\\?\<work>,NUL,ok|y,-|y
+reserved,<work>\NUL,<work>\NUL,<work>,NUL,y,
+reserved with an extension,<work>\com1.txt,<work>\com1.txt,<work>,com1.txt,ENOENT: Eio.Io Fs Not_found Unix_error (No such file or directory  "openat"  "\\??\\<work>\\com1.txt")    opening <fs:<work>\\com1.txt>,Sys_error: <work>\com1.txt: No such file or directory
+listing,<work>,<work>,<parent>,paths,[NUL/a/b/c/d.],-
+rename a directory across drives,<work>\e,<work>\e,<work>,e,ok|denied: Eio.Io Fs Permission_denied Unix_error (Improper link  "renameat"  "\\??\\<other>\\e")    renaming <fs:<work>\\e> to <fs:<other>\\e>,-|-
+rename a file across drives,<work>\f,<work>\f,<work>,f,ok|denied: Eio.Io Fs Permission_denied Unix_error (Improper link  "renameat"  "\\??\\<other>\\f")    renaming <fs:<work>\\f> to <fs:<other>\\f>,-|-
+other drive,<other>,<other>,D:\,<other-name>,[],-
