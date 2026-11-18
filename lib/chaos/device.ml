@@ -267,65 +267,66 @@ let has_native ~run f =
   | Ok [ "yes" ] -> true
   | Ok _ | Error _ -> false
 
+(* What [dir] answers differently from the scenario numbered [i]: its first
+   differing answer, or the error that ended it. *)
+let scenario_differs ~run_in ~posix f i (scenario, ops, p) =
+  match p with
+  | Left _ -> []
+  | Run { ids; answers } -> (
+      let got =
+        run_in @@ fun env ->
+        Eio.Switch.run @@ fun sw ->
+        let dir, root = scenario_dir ~sw (f ~sw env) (string_of_int i) in
+        K.run ?root ids dir ops
+      in
+      let rec first got j = function
+        | [] -> []
+        | (a : answer) :: rest ->
+            if List.nth got j <> a.want then
+              [
+                differs ~posix:(List.mem scenario posix) ~scenario ~ops ~got j a;
+              ]
+            else first got (j + 1) rest
+      in
+      match got with
+      | Ok got -> first got 0 answers
+      | Error e -> [ Fmt.str "  %s: %s" scenario (one_line e) ])
+
+(* The failure that reports [differed], and the scenarios [plan] left out. *)
+let fail ~os plan differed =
+  let count why =
+    List.length (List.filter (fun (_, _, p) -> p = Left why) plan)
+  in
+  let reasons =
+    List.filter_map
+      (fun (why, n) ->
+        if n > 0 then Fmt.kstr Option.some "; %d %s" n why else None)
+      [
+        ("that need ~user", count `User);
+        ("that need a native path", count `Native);
+        ("not recorded", count `Unrecorded);
+      ]
+  in
+  let left = count `User + count `Native + count `Unrecorded in
+  let failed = List.length differed in
+  let ran = List.length K.scenarios - left in
+  Fmt.failwith
+    "%s: %d of %d scenarios differ from %s@\n\
+     %s@\n\
+    \  %d passed, %d differed, %d left out%s"
+    name failed ran (os_name os)
+    (String.concat "\n" differed)
+    (ran - failed) failed left (String.concat "" reasons)
+
 let check ?os ?user ~run:run_in f =
   let os = os_of os in
   let posix = eio_posix_differs os in
   let native = has_native ~run:run_in f in
   let plan = plan os user ~native in
   let differed =
-    List.concat
-      (List.mapi
-         (fun i (scenario, ops, p) ->
-           match p with
-           | Left _ -> []
-           | Run { ids; answers } -> (
-               let got =
-                 run_in @@ fun env ->
-                 Eio.Switch.run @@ fun sw ->
-                 let dir, root =
-                   scenario_dir ~sw (f ~sw env) (string_of_int i)
-                 in
-                 K.run ?root ids dir ops
-               in
-               let rec first got j = function
-                 | [] -> []
-                 | (a : answer) :: rest ->
-                     if List.nth got j <> a.want then
-                       [
-                         differs ~posix:(List.mem scenario posix) ~scenario ~ops
-                           ~got j a;
-                       ]
-                     else first got (j + 1) rest
-               in
-               match got with
-               | Ok got -> first got 0 answers
-               | Error e -> [ Fmt.str "  %s: %s" scenario (one_line e) ]))
-         plan)
+    List.concat (List.mapi (scenario_differs ~run_in ~posix f) plan)
   in
-  if differed <> [] then begin
-    let count why =
-      List.length (List.filter (fun (_, _, p) -> p = Left why) plan)
-    in
-    let reasons =
-      List.filter_map
-        (fun (why, n) -> if n > 0 then Some (Fmt.str "; %d %s" n why) else None)
-        [
-          ("that need ~user", count `User);
-          ("that need a native path", count `Native);
-          ("not recorded", count `Unrecorded);
-        ]
-    in
-    let left = count `User + count `Native + count `Unrecorded in
-    let failed = List.length differed in
-    let ran = List.length K.scenarios - left in
-    Fmt.failwith
-      "%s: %d of %d scenarios differ from %s@\n\
-       %s@\n\
-      \  %d passed, %d differed, %d left out%s"
-      name failed ran (os_name os)
-      (String.concat "\n" differed)
-      (ran - failed) failed left (String.concat "" reasons)
-  end
+  if differed <> [] then fail ~os plan differed
 
 (* An answer a failure below a device may explain: an error eio-fs injects,
    as it answers it, a missing file, a refused access, a read-only or full

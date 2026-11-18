@@ -87,3 +87,9 @@ exclude = ["E710"]
 [[rules]]
 files = ["test/provenance/*"]
 exclude = ["E610"]
+
+# These regen rules are REGEN-gated inside an (and ...) with the host's
+# os_type, which E815 does not read: it accepts only a bare (= %{env:REGEN=0} 1).
+[[rules]]
+files = ["test/interop/kernel/traces/dune", "test/interop/windows/traces/dune"]
+exclude = ["E815"]

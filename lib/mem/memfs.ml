@@ -76,10 +76,10 @@ module Nt_syntax = struct
   let native ~dir_path path =
     if not (is_relative path) then Some path
     else
-      let p = if dir_path = "." then path else join dir_path path in
+      let p = if String.equal dir_path "." then path else join dir_path path in
       Some
-        (if p = "" then "."
-         else if p = "." || not (implicit p) then p
+        (if String.equal p "" then "."
+         else if String.equal p "." || not (implicit p) then p
          else ".\\" ^ p)
 
   let dir_path ~parent:_ fd _ = Low_level.win_path fd
