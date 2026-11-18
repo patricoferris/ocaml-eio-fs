@@ -47,11 +47,11 @@ val find : string -> t -> string option
     filesystem. *)
 
 val load :
-  ?clock:_ Eio.Time.clock ->
   ?os:[< `Linux | `Macos ] ->
+  ?clock:_ Eio.Time.clock ->
   t ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [load ~clock ~os entries] is the root of a new in-memory filesystem that
+(** [load ~os ~clock entries] is the root of a new in-memory filesystem that
     answers as [os] (defaults to [`Linux]) does, holding [entries], with their
     permissions and symbolic links. Its times are read from [clock], as
     [Eio_fs_mem.v] reads them. A {!Dir} creates its missing ancestors; a {!File}
@@ -66,7 +66,7 @@ val load :
 val source : t Fmt.t
 (** [source] formats a standalone OCaml module embedding the entries. The
     generated module exposes [entries : Eio_fs.Crunch.t] and
-    [load ?clock ?os ()], which is {!load} of [entries] with the same optional
+    [load ?os ?clock ()], which is {!load} of [entries] with the same optional
     arguments. *)
 
 val interface : string
