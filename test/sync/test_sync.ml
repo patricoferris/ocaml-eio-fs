@@ -321,6 +321,20 @@ let test_save () =
   Eio_fs.Sync.save p "";
   Alcotest.(check string) "empty" "" (Eio.Path.load p)
 
+(* Windows keeps no Unix mode: a file's reads 666, and eio_windows refuses a
+   chmod below a directory it opened. A save with any other mode is
+   published without one, there and under a fault. *)
+let test_save_on_windows () =
+  Eio_mock.Backend.run (fun () ->
+      let root = Eio_fs_mem.v ~os:`Windows () in
+      Eio.Path.mkdir ~perm:0o755 (root / "d");
+      Eio.Switch.run @@ fun sw ->
+      let d = Eio.Path.open_dir ~sw (root / "d") in
+      Eio_fs.Sync.save ~perm:0o644 (d / "f") "x";
+      Alcotest.(check string) "saved" "x" (Eio.Path.load (d / "f")));
+  Eio_fs_chaos.run ~os:`Windows (fun env ->
+      Eio_fs.Sync.save ~perm:0o644 (Eio.Stdenv.cwd env / "f") "x")
+
 (* Every durable entry point issues the barriers it is given, and none of
    them under Barrier.none. *)
 let test_barrier_is_used () =
@@ -871,6 +885,7 @@ let suite =
         test_exclusive_publication_survives_crash;
       Alcotest.test_case "registered backend" `Quick test_registered_backend;
       Alcotest.test_case "save a string" `Quick test_save;
+      Alcotest.test_case "save on Windows" `Quick test_save_on_windows;
       Alcotest.test_case "the barrier given is the one issued" `Quick
         test_barrier_is_used;
       Alcotest.test_case "append lines" `Quick test_append_creates;
