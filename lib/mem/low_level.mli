@@ -18,10 +18,10 @@ module Error : sig
       constructor for. *)
 end
 
-val name_key : [ `Linux | `Macos ] -> string -> string
+val name_key : [ `Linux | `Macos | `Windows ] -> string -> string
 (** [name_key os name] is what [os] compares [name] by: [name] itself on Linux,
-    its canonical caseless form on macOS. Two names with one key name one entry.
-*)
+    its canonical caseless form on macOS, its characters' simple uppercase on
+    Windows. Two names with one key name one entry. *)
 
 (** Flags for {!openat}. *)
 module Open_flags : sig
@@ -75,15 +75,20 @@ val v :
   ?clock:_ Eio.Time.clock ->
   ?cwd:string ->
   ?owner:User.t ->
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
+  ?drives:char list ->
   unit ->
   t
-(** [v ~clock ~cwd ~owner ~os ()] is a new file system holding only an empty
-    root directory, whose current directory is the directory at the absolute
-    path [cwd] (defaults to ["/"]) when first used: it then follows that
-    directory, as a descriptor does. Its root directory, mode [0o755], belongs
-    to [owner] (defaults to {!User.root}). Its times are read from [clock];
-    without one, they stay at [0.]. It answers as [os], [`Linux] by default. *)
+(** [v ~clock ~cwd ~owner ~os ~drives ()] is a new file system holding only an
+    empty root directory, whose current directory is the directory at the
+    absolute path [cwd] (defaults to ["/"], or the first drive's root on
+    Windows) when first used: it then follows that directory, as a descriptor
+    does. Its root directory, mode [0o755], belongs to [owner] (defaults to
+    {!User.root}). Its times are read from [clock]; without one, they stay at
+    [0.]. It answers as [os], [`Linux] by default. On Windows its root holds a
+    directory for each of [drives] (defaults to [['C']]), named ["C:"].
+
+    @raise Invalid_argument if [drives] is given for another [os]. *)
 
 (** File descriptors. *)
 module Fd : sig
@@ -104,9 +109,23 @@ module Dir : sig
       [Eio.Fs.Permission_denied]. *)
   type at = Fs of t | Cwd of t | Dir_fd of Fd.t
 
-  type fd = { at : at; user : User.t }
-  (** A directory and the user each operation through it runs as. *)
+  type fd = { at : at; user : User.t; admin : bool }
+  (** A directory, the user each operation through it runs as, and whether it is
+      the administrator's, whose files take [pread] and [pwrite] even on
+      Windows. *)
 end
+
+val windows : Dir.fd -> bool
+(** [windows dir] is [true] iff the file system of [dir] answers as Windows
+    does. *)
+
+val root_path : t -> string
+(** [root_path t] is the path a full-access directory of [t] stands at: ["/"],
+    or the root of the drive of [t]'s current directory on Windows. *)
+
+val win_path : Fd.t -> string
+(** [win_path fd] is the Win32 path of the directory [fd] is open on, as
+    ["C:\\a"]. *)
 
 val close : Fd.t -> unit
 (** [close fd] releases [fd]. Closing an already closed descriptor does nothing.

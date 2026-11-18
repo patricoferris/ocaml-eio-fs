@@ -8,7 +8,7 @@ val needs_user : string list
     root, with a supplementary group. *)
 
 val check :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?user:Eio_fs_mem.user ->
   run:((Eio_chaos.env -> string list) -> (string list, string) result) ->
   (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
@@ -17,17 +17,22 @@ val check :
     [run], which is its answers, or why its run did not end. *)
 
 val expected :
-  ?trace:string -> [< `Linux | `Macos ] -> string -> string list option
-(** [expected ~trace os name] is the answers {!check} expects of the scenario
-    [name] on [os], from the trace [trace] (defaults to the one the library
-    holds), or [None] if it was not recorded there. *)
+  ?trace:string ->
+  ?basic:bool ->
+  [< `Linux | `Macos | `Windows ] ->
+  string ->
+  string list option
+(** [expected ~trace ~basic os name] is the answers {!check} expects of the
+    scenario [name] on [os], as a basic user on Windows if [basic], from the
+    trace [trace] (defaults to the one the library holds), or [None] if it was
+    not recorded there. *)
 
-val eio_posix_differs : [< `Linux | `Macos ] -> string list
+val eio_posix_differs : [< `Linux | `Macos | `Windows ] -> string list
 (** [eio_posix_differs os] is the scenarios where the recorded eio_posix answers
     on [os] differ from those {!check} expects. *)
 
 val program :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?user:Eio_fs_mem.user ->
   (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
   Eio_chaos.env ->

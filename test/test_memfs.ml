@@ -258,6 +258,44 @@ let test_error_code () =
   | _ -> Alcotest.fail "loaded a missing file"
   | exception Eio.Io (Eio.Fs.E (Not_found (Eio_fs_mem.Eio_fs _)), _) -> ()
 
+(* Under Windows the root is the first drive's, spelt as eio_windows spells
+   paths, each drive given is one, by any case, and only Windows has
+   drives. *)
+let test_windows_drives () =
+  Eio_mock.Backend.run @@ fun () ->
+  let root = Eio_fs_mem.v ~os:`Windows ~drives:[ 'C'; 'D' ] () in
+  Alcotest.(check string) "root" {|C:\|} (snd root);
+  Alcotest.(check (option string))
+    "native" (Some {|C:\a|})
+    (Eio.Path.native (root / "a"));
+  Eio.Path.save ~create:(`Exclusive 0o644) (root / {|D:\x|}) "d";
+  Alcotest.(check string) "on D:" "d" (Eio.Path.load (fst root, {|d:\X|}));
+  (match Eio.Path.load (fst root, {|E:\x|}) with
+  | _ -> Alcotest.fail "a drive not given"
+  | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ());
+  match Eio_fs_mem.v ~os:`Linux ~drives:[ 'C' ] () with
+  | _ -> Alcotest.fail "a drive under Linux"
+  | exception Invalid_argument _ -> ()
+
+(* A program that saves, renames and reads a file meets no refusal under
+   Windows, a power cut included, and one that holds a file open while it
+   renames it is refused. *)
+let test_windows_run () =
+  Eio_fs_chaos.run ~os:`Windows (fun env ->
+      let cwd = Eio.Stdenv.cwd env in
+      Eio.Path.save ~create:(`Or_truncate 0o644) (cwd / "tmp") "a";
+      Eio.Path.rename (cwd / "tmp") (cwd / "final");
+      ignore (Eio.Path.load (cwd / "FINAL")));
+  Eio_mock.Backend.run @@ fun () ->
+  Eio_fs_mem.run ~os:`Windows @@ fun env ->
+  let f = env#cwd / "f" in
+  Eio.Path.save ~create:(`Or_truncate 0o644) f "a";
+  Eio.Switch.run @@ fun sw ->
+  ignore (Eio.Path.open_in ~sw f);
+  match Eio.Path.rename f (env#cwd / "g") with
+  | () -> Alcotest.fail "renamed a file held open"
+  | exception Eio.Io (Eio.Fs.E (Permission_denied _), _) -> ()
+
 let suite =
   ( "memfs",
     [
@@ -273,4 +311,7 @@ let suite =
       Alcotest.test_case "a power cut keeps the times the disk kept" `Quick
         test_crash_times;
       Alcotest.test_case "absolute links as eio_posix" `Quick test_as_eio_posix;
+      Alcotest.test_case "Windows: drives" `Quick test_windows_drives;
+      Alcotest.test_case "Windows: a run and a file held open" `Quick
+        test_windows_run;
     ] )

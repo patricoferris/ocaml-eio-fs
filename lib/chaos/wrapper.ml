@@ -508,12 +508,18 @@ module Dir_impl = struct
   let pp ppf t =
     let (Base_dir ((module B), bv)) = t.boxed in
     B.pp ppf bv
-
-  (* Path syntax is a property of the backend, not of an instance, so the
-     wrapper cannot take it from the base it boxes: it states the POSIX
-     syntax every base here uses. *)
-  include Eio_utils.Posix_path
 end
+
+(* Path syntax is a property of the backend: a wrapper spells its paths as
+   its base does, POSIX's or Windows'. *)
+let dir_impl (module P : Eio.Fs.Pi.PATH) :
+    (module Eio.Fs.Pi.DIR with type t = dir) =
+  (module struct
+    include Dir_impl
+
+    let split = P.split
+    let join = P.join
+  end)
 
 (* The wrapper is its own value, bound to its own interfaces: a handler
    rebuilt from its bindings reaches nothing of the base's, so no directory
@@ -521,10 +527,10 @@ end
    [Eio_fs_internal.Base_dir] and [Eio_fs_internal.Admin] alone, which no
    library outside this package can name. A backend's own interfaces, such as the native directory a child
    process is started in, are not carried over. *)
-let dir_handler =
+let dir_handler syntax =
   Eio.Resource.handler
     [
-      Eio.Resource.H (Eio.Fs.Pi.Dir, (module Dir_impl));
+      Eio.Resource.H (Eio.Fs.Pi.Dir, dir_impl syntax);
       Eio.Resource.H (Eio.Resource.Close, fun t -> close_resource t.base);
       Eio.Resource.H (Eio_fs_internal.Base_dir, fun t -> t.base);
       (* The base's root rights, under the same schedule. *)
@@ -553,7 +559,8 @@ let wrap_dir ~base ~sched : [ `Close | Eio.Fs.dir_ty ] r =
   let (Eio.Resource.T (bv, bops)) = base in
   let module B = (val Eio.Resource.get bops Eio.Fs.Pi.Dir) in
   let state = { base; boxed = Base_dir ((module B), bv); sched } in
-  (Eio.Resource.T (state, dir_handler) :> [ `Close | Eio.Fs.dir_ty ] r)
+  let handler = dir_handler (module B : Eio.Fs.Pi.PATH) in
+  (Eio.Resource.T (state, handler) :> [ `Close | Eio.Fs.dir_ty ] r)
 
 let () = wrap_dir_hook := wrap_dir
 

@@ -397,7 +397,7 @@ type t = {
       (* The handles open on each inode: ext4 frees a removed file's blocks
          at its last close. *)
   file_inos : (int, int64) Hashtbl.t; (* the inode of each file, by id *)
-  os : [ `Linux | `Macos ];
+  os : [ `Linux | `Macos | `Windows ];
   mutable queued : Commit.t list;
       (* The commits of the plain syncs a full one has not drained yet,
          newest first: on macOS, fsync(2) stops in the drive's cache. *)
@@ -2271,13 +2271,13 @@ let apply_commit ctl = function
   | Attrs { ino; upto } -> commit_attrs ~upto ctl ~ino
   | Dir { ino; upto } -> commit_dir_ino ~upto ctl ino
 
-(* What a sync makes durable lands now, but on macOS only through a full
-   sync, F_FULLFSYNC: fsync(2) reaches the drive's cache, which a cut
-   loses. A full sync drains the plain ones before it, of any file: each
+(* What a sync makes durable lands now, as FlushFileBuffers lands it on
+   Windows, but on macOS only through a full sync, F_FULLFSYNC: fsync(2)
+   reaches the drive's cache, which a cut loses. A full sync drains the plain ones before it, of any file: each
    commits the changes made before its call, which [fail_sync] keeps. *)
 let commit ctl ~full commit =
   match ctl.os with
-  | `Linux -> apply_commit ctl commit
+  | `Linux | `Windows -> apply_commit ctl commit
   | `Macos when not full ->
       ctl.effects <- ctl.effects + 1;
       ctl.queued <- commit :: ctl.queued
@@ -2608,16 +2608,16 @@ let gone d p =
   | Some ino -> [ (p, ino) ]
   | None -> []
 
-(* On macOS, the spelling of the entry [name] matches in [dir], so that two
-   spellings of one name are one file to the model. *)
-let spelling d ~dir name =
+(* On macOS and Windows, the spelling of the entry [name] matches in [dir],
+   so that two spellings of one name are one file to the model. *)
+let spelling os d ~dir name =
   let (Base_dir ((module B), bv)) = as_admin d.dctl d.dplace.proot in
-  let key = Low_level.name_key `Macos name in
+  let key = Low_level.name_key os name in
   match B.read_dir bv dir with
   | names -> (
       match
         List.find_opt
-          (fun n -> String.equal (Low_level.name_key `Macos n) key)
+          (fun n -> String.equal (Low_level.name_key os n) key)
           names
       with
       | Some n -> n
@@ -2630,7 +2630,9 @@ let resolve ?follow_last d path =
   | None -> path
   | Some (_, root) ->
       let spell =
-        match d.dctl.os with `Linux -> None | `Macos -> Some (spelling d)
+        match d.dctl.os with
+        | `Linux -> None
+        | (`Macos | `Windows) as os -> Some (spelling os d)
       in
       resolve_at ?follow_last ?spell ~root d.dplace.proot path
 
@@ -2958,9 +2960,7 @@ let v ?os ?(policy = Drop_unsynced) ?(outside = Dropped) ?(block_size = 4096)
     Fmt.invalid_arg
       "Eio_fs_chaos.Private.Crash.v: block_size is %d, must be positive"
       block_size;
-  let os =
-    match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
-  in
+  let os = match os with Some (#Eio_chaos.os as os) -> os | None -> `Linux in
   {
     os;
     queued = [];

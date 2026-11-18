@@ -186,7 +186,7 @@ type outside =
           [Eio_fs_chaos.Power.wrap], whose controllers all keep it. *)
 
 val v :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?policy:policy ->
   ?outside:outside ->
   ?block_size:int ->

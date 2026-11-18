@@ -63,10 +63,18 @@ let scan ?filter ~at root =
   List.sort (fun (a, _) (b, _) -> List.compare String.compare a b) !entries
   |> List.map snd
 
-(* Each directory takes its mode once everything is made in it. *)
+(* Each directory takes its mode once everything is made in it, but on
+   Windows, which keeps none. *)
 let load ?os ?clock entries =
   let t = Low_level.v ?os ?clock () in
   let fs = Memfs.fs t in
+  let admin =
+    {
+      Low_level.Dir.at = Low_level.Dir.Fs t;
+      user = Low_level.User.root;
+      admin = true;
+    }
+  in
   let mem path = (fs, path) in
   let modes =
     List.fold_left
@@ -75,16 +83,15 @@ let load ?os ?clock entries =
             if path <> "/" then Eio.Path.mkdirs ~exists_ok:true ~perm (mem path);
             (path, perm) :: modes
         | File { path; perm; contents } ->
-            Low_level.embed
-              { at = Low_level.Dir.Fs t; user = Low_level.User.root }
-              ~perm path ~contents;
+            Low_level.embed admin ~perm path ~contents;
             modes
         | Symlink { path; target } ->
             Eio.Path.symlink ~link_to:target (mem path);
             modes)
       [] entries
   in
-  List.iter
-    (fun (path, perm) -> Eio.Path.chmod ~follow:false ~perm (mem path))
-    modes;
-  (fs, "/")
+  if not (Low_level.windows admin) then
+    List.iter
+      (fun (path, perm) -> Eio.Path.chmod ~follow:false ~perm (mem path))
+      modes;
+  (fs, Low_level.root_path t)

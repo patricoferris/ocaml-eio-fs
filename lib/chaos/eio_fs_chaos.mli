@@ -19,10 +19,10 @@
     hand, {!ack} for a file the program has promised to keep.
 
     {!run}, {!val-device} and {!Power.v} take [?os], as {!Eio_fs_mem.v} does:
-    [`Linux], the default, or [`Macos]. It picks the filesystem's answers and
-    what a power cut keeps of each kind of sync. The choice comes from the
-    argument, never from the host, so a test checks the same thing on every
-    machine.
+    [`Linux], the default, [`Macos] or [`Windows]. It picks the filesystem's
+    answers and what a power cut keeps of each kind of sync. The choice comes
+    from the argument, never from the host, so a test checks the same thing on
+    every machine.
 
     {!val-device} replays {e scenarios}, each a short sequence of operations
     recorded on each kernel. A report of {!run} names its runs as scenarios too:
@@ -164,7 +164,8 @@ val device :
   unit
 (** [device ~os ~user dir] runs each scenario recorded on the kernel of [os]
     (defaults to [`Linux]) in a directory of mode [0o755] it makes in a fresh,
-    empty directory [dir ~sw env], and compares each answer with the kernel's.
+    empty directory [dir ~sw env], opened as a sandbox, as the recorder ran it
+    below its current directory, and compares each answer with the kernel's.
     [sw] ends with the scenario, so what [dir] opens under it is closed there.
 
     Each scenario runs in an event loop of its own, as a run of {!run} does,
@@ -204,7 +205,12 @@ val device :
       another;
     - [chain n] makes [n] links [l1] to [ln], each to the one before, the first
       to [f];
-    - [{s}n] is [s] repeated [n] times.
+    - [hold p] and [holddir p] keep [p] open as a file or a directory until
+      [close p] or the scenario's end, [cd p] opens [p] as a directory that
+      confines the operations after it, and [mkdirs p] is {!Eio.Path.mkdirs};
+    - [p{s}n] is [p] followed by [s] repeated [n] times, [\NNN] the byte of
+      decimal code [NNN], and [@p] is [p] under the scenario's directory by its
+      absolute path.
 
     The answers were recorded as a user other than root, with the umask [0o022]
     and a supplementary group. [user] is the {!Eio_fs_mem.type-user} [dir]'s
@@ -214,11 +220,20 @@ val device :
     supplementary group, are left out. {!Eio_fs_mem.v} passes for the [os] it is
     given.
 
+    A scenario that names a path by its absolute spelling, as a link's target,
+    takes it from {!Eio.Path.native} of its directory; where that has none, as
+    on {!Eio_fs_mem} but under [`Windows], the scenario is left out.
+
+    On Windows only eio_windows was recorded, as OCaml's [Unix] reaches the C
+    runtime there, not the kernel: the answers are eio_windows 1.7's on NTFS, as
+    an administrator without [user], and as a basic user, who may not make a
+    symbolic link, with it.
+
     Where Eio defines an answer the kernel cannot give, as for a path Eio
     resolves one component at a time, the expected answer is the one eio_posix
     gave on that kernel. eio_posix itself does not pass: it resolves a trailing
     slash, ["."] and [".."] itself, where the kernel answers otherwise, and
-    differs on 12 of the 86 scenarios on Linux and 20 on macOS. A filesystem
+    differs on 13 of the 115 scenarios on Linux and 21 on macOS. A filesystem
     that wraps eio_posix differs there too.
 
     [device] runs every scenario, whatever the earlier ones answered. In a
@@ -432,7 +447,13 @@ val acked : env -> string list
       file;
     - a failed fsync(2) loses only the writes no earlier one flushed;
     - the rest is as on Linux, as no source rules it out on APFS, so a cut may
-      leave a state APFS would not. *)
+      leave a state APFS would not.
+
+    {b Windows.} Under [~os:`Windows] a cut keeps what it keeps on Linux:
+    {!Eio.File.sync} is FlushFileBuffers, and a directory barrier counts as
+    Linux's, though eio_windows syncs no directory. What NTFS keeps of a
+    directory on a power cut is not modelled: only a power-cut test on real
+    Windows could tell it. *)
 module Power : sig
   type change
   (** The type for a write or a directory change that no sync has made durable.
@@ -706,11 +727,15 @@ module Private : sig
       [os] differ from those {!val-device} expects. *)
 
   val expected :
-    ?trace:string -> [< `Linux | `Macos ] -> string -> string list option
-  (** [expected ~trace os name] is the answers {!val-device} expects of the
-      scenario [name] on [os], read from the CSV text [trace] (defaults to the
-      trace the library holds), or [None] if it was not recorded there. A column
-      is found by its name. *)
+    ?trace:string ->
+    ?basic:bool ->
+    [< Eio_chaos.os ] ->
+    string ->
+    string list option
+  (** [expected ~trace ~basic os name] is the answers {!val-device} expects of
+      the scenario [name] on [os], as a basic user on Windows if [basic], read
+      from the CSV text [trace] (defaults to the trace the library holds), or
+      [None] if it was not recorded there. A column is found by its name. *)
 
   val check_faults :
     ?os:[< Eio_chaos.os ] ->

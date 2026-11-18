@@ -478,7 +478,7 @@ module Crunch = struct
        val entries : Eio_fs.Crunch.entry list\n\
        (** The embedded file tree. *)\n\n\
        val load :\n\
-      \  ?os:[< `Linux | `Macos ] ->\n\
+      \  ?os:[< `Linux | `Macos | `Windows ] ->\n\
       \  ?clock:_ Eio.Time.clock ->\n\
       \  unit ->\n\
       \  [ `Close | Eio.Fs.dir_ty ] Eio.Path.t\n\

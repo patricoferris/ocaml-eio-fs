@@ -37,13 +37,19 @@ type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 
 (* Root owns the tree and makes the current directory, which it gives to
    [user]. *)
-let run ?os ?(user = root) ?clock ?(cwd = "/") fn =
-  if not (String.starts_with ~prefix:"/" cwd) then
+let absolute os cwd =
+  match os with
+  | Some `Windows -> Eio_utils.Nt_path.classify cwd = `Absolute
+  | Some (`Linux | `Macos) | None -> String.starts_with ~prefix:"/" cwd
+
+let run ?os ?(user = root) ?clock ?drives ?cwd fn =
+  let t = Low_level.v ?clock ?cwd ?os ?drives () in
+  let cwd = Option.value ~default:(Low_level.root_path t) cwd in
+  if not (absolute os cwd) then
     Fmt.invalid_arg "Eio_fs_mem.run: cwd is %S, must be an absolute path" cwd;
-  let t = Low_level.v ?clock ~cwd ?os () in
   let admin = (Eio.Path.of_dir (Memfs.fs t) :> Eio.Fs.dir_ty Eio.Path.t) in
   Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 Eio.Path.(admin / cwd);
-  if not (Int64.equal user.uid 0L) then
+  if not (Int64.equal user.uid 0L || Low_level.root_path t <> "/") then
     Eio.Path.chown ~follow:true ~uid:user.uid ~gid:user.gid
       Eio.Path.(admin / cwd);
   let fs = (Eio.Path.of_dir (Memfs.fs ~user t) :> Eio.Fs.dir_ty Eio.Path.t) in

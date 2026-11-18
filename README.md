@@ -168,9 +168,10 @@ picked and what a program may and may not do.
 ## Testing a filesystem
 
 `Eio_fs_chaos.device` checks that an Eio filesystem of your own, such as a
-wrapper over another one, answers as Linux or macOS does. It takes a function
-that makes a fresh, empty directory from the same simulated `env` and runs
-short scenarios in it, each recorded on a real Linux and a real macOS kernel.
+wrapper over another one, answers as Linux, macOS or Windows does. It takes a
+function that makes a fresh, empty directory from the same simulated `env`
+and runs short scenarios in it, each recorded on a real Linux and a real
+macOS kernel, and on Windows through eio_windows.
 
 ```ocaml
 # Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ());;
@@ -186,13 +187,17 @@ filesystems disagree:
 - opens, renames and removals of files, directories and links, with and
   without a trailing slash;
 - chains and loops of symbolic links;
-- the permission rules that an ordinary user meets.
+- the permission rules that an ordinary user meets;
+- what Windows refuses or resolves otherwise: reserved names, trailing dots
+  and spaces, a file held open while it is moved or removed, `..` and links
+  in a sandbox, and links to directories.
 
 The check runs every scenario, then reports each one whose answer differs,
 as `case lookup: write a x; stat A: expected file 1, got ENOENT`, with a
 summary; [`eio_fs_chaos.mli`](lib/chaos/eio_fs_chaos.mli) lists the
 operations. Pass ``~os:`Macos`` to compare with macOS on its default APFS
-volume, where `a` and `A` are the same name.
+volume, where `a` and `A` are the same name, and ``~os:`Windows`` with
+eio_windows on NTFS.
 
 The permission scenarios run only with `~user`, as root passes every
 permission check. `~user` says which user the directory's operations run as;
@@ -206,8 +211,8 @@ scenarios on a healthy network first, then on one that fails, where an
 answer may also be an error a disk could give, such as an input/output
 error, but never one of the network's, such as `Connection_reset`.
 
-eio_posix itself differs from the kernel on 12 of the 86 scenarios on Linux
-and 20 on macOS, as it resolves a trailing slash, `.` and `..` itself. A
+eio_posix itself differs from the kernel on 13 of the 115 scenarios on Linux
+and 21 on macOS, as it resolves a trailing slash, `.` and `..` itself. A
 filesystem that wraps eio_posix differs there too, and the report marks
 those lines with `(eio_posix differs here too)`.
 
@@ -252,9 +257,9 @@ cause. The same holds for a filesystem under `device`.
 
 ### What is guaranteed
 
-1. With no fault, the simulated filesystem answers each call as Linux or
-   macOS does through Eio, as recorded on real kernels; the Limitations list
-   the known differences.
+1. With no fault, the simulated filesystem answers each call as Linux,
+   macOS or Windows does through Eio, as recorded on real kernels; the
+   Limitations list the known differences.
 2. Only faults the real kernel can return at that call are injected, and a
    power cut leaves only the states the crash rules allow. So every fault
    reported can happen on a real machine.
@@ -293,8 +298,14 @@ Each library documents itself in its `.mli`, under [`lib/`](lib/).
 
 - A file's bytes live in memory, and a file holds at most 4 GiB
   ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
-- The filesystem follows one kernel at a time, Linux, or macOS with
-  ``~os:`Macos``: code that runs on both needs a check under each
+- The filesystem follows one kernel at a time, Linux, macOS with
+  ``~os:`Macos`` or Windows with ``~os:`Windows``: code that runs on several
+  needs a check under each
+  ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
+- Under ``~os:`Windows`` the filesystem answers as eio_windows 1.7 does on
+  NTFS, not as NTFS itself; it does not model UNC and device paths, and a
+  power cut keeps what it keeps under Linux, as no power-cut test on real
+  Windows has checked a directory's durability there
   ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
 - eio_posix differs from the kernel on a few paths, such as one that ends in
   `..`, and the in-memory filesystem follows the kernel

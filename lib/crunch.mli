@@ -37,7 +37,7 @@ val find : string -> entry list -> string option
     filesystem. *)
 
 val load :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?clock:_ Eio.Time.clock ->
   entry list ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t

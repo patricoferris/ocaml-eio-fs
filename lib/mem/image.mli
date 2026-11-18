@@ -25,7 +25,7 @@ val scan :
       or if a regular file is replaced between its stat and its open. *)
 
 val load :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?clock:_ Eio.Time.clock ->
   entry list ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t

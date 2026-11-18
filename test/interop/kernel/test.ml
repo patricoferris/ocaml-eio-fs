@@ -6,9 +6,7 @@
 
 module Chaos = Eio_fs_chaos
 
-type os = [ `Linux | `Macos ]
-
-let os_name : os -> string = function `Linux -> "Linux" | `Macos -> "macOS"
+type os = [ `Linux | `Macos | `Windows ]
 
 let user =
   { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = [ 4242L ]; umask = 0o022 }
@@ -59,9 +57,9 @@ let test_stat_fault () =
   in
   Alcotest.(check string)
     "report"
-    {|Eio_fs_chaos.device: 1 of 86 scenarios differ from macOS
+    {|Eio_fs_chaos.device: 1 of 112 scenarios differ from macOS
   case lookup: write a x; stat A: expected file 1, got ENOENT
-  85 passed, 1 differed, 0 left out|}
+  111 passed, 1 differed, 3 left out; 3 that need a native path|}
     report
 
 (* An error that prints on several lines is reported on one. *)
@@ -146,7 +144,8 @@ let test_left_out () =
   let last = List.hd (List.rev (String.split_on_char '\n' report)) in
   Alcotest.(check bool)
     "left out" true
-    (String.ends_with ~suffix:"11 left out; 11 that need ~user" last)
+    (String.ends_with
+       ~suffix:"14 left out; 11 that need ~user; 3 that need a native path" last)
 
 (* The trace with its columns in reverse order but the operations', and one
    added: the device finds each column by its name. *)
@@ -170,15 +169,15 @@ let test_columns_by_name () =
       | [] -> [])
   in
   List.iter
-    (fun os ->
+    (fun (os, basic) ->
       List.iter
         (fun name ->
           Alcotest.(check (option (list string)))
             name
-            (Chaos.Private.expected os name)
-            (Chaos.Private.expected ~trace os name))
+            (Chaos.Private.expected ~basic os name)
+            (Chaos.Private.expected ~trace ~basic os name))
         Chaos.Private.scenarios)
-    [ `Linux; `Macos ]
+    [ (`Linux, false); (`Macos, false); (`Windows, false); (`Windows, true) ]
 
 let invalid name f =
   match f () with
@@ -257,7 +256,8 @@ let test_host () =
             (only failed differs)
       in
       if wrong <> [] then
-        Alcotest.failf "eio_posix on %s:@\n%s" (os_name os)
+        Alcotest.failf "eio_posix on %s:@\n%s"
+          (match os with `Linux -> "Linux" | `Macos -> "macOS")
           (String.concat "\n" wrong)
 
 let () =
@@ -269,10 +269,15 @@ let () =
           Alcotest.test_case "macOS" `Quick (memfs `Macos);
           Alcotest.test_case "Linux, as root" `Quick (memfs_root `Linux);
           Alcotest.test_case "macOS, as root" `Quick (memfs_root `Macos);
+          Alcotest.test_case "Windows, as a basic user" `Quick (memfs `Windows);
+          Alcotest.test_case "Windows, as an administrator" `Quick
+            (memfs_root `Windows);
           Alcotest.test_case "an overlay over env#fs, Linux" `Quick
             (overlay `Linux);
           Alcotest.test_case "an overlay over env#fs, macOS" `Quick
             (overlay `Macos);
+          Alcotest.test_case "an overlay over env#fs, Windows" `Quick
+            (overlay `Windows);
         ] );
       ( "device",
         [

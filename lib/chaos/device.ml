@@ -1,9 +1,12 @@
 open! Hermetic
 module K = Eio_fs_kernel
 
-type os = [ `Linux | `Macos ]
+type os = [ `Linux | `Macos | `Windows ]
 
-let os_name : os -> string = function `Linux -> "Linux" | `Macos -> "macOS"
+let os_name : os -> string = function
+  | `Linux -> "Linux"
+  | `Macos -> "macOS"
+  | `Windows -> "Windows"
 
 (* A trace: each row's outcomes by the name of their column, keyed by the
    row's operations. A column is found by its name, so one added later
@@ -27,13 +30,16 @@ let parse csv =
           | _ -> Fmt.failwith "Eio_fs: a malformed kernel trace line: %s" line)
         lines
 
-let rows = lazy (parse Device_traces.csv)
+let shipped = lazy (parse Device_traces.csv)
 
-(* The columns that hold [os]'s answers: the kernel's straight, and Eio's
-   backend's. *)
-let columns : os -> string * string = function
-  | `Linux -> ("linux", "linux eio_posix")
-  | `Macos -> ("macos", "macos eio_posix")
+(* The columns that hold [os]'s answers: the kernel's straight, where the
+   recorder could reach it, and Eio's backend's. On Windows only
+   eio_windows's were recorded, as an administrator and as a basic user. *)
+let columns ~basic : os -> string option * string = function
+  | `Linux -> (Some "linux", "linux eio_posix")
+  | `Macos -> (Some "macos", "macos eio_posix")
+  | `Windows when basic -> (None, "windows basic user eio_windows")
+  | `Windows -> (None, "windows eio_windows")
 
 let column row name =
   match List.assoc_opt name row with
@@ -65,47 +71,59 @@ let unix_cannot =
 
 type answer = { want : string; from : string; why : string option }
 
-(* Each operation's answer: the kernel's, or eio_posix's where a rule says
-   so and from an operation [Unix] cannot make on. *)
-let answers ?(trace = rows) (os : os) name ops =
+(* Each operation's answer: the kernel's, or the backend's where a rule says
+   so, from an operation [Unix] cannot make on, and on Windows. [None] when
+   the trace did not record the scenario there. *)
+let answers ?(trace = shipped) ~basic (os : os) name ops =
   let row =
     match List.assoc_opt (K.key ops) (Lazy.force trace) with
     | Some r -> r
     | None -> Fmt.failwith "Eio_fs: no kernel trace for the scenario %S" name
   in
-  let kernel, eio =
-    let k, e = columns os in
-    (column row k, column row e)
-  in
-  let cut =
-    let rec go j = function
-      | [] -> max_int
-      | "-" :: _ -> j
-      | _ :: l -> go (j + 1) l
-    in
-    go 0 kernel
-  in
-  let posix = "eio_posix on " ^ os_name os in
-  List.mapi
-    (fun j _ ->
-      let ruled =
-        List.find_opt
-          (fun r -> r.os = os && r.scenario = name && List.mem (j + 1) r.ops)
-          rules
+  let kernel_column, eio_column = columns ~basic os in
+  let eio = column row eio_column in
+  let kernel = Option.fold ~none:eio ~some:(column row) kernel_column in
+  if eio = [ "not recorded" ] || kernel = [ "not recorded" ] then None
+  else
+    let cut =
+      let rec go j = function
+        | [] -> max_int
+        | "-" :: _ -> j
+        | _ :: l -> go (j + 1) l
       in
-      match ruled with
-      | Some r -> { want = List.nth eio j; from = posix; why = Some r.why }
-      | None when j >= cut ->
-          { want = List.nth eio j; from = posix; why = Some unix_cannot }
-      | None -> { want = List.nth kernel j; from = os_name os; why = None })
-    ops
+      go 0 kernel
+    in
+    let backend =
+      Fmt.str "%s on %s"
+        (if os = `Windows then "eio_windows" else "eio_posix")
+        (os_name os)
+    in
+    Some
+      (List.mapi
+         (fun j _ ->
+           let ruled =
+             List.find_opt
+               (fun r ->
+                 r.os = os && r.scenario = name && List.mem (j + 1) r.ops)
+               rules
+           in
+           match ruled with
+           | Some r ->
+               { want = List.nth eio j; from = backend; why = Some r.why }
+           | None when j >= cut ->
+               { want = List.nth eio j; from = backend; why = Some unix_cannot }
+           | None -> { want = List.nth kernel j; from = os_name os; why = None })
+         ops)
 
-let expected ?trace os name =
+let expected ?trace ?(basic = false) os name =
   let os = (os :> os) in
   let trace = Option.map (fun csv -> lazy (parse csv)) trace in
   match List.assoc_opt name K.scenarios with
   | None -> Fmt.invalid_arg "Eio_fs: no scenario %S" name
-  | Some ops -> Some (List.map (fun a -> a.want) (answers ?trace os name ops))
+  | Some ops ->
+      Option.map
+        (List.map (fun a -> a.want))
+        (answers ?trace ~basic os name ops)
 
 let scenarios = List.map fst K.scenarios
 let name = "Eio_fs_chaos.device"
@@ -164,57 +182,140 @@ let differs ~posix ~scenario ~ops ~got j (a : answer) =
   | Some why -> Fmt.str "%s@\n    (expected as %s answers: %s)" line a.from why
 
 let eio_posix_differs os =
-  let os : os = match os with `Macos -> `Macos | `Linux -> `Linux in
-  List.filter_map
+  let os = (os :> os) in
+  if os = `Windows then []
+  else
+    List.filter_map
+      (fun (scenario, ops) ->
+        let row = List.assoc (K.key ops) (Lazy.force shipped) in
+        let eio = column row (snd (columns ~basic:false os)) in
+        match answers ~basic:false os scenario ops with
+        | Some answers when eio <> List.map (fun a -> a.want) answers ->
+            Some scenario
+        | Some _ | None -> None)
+      K.scenarios
+
+(* A word [@p] of a scenario names [p] under the scenario's directory by its
+   absolute path, which only its native spelling gives. *)
+let needs_native ops =
+  List.exists
+    (fun op ->
+      List.exists
+        (fun w -> String.starts_with ~prefix:"@" w)
+        (String.split_on_char ' ' op))
+    ops
+
+(* Whether a native path is absolute, on POSIX or on Windows. *)
+let absolute p =
+  String.starts_with ~prefix:"/" p
+  || String.starts_with ~prefix:"\\\\" p
+  || (String.length p >= 3 && p.[1] = ':' && (p.[2] = '\\' || p.[2] = '/'))
+
+type plan =
+  | Run of { ids : K.ids; answers : answer list }
+  | Left of [ `User | `Native | `Unrecorded ]
+
+let os_of = function Some (#os as os) -> os | None -> `Linux
+
+(* What [device] does with each scenario: run it, with the answers it
+   expects, or leave it out, and why. Without [user] the scenarios that need
+   one are left out; on Windows, the answers are a basic user's with it and an
+   administrator's without. *)
+let plan ?trace os user ~native =
+  let ids, basic =
+    match user with Some u -> (Some (ids u), true) | None -> (None, false)
+  in
+  List.map
     (fun (scenario, ops) ->
-      let row = List.assoc (K.key ops) (Lazy.force rows) in
-      let eio = column row (snd (columns os)) in
-      let want = List.map (fun a -> a.want) (answers os scenario ops) in
-      if eio <> want then Some scenario else None)
+      let p =
+        if ids = None && List.mem scenario needs_user then Left `User
+        else if needs_native ops && not native then Left `Native
+        else
+          match answers ?trace ~basic os scenario ops with
+          | None -> Left `Unrecorded
+          | Some answers ->
+              let ids =
+                Option.value ~default:{ K.gid = 0; other_gid = 0 } ids
+              in
+              Run { ids; answers }
+      in
+      (scenario, ops, p))
     K.scenarios
 
+(* The directory a scenario runs in, under [dir] opened as a sandbox, as the
+   recorder ran it under its current directory, and that directory's native
+   absolute path. *)
+let scenario_dir ~sw dir name =
+  let base = Eio.Path.open_dir ~sw dir in
+  let d = Eio.Path.(base / name) in
+  Eio.Path.mkdir ~perm:0o755 d;
+  let root =
+    match Eio.Path.native d with
+    | Some p when absolute p -> Some p
+    | Some _ | None -> None
+  in
+  (d, root)
+
+(* Whether [dir]'s scenario directories have an absolute native path. *)
+let has_native ~run f =
+  match
+    run (fun env ->
+        Eio.Switch.run @@ fun sw ->
+        let _, root = scenario_dir ~sw (f ~sw env) "native" in
+        [ (if root = None then "no" else "yes") ])
+  with
+  | Ok [ "yes" ] -> true
+  | Ok _ | Error _ -> false
+
 let check ?os ?user ~run:run_in f =
-  let os : os =
-    match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
-  in
-  let ids, run =
-    match user with
-    | Some u -> (ids u, fun _ -> true)
-    | None ->
-        ({ K.gid = 0; other_gid = 0 }, fun s -> not (List.mem s needs_user))
-  in
+  let os = os_of os in
   let posix = eio_posix_differs os in
+  let native = has_native ~run:run_in f in
+  let plan = plan os user ~native in
   let differed =
     List.concat
       (List.mapi
-         (fun i (scenario, ops) ->
-           if not (run scenario) then []
-           else
-             let answers = answers os scenario ops in
-             let got =
-               run_in @@ fun env ->
-               Eio.Switch.run @@ fun sw ->
-               let dir = Eio.Path.(f ~sw env / string_of_int i) in
-               Eio.Path.mkdir ~perm:0o755 dir;
-               K.run ids dir ops
-             in
-             let rec first got j = function
-               | [] -> []
-               | (a : answer) :: rest ->
-                   if List.nth got j <> a.want then
-                     [
-                       differs ~posix:(List.mem scenario posix) ~scenario ~ops
-                         ~got j a;
-                     ]
-                   else first got (j + 1) rest
-             in
-             match got with
-             | Ok got -> first got 0 answers
-             | Error e -> [ Fmt.str "  %s: %s" scenario (one_line e) ])
-         K.scenarios)
+         (fun i (scenario, ops, p) ->
+           match p with
+           | Left _ -> []
+           | Run { ids; answers } -> (
+               let got =
+                 run_in @@ fun env ->
+                 Eio.Switch.run @@ fun sw ->
+                 let dir, root =
+                   scenario_dir ~sw (f ~sw env) (string_of_int i)
+                 in
+                 K.run ?root ids dir ops
+               in
+               let rec first got j = function
+                 | [] -> []
+                 | (a : answer) :: rest ->
+                     if List.nth got j <> a.want then
+                       [
+                         differs ~posix:(List.mem scenario posix) ~scenario ~ops
+                           ~got j a;
+                       ]
+                     else first got (j + 1) rest
+               in
+               match got with
+               | Ok got -> first got 0 answers
+               | Error e -> [ Fmt.str "  %s: %s" scenario (one_line e) ]))
+         plan)
   in
   if differed <> [] then begin
-    let left = if user = None then List.length needs_user else 0 in
+    let count why =
+      List.length (List.filter (fun (_, _, p) -> p = Left why) plan)
+    in
+    let reasons =
+      List.filter_map
+        (fun (why, n) -> if n > 0 then Some (Fmt.str "; %d %s" n why) else None)
+        [
+          ("that need ~user", count `User);
+          ("that need a native path", count `Native);
+          ("not recorded", count `Unrecorded);
+        ]
+    in
+    let left = count `User + count `Native + count `Unrecorded in
     let failed = List.length differed in
     let ran = List.length K.scenarios - left in
     Fmt.failwith
@@ -223,8 +324,7 @@ let check ?os ?user ~run:run_in f =
       \  %d passed, %d differed, %d left out%s"
       name failed ran (os_name os)
       (String.concat "\n" differed)
-      (ran - failed) failed left
-      (if left > 0 then Fmt.str "; %d that need ~user" left else "")
+      (ran - failed) failed left (String.concat "" reasons)
   end
 
 (* An answer a failure below a device may explain: an error eio-fs injects,
@@ -252,45 +352,43 @@ let injected a =
        ]
 
 let program ?os ?user f (env : Eio_chaos.env) =
-  let os : os =
-    match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
-  in
-  let ids, run =
-    match user with
-    | Some u -> (ids u, fun _ -> true)
-    | None ->
-        ({ K.gid = 0; other_gid = 0 }, fun s -> not (List.mem s needs_user))
-  in
+  let os = os_of os in
   let posix = eio_posix_differs os in
+  let native =
+    Eio.Switch.run @@ fun sw ->
+    snd (scenario_dir ~sw (f ~sw env) "native") <> None
+  in
   (* A restart replays every scenario in directories of its own. *)
   let suffix = if Eio_chaos.Private.restarted env then "r" else "" in
   List.iteri
-    (fun i (scenario, ops) ->
-      if run scenario then begin
-        let failed_before = Eio_chaos.faulted env#chaos in
-        match
-          Eio.Switch.run @@ fun sw ->
-          let dir = Eio.Path.(f ~sw env / Fmt.str "%d%s" i suffix) in
-          Eio.Path.mkdir ~perm:0o755 dir;
-          K.run ids dir ops
-        with
-        | exception Eio.Io _ when failed_before || Eio_chaos.faulted env#chaos
-          ->
-            ()
-        | got ->
-            let lenient = Eio_chaos.faulted env#chaos in
-            let rec check j = function
-              | [] -> ()
-              | (a : answer) :: rest ->
-                  let g = List.nth got j in
-                  if g = a.want then check (j + 1) rest
-                  else if lenient && injected g then ()
-                  else
-                    failwith
-                      (String.trim
-                         (differs ~posix:(List.mem scenario posix) ~scenario
-                            ~ops ~got j a))
+    (fun i (scenario, ops, p) ->
+      match p with
+      | Left _ -> ()
+      | Run { ids; answers } -> (
+          let failed_before = Eio_chaos.faulted env#chaos in
+          match
+            Eio.Switch.run @@ fun sw ->
+            let dir, root =
+              scenario_dir ~sw (f ~sw env) (Fmt.str "%d%s" i suffix)
             in
-            check 0 (answers os scenario ops)
-      end)
-    K.scenarios
+            K.run ?root ids dir ops
+          with
+          | exception Eio.Io _ when failed_before || Eio_chaos.faulted env#chaos
+            ->
+              ()
+          | got ->
+              let lenient = Eio_chaos.faulted env#chaos in
+              let rec check j = function
+                | [] -> ()
+                | (a : answer) :: rest ->
+                    let g = List.nth got j in
+                    if g = a.want then check (j + 1) rest
+                    else if lenient && injected g then ()
+                    else
+                      failwith
+                        (String.trim
+                           (differs ~posix:(List.mem scenario posix) ~scenario
+                              ~ops ~got j a))
+              in
+              check 0 answers))
+    (plan os user ~native)

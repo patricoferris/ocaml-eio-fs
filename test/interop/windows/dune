@@ -1,3 +1,10 @@
+(test
+ (name test)
+ (package eio-fs)
+ (libraries eio eio.mock eio-fs.mem win_paths alcotest)
+ (deps
+  (source_tree traces)))
+
 (rule
  (alias regen-traces)
  (deps

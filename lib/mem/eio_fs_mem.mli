@@ -5,11 +5,13 @@
     filesystem of its own: two of them share no file. The library [eio-fs.chaos]
     tests programs and filesystems with it.
 
-    Where Linux and macOS differ, the filesystem follows one, chosen by [?os]:
-    [`Linux], the default, or [`Macos]. The choice comes from the argument,
-    never from the host, so a test sees the same filesystem on every machine.
-    {!section-macos} lists what [`Macos] changes. Its answers are those recorded
-    on Linux and macOS, and [Eio_fs_chaos.device] checks them.
+    Where Linux, macOS and Windows differ, the filesystem follows one, chosen by
+    [?os]: [`Linux], the default, [`Macos] or [`Windows]. The choice comes from
+    the argument, never from the host, so a test sees the same filesystem on
+    every machine. {!section-macos} and {!section-windows} list what [`Macos]
+    and [`Windows] change. Its answers are those recorded on Linux and macOS
+    through the kernel and eio_posix, and on Windows through eio_windows, and
+    [Eio_fs_chaos.device] checks them.
 
     An entry's stat carries what Linux gives on tmpfs. Its times come from the
     clock given to {!v}, and stay at [0.] without one; under [Eio_fs_chaos.run]
@@ -119,18 +121,23 @@ val root : user
 (** {1:filesystems Filesystems} *)
 
 val v :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?user:user ->
   ?clock:_ Eio.Time.clock ->
+  ?drives:char list ->
   unit ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [v ~os ~user ~clock ()] is the root of a fresh, empty filesystem following
-    the kernel [os] (defaults to [`Linux]), whose operations run as [user]
-    (defaults to {!root}), who owns its root directory. Its times are read from
-    [clock]; without one, they stay at [0.]. Closing the capability ends the
+(** [v ~os ~user ~clock ~drives ()] is the root of a fresh, empty filesystem
+    following the kernel [os] (defaults to [`Linux]), whose operations run as
+    [user] (defaults to {!root}), who owns its root directory. Its times are
+    read from [clock]; without one, they stay at [0.]. Under [`Windows] it has
+    the drives [drives] (defaults to [['C']]), and the root is the first one's,
+    ["C:\\"]; see {!section-windows}. Closing the capability ends the
     filesystem, as the end of [sw] ends a network of [Eio_net_mem.v]: no
     operation goes through it or its aliases after, and only the directories
-    already opened from it keep their own lifetimes. *)
+    already opened from it keep their own lifetimes.
+
+    @raise Invalid_argument if [drives] is given for another [os]. *)
 
 val as_user : user -> 'a Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
 (** [as_user user path] is [path], an in-memory directory, with its operations
@@ -143,7 +150,7 @@ val as_user : user -> 'a Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
       if [path] is neither an in-memory directory nor such a wrapper. *)
 
 val load :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?clock:_ Eio.Time.clock ->
   ?filter:('a Eio.Path.t -> bool) ->
   'a Eio.Path.t ->
@@ -173,22 +180,25 @@ type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
     filesystem and current directory. *)
 
 val run :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?user:user ->
   ?clock:_ Eio.Time.clock ->
+  ?drives:char list ->
   ?cwd:string ->
   (stdenv -> 'a) ->
   'a
-(** [run ~os ~user ~clock ~cwd fn] calls [fn] with a new in-memory filesystem in
-    place of the host's, that answers as [os] (defaults to [`Linux]) does, whose
-    times are read from [clock], as {!v} reads them. Unlike [Eio_main.run], it
-    starts no event loop and installs no effect handler: call it inside one,
-    such as [Eio_main.run] or [Eio_mock.Backend.run]. [fn]'s argument holds the
-    root and the current directory of the new filesystem. The current directory
-    is the directory at the absolute path [cwd] (defaults to ["/"]), made with
-    its missing ancestors, mode [0o755], before [fn] runs. Like a process's, it
-    follows that directory through a rename. Both run as [user] (defaults to
-    {!root}). Root owns the tree and gives [user] the current directory.
+(** [run ~os ~user ~clock ~drives ~cwd fn] calls [fn] with a new in-memory
+    filesystem in place of the host's, that answers as [os] (defaults to
+    [`Linux]) does, with [drives] as {!v} takes them, whose times are read from
+    [clock], as {!v} reads them. Unlike [Eio_main.run], it starts no event loop
+    and installs no effect handler: call it inside one, such as [Eio_main.run]
+    or [Eio_mock.Backend.run]. [fn]'s argument holds the root and the current
+    directory of the new filesystem. The current directory is the directory at
+    the absolute path [cwd] (defaults to ["/"], or the first drive's root under
+    [`Windows]), made with its missing ancestors, mode [0o755], before [fn]
+    runs. Like a process's, it follows that directory through a rename. Both run
+    as [user] (defaults to {!root}). Root owns the tree and gives [user] the
+    current directory.
 
     @raise Invalid_argument if [cwd] is not an absolute path. *)
 
@@ -220,3 +230,71 @@ val run :
       the permission bits of its mode.
     - Opening a directory, {!Eio.Path.open_dir} included, needs its read bit.
     - No [fs.protected_symlinks]: any link is followed. *)
+
+(** {1:windows Windows}
+
+    Under [`Windows] the filesystem answers as a program meets Windows through
+    eio_windows 1.7, on NTFS, where it differs from Linux. Its paths are Win32
+    paths, which [Eio_utils.Nt_path] resolves, as eio_windows resolves them, and
+    [Eio.Path.( / )], [split] and [native] are Nt_path's too:
+
+    - The root of the tree holds one directory per drive, ["C:"] by default, and
+      {!v}'s root is the first drive's, ["C:\\"]. Through the root an absolute,
+      rooted ([\a]), drive-relative ([C:a]) or verbatim ([\\?\C:\a]) path
+      resolves as Win32 normalises it: [..] and trailing dots and spaces are
+      applied to the path as written, a trailing separator is dropped, and a
+      drive-relative path on another drive starts at its root. A rename to
+      another drive raises [Permission_denied], as Eio raises EXDEV.
+    - Beneath a directory opened with {!Eio.Path.open_dir}, or the current
+      directory of {!run}, a name is literal: trailing dots and spaces and
+      reserved names such as [NUL], [CON] and [com1.txt] are ordinary names.
+      [..] applies to the path as written, before any link is followed, and may
+      not leave the directory, even to come back; an absolute path is refused,
+      and a link's target is followed only if it stays below the directory, an
+      absolute one included. A target whose last name is made of dots and spaces
+      only is refused. These refusals raise [Permission_denied].
+    - Names match by their characters' simple uppercase, as NTFS's upcase table
+      matches them, without Unicode normalisation: [a] and [A] are one name, [e]
+      and its NFD spelling two. A rename to another spelling, and one that
+      replaces an entry, gives the new spelling. A name that is not UTF-8 is
+      read as code page 1252, as OCaml's runtime reads it, and one longer than
+      255 UTF-16 code units raises the error whose message is Windows'
+      ["The filename, directory name, or volume label syntax is incorrect"].
+    - A file or directory a handle holds open, or a directory with one open
+      below it, is neither renamed nor removed, nor replaced by a rename:
+      [Permission_denied], as eio_windows opens every handle without
+      [FILE_SHARE_DELETE]. A delete is so never left pending.
+    - A rename replaces a file or an empty directory; a file over a directory, a
+      directory into itself or over one above it raise [Permission_denied], a
+      directory over a file the error whose message is Windows'
+      ["The directory name is invalid"], as do {!Eio.Path.rmdir} of a file and a
+      path through one. {!Eio.Path.unlink} of a directory raises
+      [Permission_denied].
+    - A symbolic link is to a file or to a directory, as its target is when it
+      is made, and {!Eio.Path.rmdir} removes one to a directory. Only a user who
+      holds [SeCreateSymbolicLinkPrivilege] makes one: here {!root}, the default
+      user, as an elevated administrator holds it; any other user is a basic
+      user, refused with [Permission_denied], as Windows refuses one without
+      Developer Mode. A link to the empty path is refused with the error whose
+      message is Windows'
+      ["The data present in the reparse point buffer is invalid"]. A path
+      follows at most 40 links.
+    - Opening a directory as a file raises [Permission_denied]; opening a file
+      as a directory, the error ["The directory name is invalid"] names.
+    - Unix permissions are not kept: no operation checks one, a file's mode is
+      [0o666] and a directory's [0o777], its uid and gid [0]. {!Eio.Path.chown}
+      raises the error ["not supported"] names, as does {!Eio.Path.chmod} below
+      an opened directory, as eio_windows refuses them; through the root a chmod
+      keeps nothing. [Eio_fs.Sync] so fails to publish a file whose mode it
+      would change, as it does on eio_windows.
+    - [Eio.File.pread] and [Eio.File.pwrite] raise the error ["not supported"]
+      names, as eio_windows does not implement them.
+    - A directory sync does nothing, as eio_windows syncs none.
+
+    Not modelled: NTFS's own semantics beyond what eio_windows shows (short 8.3
+    names, alternate data streams, attributes such as read-only or hidden,
+    junctions, which Eio cannot make, and Developer Mode), UNC and device paths,
+    which raise [Permission_denied], each drive's own current directory, which
+    Nt_path does not know either, and the durability of a directory on a power
+    cut: a power cut under [`Windows] loses what it loses under [`Linux], which
+    only a power-cut test on real Windows could check. *)

@@ -253,6 +253,9 @@ let capability t (fs : _ Eio.Path.t) =
 
 let start t ~os ~sw ~clock ~mono_clock:_ chaos =
   let base = (Memfs.v ~clock ~os () :> Eio.Fs.dir_ty Eio.Path.t) in
+  (* The crash model spells paths as POSIX does: on Windows, ["/"] is the
+     root of the current drive, as ["C:\\"] is. *)
+  let base = (fst base, "/") in
   t.os <- os;
   t.chaos <- chaos;
   t.sw <- Some sw;

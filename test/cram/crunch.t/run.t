@@ -40,7 +40,7 @@ output.
   (** The embedded file tree. *)
   
   val load :
-    ?os:[< `Linux | `Macos ] ->
+    ?os:[< `Linux | `Macos | `Windows ] ->
     ?clock:_ Eio.Time.clock ->
     unit ->
     [ `Close | Eio.Fs.dir_ty ] Eio.Path.t

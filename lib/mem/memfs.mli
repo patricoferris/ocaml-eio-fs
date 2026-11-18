@@ -14,13 +14,15 @@ val cwd :
 (** [cwd ~user t] is access to [t] confined to its current directory. *)
 
 val v :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< `Linux | `Macos | `Windows ] ->
   ?user:Low_level.User.t ->
   ?clock:_ Eio.Time.clock ->
+  ?drives:char list ->
   unit ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [v ~os ~user ~clock ()] is the root of a fresh, empty filesystem whose times
-    [clock] gives, that answers as [os] does. *)
+(** [v ~os ~user ~clock ~drives ()] is the root of a fresh, empty filesystem
+    whose times [clock] gives, that answers as [os] does, with [drives] on
+    Windows: ["/"], or the first drive's root on Windows. *)
 
 val as_user :
   Low_level.User.t -> 'a Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t

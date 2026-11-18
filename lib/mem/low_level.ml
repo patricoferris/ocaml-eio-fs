@@ -65,6 +65,20 @@ module Error = struct
   (* ENOTDIR, which Eio.Fs has no constructor for and eio_posix raises as a
      bare [Eio.Io]: never [Not_found], which a [~missing_ok] would swallow. *)
   let not_a_directory path = err ("not a directory: " ^ path)
+
+  (* Windows' errors that Eio.Fs has no constructor for, which eio_windows
+     raises as a bare [Eio.Io] carrying Windows' own message. *)
+  let invalid_name path =
+    err
+      ("The filename, directory name, or volume label syntax is incorrect: "
+     ^ path)
+
+  let directory_name path = err ("The directory name is invalid: " ^ path)
+
+  let reparse_data path =
+    err ("The data present in the reparse point buffer is invalid: " ^ path)
+
+  let not_supported op = err (op ^ " is not supported on windows yet")
 end
 
 (* Who runs an operation, and the POSIX permission rules it meets. *)
@@ -130,7 +144,7 @@ end
 
 module Names = Map.Make (String)
 
-type os = [ `Linux | `Macos ]
+type os = [ `Linux | `Macos | `Windows ]
 
 (* How [os] compares names. Linux compares bytes. APFS's default volume on
    macOS compares a name by its key: decomposed (NFD), case-folded, decomposed
@@ -161,9 +175,19 @@ module Name = struct
     in
     go 0 []
 
+  (* NTFS's upcase table: each character's simple uppercase. *)
+  let upper u =
+    match Uucp.Case.Map.to_upper u with
+    | `Uchars [ u' ] -> u'
+    | `Self | `Uchars _ -> u
+
   let key (os : os) name =
     match os with
     | `Linux -> name
+    | `Windows ->
+        let b = Buffer.create (String.length name) in
+        List.iter (fun u -> Buffer.add_utf_8_uchar b (upper u)) (uchars name);
+        Buffer.contents b
     | `Macos when not (String.is_valid_utf_8 name) -> name
     | `Macos ->
         let folded =
@@ -178,15 +202,15 @@ module Name = struct
         List.iter (Buffer.add_utf_8_uchar b) (nfd folded);
         Buffer.contents b
 
-  (* NAME_MAX: 255 bytes on Linux, 255 UTF-16 code units on APFS. *)
+  (* NAME_MAX: 255 bytes on Linux, 255 UTF-16 code units on APFS and NTFS. *)
   let too_long (os : os) name =
     match os with
-    | `Macos when String.is_valid_utf_8 name ->
+    | (`Macos | `Windows) when String.is_valid_utf_8 name ->
         List.fold_left
           (fun n u -> n + (Uchar.utf_16_byte_length u / 2))
           0 (uchars name)
         > 255
-    | `Linux | `Macos -> String.length name > 255
+    | `Linux | `Macos | `Windows -> String.length name > 255
 end
 
 let name_key = Name.key
@@ -224,9 +248,11 @@ module Dir_node = struct
 end
 
 module Symlink = struct
-  type t = { stat : Eio.File.Stat.t; link_to : string }
+  (* [to_dir]: on Windows a link is to a directory or to a file, fixed when
+     it is made. *)
+  type t = { stat : Eio.File.Stat.t; link_to : string; to_dir : bool }
 
-  let v ~link_to stat = { stat; link_to }
+  let v ~link_to stat = { stat; link_to; to_dir = false }
 end
 
 module File = struct
@@ -396,6 +422,9 @@ type fs = {
   device : int64; (* the [dev] of its stats, of its own *)
   mutable tree : resource ref Entries.t;
   mutable fds : resource ref Fd_table.t;
+  mutable shared : unit Fd_table.t;
+      (* the descriptors a program opened, not the administrator: on
+         Windows they hold what they are open on *)
   mutable last_ino : Inode.t;
   cwd : string;
   mutable cwd_dir : resource ref option;
@@ -415,13 +444,25 @@ module Fd = struct
     num : Num.t;
     append : bool;
     writable : bool; (* opened O_RDWR *)
+    positional : bool;
+        (* takes pread and pwrite: eio_windows takes neither, but the
+           filesystem's administrator does *)
     user : User.t; (* who opened it *)
     mutable pos : Optint.Int63.t;
     mutable closed : bool;
   }
 
-  let v ~append ~writable ~user fs num =
-    { fs; num; append; writable; user; pos = Optint.Int63.zero; closed = false }
+  let v ~append ~writable ~positional ~user fs num =
+    {
+      fs;
+      num;
+      append;
+      writable;
+      positional;
+      user;
+      pos = Optint.Int63.zero;
+      closed = false;
+    }
 
   let closed t = t.closed
 
@@ -432,7 +473,7 @@ end
 
 module Dir = struct
   type at = Fs of fs | Cwd of fs | Dir_fd of Fd.t
-  type fd = { at : at; user : User.t }
+  type fd = { at : at; user : User.t; admin : bool }
 
   let fs t = match t.at with Fs fs | Cwd fs -> fs | Dir_fd fd -> fd.fs
 end
@@ -492,13 +533,21 @@ let new_stat fs ~(user : User.t) ?parent ?kind ~perm () =
     then perm land lnot 0o2000
     else perm
   in
+  (* Windows keeps no owner and no mode: eio_windows reports a file's as 666
+     and a directory's as 777. *)
+  let uid, gid, perm =
+    match (fs.os, kind) with
+    | `Windows, `Regular_file -> (0L, 0L, 0o666)
+    | `Windows, _ -> (0L, 0L, 0o777)
+    | (`Linux | `Macos), _ -> (user.uid, gid, perm)
+  in
   {
     default_stat with
     dev = fs.device;
     ino = fs.last_ino;
     kind;
     perm;
-    uid = user.uid;
+    uid;
     gid;
     nlink = (if kind = `Directory then 2L else 1L);
     atime = now;
@@ -558,7 +607,9 @@ module Filesystem = struct
 
   (* path_resolution(7): a resolution follows at most 40 symbolic links on
      Linux, MAXSYMLINKS, 32, on macOS, and then fails with ELOOP. *)
-  let max_follows : os -> int = function `Linux -> 40 | `Macos -> 32
+  let max_follows : os -> int = function
+    | `Linux | `Windows -> 40
+    | `Macos -> 32
 
   let follow_link follows =
     if !follows <= 0 then Error.symlink_loop ();
@@ -715,6 +766,188 @@ module Filesystem = struct
     | _ when slash -> Error.not_a_directory name
     | _ -> r
 
+  (* Windows, as eio_windows answers through Eio_utils.Nt_path, which this
+     uses for every path rule rather than a second copy of them. A path is a
+     Win32 path, made lexical before any link is followed: a [..] applies to
+     the path as written, and a trailing separator is dropped. Beneath a
+     directory a name is literal, trailing dots and spaces and reserved
+     names included, and a [..] may not leave the directory, even to come
+     back. The root of the tree holds a directory for each drive, ["C:"]
+     first. *)
+  module Nt = Eio_utils.Nt_path
+
+  (* OCaml's runtime reads a path that is not UTF-8 in the ANSI code page,
+     1252 on a Western Windows: bytes 0xA0 to 0xFF are Latin-1. *)
+  let cp1252 =
+    [|
+      0x20AC;
+      0x81;
+      0x201A;
+      0x0192;
+      0x201E;
+      0x2026;
+      0x2020;
+      0x2021;
+      0x02C6;
+      0x2030;
+      0x0160;
+      0x2039;
+      0x0152;
+      0x8D;
+      0x017D;
+      0x8F;
+      0x90;
+      0x2018;
+      0x2019;
+      0x201C;
+      0x201D;
+      0x2022;
+      0x2013;
+      0x2014;
+      0x02DC;
+      0x2122;
+      0x0161;
+      0x203A;
+      0x0153;
+      0x9D;
+      0x017E;
+      0x0178;
+    |]
+
+  let encode s =
+    if String.is_valid_utf_8 s then s
+    else begin
+      let b = Buffer.create (2 * String.length s) in
+      String.iter
+        (fun c ->
+          let n = Char.code c in
+          let u = if n >= 0x80 && n < 0xA0 then cp1252.(n - 0x80) else n in
+          Buffer.add_utf_8_uchar b (Uchar.of_int u))
+        s;
+      Buffer.contents b
+    end
+
+  (* The Win32 path of the directory [r]: ["C:\\"] for a drive. *)
+  let rec win_path tree r =
+    let d = as_dir ~path:"." !r in
+    if Inode.equal d.stat.ino 0L then ""
+    else
+      let parent =
+        match Entries.find_opt d.parent tree with
+        | Some p -> p
+        | None -> Error.not_found "."
+      in
+      let name =
+        Names.fold
+          (fun _ (n, ino) acc -> if Inode.equal ino d.stat.ino then n else acc)
+          (as_dir ~path:"." !parent).entries ""
+      in
+      match win_path tree parent with
+      | "" -> name ^ "\\"
+      | up -> Nt.join up name
+
+  let components p =
+    List.filter (fun c -> c <> "") (String.split_on_char '\\' p)
+
+  (* An NT path's components from its drive. UNC and device paths are not
+     modelled: refused. *)
+  let drive_components path nt =
+    let rest =
+      if String.starts_with ~prefix:"\\??\\" nt then
+        String.sub nt 4 (String.length nt - 4)
+      else nt
+    in
+    match components rest with
+    | d :: _ as comps when String.length d = 2 && d.[1] = ':' -> comps
+    | _ -> Error.permission_denied path
+
+  let join_rest p rest =
+    if rest = [] then p else Nt.join p (String.concat "\\" rest)
+
+  (* [win_resolve ~follow_last dir_fd path] is the walk into the directory
+     holding [path]'s last component and that component (["."] for the
+     directory itself), every link before it followed, and the last one too
+     if [follow_last]. *)
+  let rec win_resolve ~follow_last (dir_fd : Dir.fd) path =
+    let fs = Dir.fs dir_fd in
+    let tree = fs.tree in
+    let path = encode path in
+    if String.exists (Char.equal '\000') path then Error.not_found path;
+    let follows = ref (max_follows fs.os) in
+    let at r =
+      { os = fs.os; tree; user = User.root; base = None; follows; dirs = [ r ] }
+    in
+    let check c = if Name.too_long fs.os c then Error.invalid_name path in
+    let rec walk relink r seen = function
+      | [] -> (at r, ".")
+      | [ last ] -> (
+          check last;
+          match child (at r) last with
+          | Some { contents = Resource.Symlink s } when follow_last ->
+              follow_link follows;
+              relink (List.rev (last :: seen)) s []
+          | _ -> (at r, last))
+      | c :: rest -> (
+          check c;
+          match child (at r) c with
+          | None -> Error.not_found path
+          | Some r' -> (
+              match !r' with
+              | Resource.Dir _ -> walk relink r' (c :: seen) rest
+              | Symlink s ->
+                  follow_link follows;
+                  relink (List.rev (c :: seen)) s rest
+              | File _ -> Error.directory_name path))
+    in
+    let target (s : Symlink.t) = Nt.link_target ~cwd:fs.cwd s.link_to in
+    let rec from_drive nt =
+      walk unrestricted (root tree) [] (drive_components path nt)
+    and unrestricted link s rest =
+      let parent = Nt.dirname (String.concat "\\" link) in
+      match Nt.resolve_link ~parent (target s) with
+      | None -> Error.not_found path
+      | Some nt -> from_drive (join_rest nt rest)
+    in
+    let sandbox r0 =
+      if not (Nt.is_relative path) then Error.absolute_path ();
+      let root_path = lazy (win_path tree r0) in
+      let rec from_rel rel = walk confined r0 [] (components rel)
+      and confined link s rest =
+        let link = String.concat "\\" link in
+        match
+          Nt.resolve_link ~root:(Lazy.force root_path) ~parent:(Nt.dirname link)
+            (target s)
+        with
+        | None -> Error.outside_sandbox path
+        | Some rel -> from_rel (join_rest rel rest)
+      in
+      match Nt.relative path with
+      | None -> Error.outside_sandbox path
+      | Some rel -> from_rel rel
+    in
+    match dir_fd.at with
+    | Dir.Fs _ -> from_drive (Nt.to_nt ~cwd:fs.cwd path)
+    | Dir.Cwd _ -> sandbox (win_cwd fs)
+    | Dir.Dir_fd fd -> sandbox (resource_of fd)
+
+  (* The directory [fs.cwd] named when first used: it then follows that
+     directory, as a descriptor does. *)
+  and win_cwd fs =
+    match fs.cwd_dir with
+    | Some r -> r
+    | None ->
+        let fd = { Dir.at = Dir.Fs fs; user = User.root; admin = true } in
+        let w, name = win_resolve ~follow_last:true fd fs.cwd in
+        let r =
+          match child w name with Some r -> r | None -> Error.not_found fs.cwd
+        in
+        fs.cwd_dir <- Some r;
+        r
+
+  let win_lookup ~follow dir_fd path =
+    let w, name = win_resolve ~follow_last:follow dir_fd path in
+    match child w name with Some r -> r | None -> Error.not_found path
+
   (* Where [path] given to [dir_fd] starts. Full access resolves a relative
      path against the current directory, which an absolute path need not
      reach; the current directory and an open directory confine the walk to
@@ -753,11 +986,19 @@ module Filesystem = struct
         let r = resource_of fd in
         { at_root with base = Some (Resource.stat !r).ino; dirs = [ r ] }
 
-  let locate_from ?search dir_fd path = locate ?search (start dir_fd path) path
+  let windows dir_fd = (Dir.fs dir_fd).os = `Windows
+
+  let locate_from ?search ?(follow_last = false) dir_fd path =
+    if windows dir_fd then
+      let w, name = win_resolve ~follow_last dir_fd path in
+      (w, name, false)
+    else locate ?search (start dir_fd path) path
 
   let lookup ~follow dir_fd path =
-    let w, name, slash = locate_from dir_fd path in
-    final ~follow w name ~slash
+    if windows dir_fd then win_lookup ~follow dir_fd path
+    else
+      let w, name, slash = locate_from dir_fd path in
+      final ~follow w name ~slash
 end
 
 (* Devices are numbered up from [Int64.min_int], which no host device takes:
@@ -767,25 +1008,67 @@ let devices = Atomic.make 0
 let fresh_device () =
   Int64.add Int64.min_int (Int64.of_int (Atomic.fetch_and_add devices 1))
 
-let v ?clock ?(cwd = "/") ?(owner = User.root) ?os () =
+let os_of = function Some (#os as os) -> os | None -> `Linux
+
+(* The drive [letter]'s root, a directory of the tree's root. *)
+let add_drive fs letter =
+  let root = Filesystem.root fs.tree in
+  let d = as_dir ~path:"." !root in
+  let stat =
+    new_stat fs ~user:User.root ~parent:d.stat ~kind:`Directory ~perm:0o777 ()
+  in
+  Filesystem.add_file fs stat.ino
+    (ref (Resource.Dir (Dir_node.v ~parent:0L stat)));
+  root :=
+    Resource.Dir
+      (Dir_node.add fs.os
+         (Fmt.str "%c:" (Char.uppercase_ascii letter))
+         stat.ino d)
+
+let v ?clock ?cwd ?(owner = User.root) ?os ?drives () =
   let now =
     match clock with Some c -> fun () -> Eio.Time.now c | None -> Fun.const 0.
   in
-  let os =
-    match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
+  let os = os_of os in
+  let drives =
+    match (os, drives) with
+    | `Windows, None -> [ 'C' ]
+    | `Windows, Some drives -> drives
+    | (`Linux | `Macos), None -> []
+    | (`Linux | `Macos), Some _ ->
+        invalid_arg "Eio_fs_mem: only Windows has drives"
+  in
+  let cwd =
+    match (cwd, drives) with
+    | Some cwd, _ -> cwd
+    | None, d :: _ -> Fmt.str "%c:\\" (Char.uppercase_ascii d)
+    | None, [] -> "/"
   in
   let device = fresh_device () in
-  {
-    os;
-    device;
-    tree = Filesystem.empty ~device ~owner ~now:(now ());
-    fds = Fd_table.empty;
-    last_ino = 0L;
-    cwd;
-    cwd_dir = None;
-    lock = Mutex.create ();
-    now;
-  }
+  let fs =
+    {
+      os;
+      device;
+      tree = Filesystem.empty ~device ~owner ~now:(now ());
+      fds = Fd_table.empty;
+      shared = Fd_table.empty;
+      last_ino = 0L;
+      cwd;
+      cwd_dir = None;
+      lock = Mutex.create ();
+      now;
+    }
+  in
+  List.iter (add_drive fs) drives;
+  fs
+
+let windows dir_fd = Filesystem.windows dir_fd
+
+let root_path fs =
+  if fs.os = `Windows then String.sub fs.cwd 0 2 ^ "\\" else "/"
+
+let win_path (fd : Fd.t) =
+  locked fd.fs @@ fun () -> Filesystem.win_path fd.fs.tree (resource_of fd)
 
 (* Closing an already-closed handle does nothing, as [Eio.Resource.close]
    specifies and eio's posix backend does. A handle with two owners, a caller
@@ -794,8 +1077,37 @@ let close (fd : Fd.t) =
   locked fd.fs @@ fun () ->
   if not fd.closed then begin
     fd.closed <- true;
-    fd.fs.fds <- Fd_table.remove fd.num fd.fs.fds
+    fd.fs.fds <- Fd_table.remove fd.num fd.fs.fds;
+    fd.fs.shared <- Fd_table.remove fd.num fd.fs.shared
   end
+
+(* Who a permission check runs as: Windows ignores Unix permissions. *)
+let checker (dir_fd : Dir.fd) =
+  if (Dir.fs dir_fd).os = `Windows then User.root else dir_fd.user
+
+(* The inodes of [r] and of all below it. *)
+let rec inodes tree r acc =
+  let s = Resource.stat !r in
+  match !r with
+  | Resource.Dir d ->
+      Names.fold
+        (fun _ (_, ino) acc ->
+          match Entries.find_opt ino tree with
+          | Some r -> inodes tree r acc
+          | None -> acc)
+        d.entries (s.ino :: acc)
+  | File _ | Symlink _ -> s.ino :: acc
+
+(* Whether a program's descriptor holds [r] or anything below it open:
+   eio_windows opens every handle without FILE_SHARE_DELETE, so Windows then
+   refuses to move or remove it. The administrator's, as a crash image is
+   rebuilt through, hold nothing. *)
+let held_open fs r =
+  let inos = inodes fs.tree r [] in
+  Fd_table.exists
+    (fun num r' ->
+      Fd_table.mem num fs.shared && List.mem (Resource.stat !r').ino inos)
+    fs.fds
 
 (* open(2): opening an existing file requires the permission bits the access
    mode asks for; the mode given at creation does not restrict the creating
@@ -877,7 +1189,7 @@ let new_entry ?(dir = false) dir_fd path add =
   | None ->
       check_name (Dir.fs dir_fd) name;
       check_live (Dir.fs dir_fd) (Filesystem.here w) path;
-      check_dir_write ~user:dir_fd.user (Filesystem.here w) path;
+      check_dir_write ~user:(checker dir_fd) (Filesystem.here w) path;
       add (Filesystem.here w) name
 
 (* Create [name] in the directory [w] is in, register the new file in the
@@ -902,6 +1214,13 @@ let new_file ~mode fs (w : Filesystem.walk) name =
 (* An existing resource [r] opened by [path] with [flags]: write access to a
    directory is EISDIR, O_DIRECTORY on anything else ENOTDIR. *)
 let opened ~fs ~user path flags r =
+  (* eio_windows opens a directory only as one, and a file never as one. *)
+  (match (fs.os, !r) with
+  | `Windows, Resource.Dir _ when not Open_flags.(mem o_directory flags) ->
+      Error.permission_denied path
+  | `Windows, (File _ | Symlink _) when Open_flags.(mem o_directory flags) ->
+      Error.directory_name path
+  | _ -> ());
   (match !r with
   | Resource.Dir _ when Open_flags.(mem o_rdwr flags) ->
       Error.err ("open: is a directory: " ^ path)
@@ -931,6 +1250,8 @@ let rec open_creating ~mode ~fs ~opened path flags (w : Filesystem.walk) name
   if slash && not (is_dot name) then Error.err ("open: is a directory: " ^ path);
   match child with
   | None -> new_file ~mode fs w name
+  | Some { contents = Resource.Dir _ } when w.os = `Windows ->
+      Error.permission_denied path
   | Some _ when Open_flags.(mem o_excl flags) -> Error.already_exists path
   | Some r -> (
       match !r with
@@ -951,10 +1272,13 @@ let open_locked ~mode dir_fd path flags =
   let append = Open_flags.(mem o_append flags) in
   let writable = Open_flags.(mem o_rdwr flags) in
   let fs = Dir.fs dir_fd in
-  let opened = opened ~fs ~user:dir_fd.user path flags in
+  let opened = opened ~fs ~user:(checker dir_fd) path flags in
   let r =
     if Open_flags.(mem o_creat flags) || Open_flags.(mem o_excl flags) then
-      let w, name, slash = Filesystem.locate_from dir_fd path in
+      let follow_last =
+        not Open_flags.(mem o_excl flags || mem o_nofollow flags)
+      in
+      let w, name, slash = Filesystem.locate_from ~follow_last dir_fd path in
       open_creating ~mode ~fs ~opened path flags w name ~slash
     else
       let follow = not Open_flags.(mem o_nofollow flags) in
@@ -966,7 +1290,9 @@ let open_locked ~mode dir_fd path flags =
   in
   let num = next_fd_of_fds fs.fds in
   fs.fds <- Fd_table.add num r fs.fds;
-  Fd.v ~append ~writable ~user:dir_fd.user fs num
+  if not dir_fd.admin then fs.shared <- Fd_table.add num () fs.shared;
+  let positional = fs.os <> `Windows || dir_fd.admin in
+  Fd.v ~append ~writable ~positional ~user:dir_fd.user fs num
 
 let descriptors dir_fd =
   let fs = Dir.fs dir_fd in
@@ -998,45 +1324,63 @@ let set_times dir_fd path ~atime ~mtime ~ctime =
 (* chmod(2): only the owner or root: EPERM. *)
 let chmod ~follow dir_fd ~perm path =
   locked (Dir.fs dir_fd) @@ fun () ->
+  (* Windows keeps no Unix mode: eio_windows refuses a chmod below a
+     directory it opened, and passes one through the full-access root to
+     the C runtime, which keeps nothing of it here. The administrator's, as
+     a crash image restores one, keeps nothing either. *)
+  if
+    Filesystem.windows dir_fd && (not dir_fd.admin)
+    && match dir_fd.at with Dir.Fs _ -> false | Dir.Cwd _ | Dir_fd _ -> true
+  then Error.not_supported "chmod";
   let r = Filesystem.lookup ~follow dir_fd path in
-  (* Linux keeps no mode on a link: EOPNOTSUPP. macOS does. *)
-  (match !r with
-  | Resource.Symlink _ when (Dir.fs dir_fd).os = `Linux ->
-      Error.err ("chmod: not supported on a link: " ^ path)
-  | _ -> ());
-  if not (User.owns dir_fd.user (Resource.stat !r)) then
-    Error.permission_denied path;
-  let s = Resource.stat !r in
-  let perm = perm land 0o7777 in
-  (* Outside the file's group, a user cannot set setgid. *)
-  let perm =
-    if (not (User.is_root dir_fd.user)) && not (User.in_group dir_fd.user s.gid)
-    then perm land lnot 0o2000
-    else perm
-  in
-  r :=
-    Resource.set_stat !r
-      (inode_changed ~now:((Dir.fs dir_fd).now ()) { s with perm })
+  if not (Filesystem.windows dir_fd) then begin
+    (* Linux keeps no mode on a link: EOPNOTSUPP. macOS does. *)
+    (match !r with
+    | Resource.Symlink _ when (Dir.fs dir_fd).os = `Linux ->
+        Error.err ("chmod: not supported on a link: " ^ path)
+    | _ -> ());
+    if not (User.owns dir_fd.user (Resource.stat !r)) then
+      Error.permission_denied path;
+    let s = Resource.stat !r in
+    let perm = perm land 0o7777 in
+    (* Outside the file's group, a user cannot set setgid. *)
+    let perm =
+      if
+        (not (User.is_root dir_fd.user))
+        && not (User.in_group dir_fd.user s.gid)
+      then perm land lnot 0o2000
+      else perm
+    in
+    r :=
+      Resource.set_stat !r
+        (inode_changed ~now:((Dir.fs dir_fd).now ()) { s with perm })
+  end
 
 (* chown(2): root gives a file to anyone; its owner only moves it to a group
    of their own. EPERM otherwise. *)
 let chown ~follow ?uid ?gid dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () ->
+  (* Windows keeps no owner, and eio_windows refuses a chown. The
+     administrator's, as a crash image restores one, keeps nothing. *)
+  if Filesystem.windows dir_fd && not dir_fd.admin then
+    Error.not_supported "chown";
   let r = Filesystem.lookup ~follow dir_fd path in
-  let s = Resource.stat !r in
-  let uid = Option.value ~default:s.uid uid in
-  let gid = Option.value ~default:s.gid gid in
-  let (user : User.t) = dir_fd.user in
-  if
-    (not (User.is_root user))
-    && not
-         (User.owns user s && uid = s.uid
-         && (gid = s.gid || User.in_group user gid))
-  then Error.permission_denied path;
-  r :=
-    Resource.set_stat !r
-      (inode_changed ~now:((Dir.fs dir_fd).now ())
-         (User.without_privileges { s with uid; gid }))
+  if not (Filesystem.windows dir_fd) then begin
+    let s = Resource.stat !r in
+    let uid = Option.value ~default:s.uid uid in
+    let gid = Option.value ~default:s.gid gid in
+    let (user : User.t) = dir_fd.user in
+    if
+      (not (User.is_root user))
+      && not
+           (User.owns user s && uid = s.uid
+           && (gid = s.gid || User.in_group user gid))
+    then Error.permission_denied path;
+    r :=
+      Resource.set_stat !r
+        (inode_changed ~now:((Dir.fs dir_fd).now ())
+           (User.without_privileges { s with uid; gid }))
+  end
 
 (* The directory [w] is in, without its entry [name]. The entry's inode leaves
    the tree with its only name, and is freed once no descriptor holds it. *)
@@ -1058,37 +1402,54 @@ let remove_entry fs (w : Filesystem.walk) name =
       fs.tree <- Entries.remove ino fs.tree)
     (Dir_node.find fs.os name d)
 
-let unlink dir_fd path =
-  locked (Dir.fs dir_fd) @@ fun () ->
-  let w, name, slash = Filesystem.locate_from dir_fd path in
-  (* EISDIR, as Linux answers; macOS answers EPERM. *)
-  let is_a_directory () =
-    if w.os = `Macos then Error.permission_denied path
-    else Error.err ("unlink: is a directory: " ^ path)
-  in
-  if is_dot name then is_a_directory ();
+(* Windows removes a link, to a directory too, but neither a directory nor
+   anything a handle holds open. *)
+let unlink_windows dir_fd path =
+  let fs = Dir.fs dir_fd in
+  let w, name, _ = Filesystem.locate_from dir_fd path in
+  if is_dot name then Error.permission_denied path;
   match Filesystem.child w name with
   | None -> Error.not_found path
-  (* macOS follows a link in directory syntax: to a directory, EPERM. *)
-  | Some { contents = Resource.Symlink _ } when slash && w.os = `Macos ->
-      ignore (Filesystem.final ~follow:true w name ~slash);
-      is_a_directory ()
-  (* A trailing slash is refused before permission: EISDIR on a directory,
+  | Some { contents = Resource.Dir _ } -> Error.permission_denied path
+  | Some victim when (not dir_fd.admin) && held_open fs victim ->
+      Error.permission_denied path
+  | Some _ -> remove_entry fs w name
+
+let unlink dir_fd path =
+  locked (Dir.fs dir_fd) @@ fun () ->
+  if Filesystem.windows dir_fd then unlink_windows dir_fd path
+  else
+    let w, name, slash = Filesystem.locate_from dir_fd path in
+    (* EISDIR, as Linux answers; macOS answers EPERM. *)
+    let is_a_directory () =
+      if w.os = `Macos then Error.permission_denied path
+      else Error.err ("unlink: is a directory: " ^ path)
+    in
+    if is_dot name then is_a_directory ();
+    match Filesystem.child w name with
+    | None -> Error.not_found path
+    (* macOS follows a link in directory syntax: to a directory, EPERM. *)
+    | Some { contents = Resource.Symlink _ } when slash && w.os = `Macos ->
+        ignore (Filesystem.final ~follow:true w name ~slash);
+        is_a_directory ()
+    (* A trailing slash is refused before permission: EISDIR on a directory,
      ENOTDIR on anything else, a link to a directory included. *)
-  | Some { contents = Resource.Dir _ } when slash -> is_a_directory ()
-  | Some _ when slash -> Error.not_a_directory path
-  | Some victim -> (
-      (* Permission before kind. *)
-      let rdir = Filesystem.here w in
-      check_dir_write ~user:dir_fd.user rdir path;
-      check_sticky ~user:dir_fd.user rdir victim path;
-      match !victim with
-      | Resource.Dir _ -> is_a_directory ()
-      | _ -> remove_entry (Dir.fs dir_fd) w name)
+    | Some { contents = Resource.Dir _ } when slash -> is_a_directory ()
+    | Some _ when slash -> Error.not_a_directory path
+    | Some victim -> (
+        (* Permission before kind. *)
+        let rdir = Filesystem.here w in
+        check_dir_write ~user:(checker dir_fd) rdir path;
+        check_sticky ~user:(checker dir_fd) rdir victim path;
+        match !victim with
+        | Resource.Dir _ -> is_a_directory ()
+        | _ -> remove_entry (Dir.fs dir_fd) w name)
 
 (* The mode bits a new directory keeps: Linux keeps the sticky bit, macOS
    only the permission bits. *)
-let dir_bits : os -> int = function `Linux -> 0o1777 | `Macos -> 0o777
+let dir_bits : os -> int = function
+  | `Linux -> 0o1777
+  | `Macos | `Windows -> 0o777
 
 let mkdirat dir_fd ~perm path =
   locked (Dir.fs dir_fd) @@ fun () ->
@@ -1127,8 +1488,42 @@ let embed dir_fd ~perm path ~contents =
   in
   new_entry dir_fd path add
 
-let symlinkat ~link_to dir_fd path =
-  locked (Dir.fs dir_fd) @@ fun () ->
+(* Windows: only a user who holds SeCreateSymbolicLinkPrivilege, as root
+   does here, makes a link, and none to the empty path. Its target is stored
+   as eio_windows stores it, relative or as an NT path, and the link is to a
+   directory iff its target is one when it is made. *)
+let symlink_windows ~link_to dir_fd path =
+  let fs = Dir.fs dir_fd in
+  let link_to = Filesystem.encode link_to in
+  if String.equal link_to "" then Error.reparse_data path;
+  let link_to =
+    match Filesystem.Nt.link_target ~cwd:fs.cwd link_to with
+    | Relative p | Absolute p -> p
+  in
+  let add r name =
+    if not (User.is_root dir_fd.user) then Error.permission_denied path;
+    let new_stat =
+      {
+        (new_stat fs ~user:dir_fd.Dir.user ~parent:(Resource.stat !r)
+           ~kind:`Symbolic_link ~perm:0o777 ())
+        with
+        size = Optint.Int63.of_int (String.length link_to);
+      }
+    in
+    let d = as_dir ~path !r in
+    let link = ref (Resource.Symlink (Symlink.v ~link_to new_stat)) in
+    Filesystem.add_file fs new_stat.ino link;
+    r := Dir (Dir_node.add fs.os name new_stat.ino d);
+    entries_changed ~now:new_stat.ctime r;
+    match !(Filesystem.lookup ~follow:true dir_fd path) with
+    | Resource.Dir _ ->
+        link :=
+          Resource.Symlink { (Symlink.v ~link_to new_stat) with to_dir = true }
+    | _ | (exception Eio.Io _) -> ()
+  in
+  new_entry dir_fd path add
+
+let symlink_posix ~link_to dir_fd path =
   (* Linux makes no link to the empty path: ENOENT, once eio_posix has
      walked to the directory that would hold it. macOS does. *)
   if String.equal link_to "" && (Dir.fs dir_fd).os = `Linux then begin
@@ -1154,6 +1549,11 @@ let symlinkat ~link_to dir_fd path =
   in
   new_entry dir_fd path symlink
 
+let symlinkat ~link_to dir_fd path =
+  locked (Dir.fs dir_fd) @@ fun () ->
+  if Filesystem.windows dir_fd then symlink_windows ~link_to dir_fd path
+  else symlink_posix ~link_to dir_fd path
+
 let read_link dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () ->
   let r = Filesystem.lookup ~follow:false dir_fd path in
@@ -1168,11 +1568,12 @@ let read_link dir_fd path =
 let entries dir_fd path =
   let r = Filesystem.lookup ~follow:true dir_fd path in
   match !r with
-  | Resource.Dir d when not (User.can dir_fd.user d.stat User.r) ->
+  | Resource.Dir d when not (User.can (checker dir_fd) d.stat User.r) ->
       Error.permission_denied path
   | Resource.Dir dir ->
       Resource.update r (accessed ~now:((Dir.fs dir_fd).now ()));
       Dir_node.names dir
+  | _ when Filesystem.windows dir_fd -> Error.directory_name path
   | _ -> Error.err ("read_dir: not a directory: " ^ path)
 
 let read_dir dir_fd path =
@@ -1190,29 +1591,48 @@ let read_dir_entries dir_fd path =
       (kind, name))
     (entries dir_fd path)
 
-let rmdir dir_fd path =
-  locked (Dir.fs dir_fd) @@ fun () ->
-  let w, name, slash = Filesystem.locate_from dir_fd path in
-  (* rmdir(2) refuses a last [.] with EINVAL and a last [..] with ENOTEMPTY,
-     or EINVAL on macOS. *)
-  if String.equal name "." || (String.equal name ".." && w.os = `Macos) then
-    Error.err ("rmdir: invalid argument: " ^ path);
-  if String.equal name ".." then
-    Error.err ("rmdir: directory not empty: " ^ path);
-  let w, name = through_link ~slash w name in
+(* Windows removes a link to a directory with rmdir, as Eio says, and no
+   directory a handle holds open. *)
+let rmdir_windows dir_fd path =
+  let fs = Dir.fs dir_fd in
+  let w, name, _ = Filesystem.locate_from dir_fd path in
+  if is_dot name then Error.permission_denied path;
   match Filesystem.child w name with
   | None -> Error.not_found path
-  | Some victim -> (
-      (* Permission before kind; a final symbolic link is not followed:
+  | Some { contents = Resource.Symlink { to_dir = true; _ } } ->
+      remove_entry fs w name
+  | Some { contents = Resource.File _ | Symlink _ } -> Error.directory_name path
+  | Some { contents = Resource.Dir d } when not (Dir_node.is_empty d) ->
+      Error.err ("rmdir: directory not empty: " ^ path)
+  | Some victim when (not dir_fd.admin) && held_open fs victim ->
+      Error.permission_denied path
+  | Some _ -> remove_entry fs w name
+
+let rmdir dir_fd path =
+  locked (Dir.fs dir_fd) @@ fun () ->
+  if Filesystem.windows dir_fd then rmdir_windows dir_fd path
+  else
+    let w, name, slash = Filesystem.locate_from dir_fd path in
+    (* rmdir(2) refuses a last [.] with EINVAL and a last [..] with ENOTEMPTY,
+     or EINVAL on macOS. *)
+    if String.equal name "." || (String.equal name ".." && w.os = `Macos) then
+      Error.err ("rmdir: invalid argument: " ^ path);
+    if String.equal name ".." then
+      Error.err ("rmdir: directory not empty: " ^ path);
+    let w, name = through_link ~slash w name in
+    match Filesystem.child w name with
+    | None -> Error.not_found path
+    | Some victim -> (
+        (* Permission before kind; a final symbolic link is not followed:
          ENOTDIR. *)
-      let rdir = Filesystem.here w in
-      check_dir_write ~user:dir_fd.user rdir path;
-      check_sticky ~user:dir_fd.user rdir victim path;
-      match !victim with
-      | Resource.Dir d when not (Dir_node.is_empty d) ->
-          Error.err ("rmdir: directory not empty: " ^ path)
-      | Resource.Dir _ -> remove_entry (Dir.fs dir_fd) w name
-      | _ -> Error.err ("rmdir: not a directory: " ^ path))
+        let rdir = Filesystem.here w in
+        check_dir_write ~user:(checker dir_fd) rdir path;
+        check_sticky ~user:(checker dir_fd) rdir victim path;
+        match !victim with
+        | Resource.Dir d when not (Dir_node.is_empty d) ->
+            Error.err ("rmdir: directory not empty: " ^ path)
+        | Resource.Dir _ -> remove_entry (Dir.fs dir_fd) w name
+        | _ -> Error.err ("rmdir: not a directory: " ^ path))
 
 (* rename(2) refuses to move a directory below itself (EINVAL) and anything
    over a directory above it (ENOTEMPTY), before it checks permissions. Eio.Fs
@@ -1364,47 +1784,123 @@ let move_or_replace ~fs ~replace ~user ~old_res ~ino ~old_parent ~old_name
   reparent old_res ~new_parent;
   renamed ~fs ~old_res ~old_parent ~new_parent ~dst existing
 
+(* The drive the directory [r] is on. *)
+let drive tree r =
+  match Filesystem.components (Filesystem.win_path tree r) with
+  | d :: _ -> String.uppercase_ascii d
+  | [] -> ""
+
+(* A rename as eio_windows makes it, FILE_RENAME_FLAG_POSIX_SEMANTICS
+   (eio#934): it replaces a file or an empty directory, but refuses to move
+   a file over a directory, to move anything a handle holds open, or below
+   it, a directory into itself or over one above it, and an entry to
+   another drive, which Eio names EXDEV and raises as [Permission_denied].
+   An entry renamed to another spelling of its name takes it, as does one
+   that replaces another. *)
+let rename_windows ~replace dir_fd old_path new_dir new_path =
+  let fs = Dir.fs dir_fd in
+  let os = fs.os and tree = fs.tree in
+  let old_w, old_name, _ = Filesystem.locate_from dir_fd old_path in
+  let new_w, new_name, _ = Filesystem.locate_from new_dir new_path in
+  if is_dot old_name then Error.permission_denied old_path;
+  if is_dot new_name then Error.permission_denied new_path;
+  let old_parent = Filesystem.here old_w in
+  let new_parent = Filesystem.here new_w in
+  let old_res =
+    match Filesystem.child old_w old_name with
+    | Some r -> r
+    | None -> Error.not_found old_path
+  in
+  if drive tree old_parent <> drive tree new_parent then
+    raise
+      (Eio.Fs.err
+         (Permission_denied
+            (Eio_fs ("rename: invalid cross-device link: " ^ new_path))));
+  check_live fs new_parent new_path;
+  let ino = (Resource.stat !old_res).ino in
+  let existing =
+    Dir_node.find os new_name (as_dir ~path:new_path !new_parent)
+  in
+  match existing with
+  | Some dst_ino when Inode.equal dst_ino ino ->
+      if old_parent == new_parent then
+        move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
+          new_path
+  | _ ->
+      if (not replace) && Option.is_some existing then
+        Error.already_exists new_path;
+      let dst = Option.bind existing (fun i -> Entries.find_opt i tree) in
+      let above (d : resource ref) =
+        match !d with
+        | Resource.Dir dd -> Filesystem.within tree old_parent dd.stat.ino
+        | _ -> false
+      in
+      let held r = (not dir_fd.admin) && held_open fs r in
+      if held old_res then Error.permission_denied old_path;
+      (match !old_res with
+      | Resource.Dir _ when Filesystem.within tree new_parent ino ->
+          Error.permission_denied new_path
+      | _ -> ());
+      (match dst with
+      | Some d when above d || held d -> Error.permission_denied new_path
+      | _ -> ());
+      (match (!old_res, Option.map ( ! ) dst) with
+      | Resource.Dir _, Some (Resource.File _ | Symlink _) ->
+          Error.directory_name new_path
+      | (File _ | Symlink _), Some (Resource.Dir _) ->
+          Error.permission_denied new_path
+      | Resource.Dir _, Some (Resource.Dir d) when not (Dir_node.is_empty d) ->
+          Error.err ("rename: directory not empty: " ^ new_path)
+      | _ -> ());
+      move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
+        new_path;
+      reparent old_res ~new_parent;
+      renamed ~fs ~old_res ~old_parent ~new_parent ~dst existing
+
 let rename ?(replace = true) dir_fd old_path new_dir new_path =
   locked (Dir.fs dir_fd) @@ fun () ->
   (* rename(2) does not move an entry between two file systems: EXDEV, which
      Eio.Fs has no constructor for. *)
   if Dir.fs dir_fd != Dir.fs new_dir then
     Error.err ("rename: invalid cross-device link: " ^ new_path);
-  let fs = Dir.fs dir_fd in
-  let os = fs.os in
-  let tree = fs.tree in
-  let old_w, old_name, old_slash = Filesystem.locate_from dir_fd old_path in
-  let new_w, new_name, new_slash = Filesystem.locate_from new_dir new_path in
-  check_rename_dots ~os ~replace ~old_path ~old_name new_path new_name;
-  let old_w, old_name = through_link ~slash:old_slash old_w old_name in
-  (* Rename the directory entry itself. In particular, a symlink's target need
+  if Filesystem.windows dir_fd then
+    rename_windows ~replace dir_fd old_path new_dir new_path
+  else
+    let fs = Dir.fs dir_fd in
+    let os = fs.os in
+    let tree = fs.tree in
+    let old_w, old_name, old_slash = Filesystem.locate_from dir_fd old_path in
+    let new_w, new_name, new_slash = Filesystem.locate_from new_dir new_path in
+    check_rename_dots ~os ~replace ~old_path ~old_name new_path new_name;
+    let old_w, old_name = through_link ~slash:old_slash old_w old_name in
+    (* Rename the directory entry itself. In particular, a symlink's target need
      not exist and must not be followed while moving the link. *)
-  let old_res =
-    match Filesystem.child old_w old_name with
-    | Some r -> r
-    | None -> Error.not_found old_path
-  in
-  check_rename_slashes ~os ~tree ~old_res ~old_w ~old_slash ~old_path new_w
-    new_name ~new_slash new_path;
-  let ino = Resource.(stat !old_res).ino in
-  let old_parent = Filesystem.here old_w in
-  let new_parent = Filesystem.here new_w in
-  check_live (Dir.fs new_dir) new_parent new_path;
-  let new_dir_node = as_dir ~path:new_path !new_parent in
-  let existing = Dir_node.find os new_name new_dir_node in
-  match existing with
-  (* Two names of one entry: rename(2) does nothing; on macOS, one that
+    let old_res =
+      match Filesystem.child old_w old_name with
+      | Some r -> r
+      | None -> Error.not_found old_path
+    in
+    check_rename_slashes ~os ~tree ~old_res ~old_w ~old_slash ~old_path new_w
+      new_name ~new_slash new_path;
+    let ino = Resource.(stat !old_res).ino in
+    let old_parent = Filesystem.here old_w in
+    let new_parent = Filesystem.here new_w in
+    check_live (Dir.fs new_dir) new_parent new_path;
+    let new_dir_node = as_dir ~path:new_path !new_parent in
+    let existing = Dir_node.find os new_name new_dir_node in
+    match existing with
+    (* Two names of one entry: rename(2) does nothing; on macOS, one that
      differs only in case or normalisation respells it. *)
-  | Some dst_ino when Inode.equal dst_ino ino ->
-      if os = `Macos && old_parent == new_parent then begin
-        check_dir_write ~user:dir_fd.user old_parent old_path;
-        move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
-          new_path
-      end
-  | _ ->
-      move_or_replace ~fs ~replace ~user:dir_fd.user ~old_res ~ino ~old_parent
-        ~old_name ~old_path ~new_parent ~new_name ~new_dir_node ~existing
-        new_path
+    | Some dst_ino when Inode.equal dst_ino ino ->
+        if os = `Macos && old_parent == new_parent then begin
+          check_dir_write ~user:(checker dir_fd) old_parent old_path;
+          move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
+            new_path
+        end
+    | _ ->
+        move_or_replace ~fs ~replace ~user:(checker dir_fd) ~old_res ~ino
+          ~old_parent ~old_name ~old_path ~new_parent ~new_name ~new_dir_node
+          ~existing new_path
 
 let stat t = locked t.Fd.fs @@ fun () -> Resource.stat !(resource_of t)
 
@@ -1489,6 +1985,7 @@ let readv t bufs =
 (* Positioned reads and writes never move the cursor. *)
 let preadv t ~file_offset bufs =
   locked t.Fd.fs @@ fun () ->
+  if not t.positional then Error.not_supported "preadv";
   check_offset "pread" file_offset;
   let r = resource_of t in
   match !r with
@@ -1501,6 +1998,7 @@ let preadv t ~file_offset bufs =
 
 let pwritev t ~file_offset bufs =
   locked t.Fd.fs @@ fun () ->
+  if not t.positional then Error.not_supported "pwritev";
   check_offset "pwrite" file_offset;
   let r = resource_of t in
   check_writable "pwrite" t;
