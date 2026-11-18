@@ -110,8 +110,7 @@ type t = {
   mutable chaos : Eio_chaos.t;
   mutable sw : Eio.Switch.t option;
   mutable base : Eio.Fs.dir_ty Eio.Path.t option; (* the run's filesystem *)
-  mutable ctl : Chaos_model.Crash.t option;
-      (* what a cut keeps, in this phase *)
+  mutable ctl : Crash.t option; (* what a cut keeps, in this phase *)
   mutable power : bool; (* the phase may meet a cut *)
   mutable keep : Eio_chaos.keep option;
   mutable ack : Ack.t option;
@@ -175,9 +174,7 @@ let generic (op : Op.t) : Eio_chaos.Op.t =
   }
 
 let base t = Option.get t.base
-
-let crashed t =
-  match t.ctl with Some c -> Chaos_model.Crash.is_crashed c | None -> false
+let crashed t = match t.ctl with Some c -> Crash.is_crashed c | None -> false
 
 (* The size of the file [op] writes, before it. *)
 let size t (op : Op.t) =
@@ -194,7 +191,7 @@ let synced t =
   match (t.sync, t.ctl) with
   | Some (i, s), Some ctl ->
       t.sync <- None;
-      if Chaos_model.Crash.stamp ctl <> s then Eio_chaos.changed t.chaos i
+      if Crash.stamp ctl <> s then Eio_chaos.changed t.chaos i
   | _ -> t.sync <- None
 
 (* The operation numbered [i] about to have its effect. *)
@@ -202,11 +199,11 @@ let landing t i ~tracked =
   match t.ctl with
   | Some ctl when t.power ->
       synced t;
-      if tracked then t.sync <- Some (i, Chaos_model.Crash.stamp ctl);
+      if tracked then t.sync <- Some (i, Crash.stamp ctl);
       t.seqs <-
         (match t.seqs with
-        | (s, _) :: rest when s = Chaos_model.Crash.seq ctl -> (s, i) :: rest
-        | l -> (Chaos_model.Crash.seq ctl, i) :: l)
+        | (s, _) :: rest when s = Crash.seq ctl -> (s, i) :: rest
+        | l -> (Crash.seq ctl, i) :: l)
   | _ -> ()
 
 let hook t ~space (op : Op.t) =
@@ -254,8 +251,8 @@ let confined t (d : _ Eio.Path.t) =
 
 (* [fs] and [cwd] share one numbering of the operations. *)
 let capability t (fs : _ Eio.Path.t) =
-  let sched = Chaos_model.schedule (hook t) in
-  let w d = (Chaos_model.wrap sched d :> Eio.Fs.dir_ty Eio.Path.t) in
+  let sched = Wrapper.schedule (hook t) in
+  let w d = (Wrapper.wrap sched d :> Eio.Fs.dir_ty Eio.Path.t) in
   Eio_chaos.Fs (w fs, w (confined t fs))
 
 let start t ~os ~sw ~clock ~mono_clock:_ chaos =
@@ -274,7 +271,7 @@ let start t ~os ~sw ~clock ~mono_clock:_ chaos =
   t.acked_at <- [];
   Eio_chaos.Fs (base, confined t base)
 
-let policy : Eio_chaos.keep -> Chaos_model.Crash.policy = function
+let policy : Eio_chaos.keep -> Crash.policy = function
   | Lose_unsynced -> Drop_unsynced
   | Keep_unsynced -> Survive (fun _ -> true)
   | Choose f -> Choose f
@@ -283,15 +280,14 @@ let policy : Eio_chaos.keep -> Chaos_model.Crash.policy = function
    in the middle. *)
 let tracked t keep =
   let ctl =
-    Chaos_model.Crash.v ~os:t.os ~policy:(policy keep) ~block_size:512
-      ~pause:(pause t) ()
+    Crash.v ~os:t.os ~policy:(policy keep) ~block_size:512 ~pause:(pause t) ()
   in
   t.ctl <- Some ctl;
   t.power <- true;
   t.sync <- None;
   t.syncing <- None;
   t.seqs <- [];
-  (Chaos_model.Crash.wrap ctl (base t) :> Eio.Fs.dir_ty Eio.Path.t)
+  (Crash.wrap ctl (base t) :> Eio.Fs.dir_ty Eio.Path.t)
 
 let alive t () = not (crashed t)
 
@@ -316,9 +312,9 @@ let run t ~cut ~faults =
         (* Pages a failed sync evicts read as the disk holds them, which
            the model of the disk knows. *)
         if List.exists (String.starts_with ~prefix:"evict-") faults then begin
-          let ctl = Chaos_model.Crash.v ~os:t.os () in
+          let ctl = Crash.v ~os:t.os () in
           t.ctl <- Some ctl;
-          (Chaos_model.Crash.wrap ctl base :> Eio.Fs.dir_ty Eio.Path.t)
+          (Crash.wrap ctl base :> Eio.Fs.dir_ty Eio.Path.t)
         end
         else base
   in
@@ -326,7 +322,7 @@ let run t ~cut ~faults =
 
 (* A change, numbered by the operation that made it, as the trace shows
    it. *)
-let change_text seqs (u : Chaos_model.Crash.unsynced) =
+let change_text seqs (u : Crash.unsynced) =
   let n =
     match List.find_opt (fun (s, _) -> s < u.seq) seqs with
     | Some (_, i) -> Fmt.str "#%d " i
@@ -358,16 +354,16 @@ let acked_text = function
 
 let cut t =
   match t.ctl with
-  | Some ctl when t.power && not (Chaos_model.Crash.is_crashed ctl) ->
-      let lost = Chaos_model.Crash.unsynced ctl in
+  | Some ctl when t.power && not (Crash.is_crashed ctl) ->
+      let lost = Crash.unsynced ctl in
       let note =
-        if Chaos_model.Crash.cached ctl then
+        if Crash.cached ctl then
           "under macOS an fsync stops in the drive's cache; F_FULLFSYNC \
            (Eio_fs_unix.sync_file, Eio_fs_unix.barrier) goes through it"
         else ""
       in
-      Chaos_model.Crash.crash ctl;
-      let left = Chaos_model.Crash.left ctl in
+      Crash.crash ctl;
+      let left = Crash.left ctl in
       let changes = String.concat "; " (List.map (change_text t.seqs) lost) in
       let lost =
         match t.keep with

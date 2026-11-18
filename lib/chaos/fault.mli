@@ -9,6 +9,9 @@ type t =
   | Torn of int
   | Swap_symlink of string
 
+val code_name : code -> string
+(** [code_name c] is [c]'s errno, as ["EIO"]. *)
+
 val pp : t Fmt.t
 (** [pp] formats a fault. *)
 

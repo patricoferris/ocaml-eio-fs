@@ -1,8 +1,7 @@
 open! Hermetic
-module M = Chaos_model
 
 type env = Eio_chaos.env
-type Eio.Exn.Backend.t += Injected_fault = M.Injected_fault
+type Eio.Exn.Backend.t += Injected_fault = Wrapper.Injected_fault
 
 module Op = Op
 module Fault = Fault
@@ -11,27 +10,27 @@ module Fault = Fault
 
 let wrap f base =
   let hook ~space:_ op = f op in
-  (M.wrap (M.schedule hook) base :> Eio.Fs.dir_ty Eio.Path.t)
+  (Wrapper.wrap (Wrapper.schedule hook) base :> Eio.Fs.dir_ty Eio.Path.t)
 
 (* {1 Power} *)
 
 module Power = struct
-  type change = M.Crash.unsynced
+  type change = Crash.unsynced
 
-  let pp_change = M.Crash.pp_unsynced
+  let pp_change = Crash.pp_unsynced
 
   type policy = Lose_unsynced | Keep of (change -> bool)
-  type t = M.Crash.t
+  type t = Crash.t
 
   (* A controller built by hand may wrap a directory other processes write,
      so its cut keeps their changes. *)
   let v ?os = function
-    | Lose_unsynced -> M.Crash.v ?os ~policy:Drop_unsynced ~outside:Kept ()
-    | Keep p -> M.Crash.v ?os ~policy:(Survive p) ~outside:Kept ()
+    | Lose_unsynced -> Crash.v ?os ~policy:Drop_unsynced ~outside:Kept ()
+    | Keep p -> Crash.v ?os ~policy:(Survive p) ~outside:Kept ()
 
-  let wrap t base = (M.Crash.wrap t base :> Eio.Fs.dir_ty Eio.Path.t)
-  let unsynced = M.Crash.unsynced
-  let cut = M.Crash.post_crash
+  let wrap t base = (Crash.wrap t base :> Eio.Fs.dir_ty Eio.Path.t)
+  let unsynced = Crash.unsynced
+  let cut = Crash.post_crash
 end
 
 (* {1 The check} *)
@@ -90,7 +89,7 @@ module Private = struct
   let scenarios = Device.scenarios
   let eio_posix_differs = Device.eio_posix_differs
 
-  module Crash = M.Crash
-  module Law = M.Law
-  module Internal = M.Internal
+  module Crash = Chaos_model.Crash
+  module Law = Chaos_model.Law
+  module Internal = Chaos_model.Internal
 end

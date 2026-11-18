@@ -1,5 +1,5 @@
-(** What the fault-injecting wrapper of {!Chaos_model.wrap} does with each
-    operation of each interface it binds.
+(** What the fault-injecting wrapper of {!Wrapper.wrap} does with each operation
+    of each interface it binds.
 
     With no fault, the wrapper answers as its base does, except where an entry
     below says otherwise. Each operation is in one class:

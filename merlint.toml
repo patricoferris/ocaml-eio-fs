@@ -65,10 +65,10 @@ exclude = ["E330"]
 
 # Crash is one controller: its journal, the cut and the handles it wraps read
 # and write the same mutable state, and no seam left in it brings a part under
-# the bound without exporting that state. Blocks and Journal hold
-# the parts that stand alone.
+# the bound without exporting that state. Blocks and Journal hold the parts
+# that stand alone.
 [[rules]]
-files = ["lib/chaos/chaos_model.ml"]
+files = ["lib/chaos/crash.ml"]
 exclude = ["E015"]
 
 # The in-memory core is a private library of eio-fs: these tests reach it
