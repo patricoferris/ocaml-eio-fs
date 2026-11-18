@@ -310,6 +310,9 @@ Each library documents itself in its `.mli`, under [`lib/`](lib/).
   power cut keeps what it keeps under Linux, as no power-cut test on real
   Windows has checked a directory's durability there
   ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
+- On a Windows host, a crash over a real directory and `Sync.append_lines`
+  need positioned reads, which eio_windows 1.7 lacks: there they work over
+  the in-memory filesystem only.
 - eio_posix differs from the kernel on a few paths, such as one that ends in
   `..`, and the in-memory filesystem follows the kernel
   ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
