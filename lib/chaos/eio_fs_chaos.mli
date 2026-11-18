@@ -7,7 +7,8 @@
       runs the program many times on in-memory filesystems that fail, and each
       time starts it again on what the fault left, as a machine restarts a
       service.
-    - {!device} checks that an Eio filesystem answers as Linux or macOS does.
+    - {!val-device} checks that an Eio filesystem answers as Linux or macOS
+      does.
 
     Both raise [Failure] with a report when the check fails, as an assertion
     does, so they are the body of a test in any test runner. {!run} is
@@ -17,13 +18,13 @@
     {{!blocks}building blocks}: {!wrap} for errors, {!Power} for a power cut by
     hand, {!ack} for a file the program has promised to keep.
 
-    {!run}, {!device} and {!Power.v} take [?os], as {!Eio_fs_mem.v} does:
+    {!run}, {!val-device} and {!Power.v} take [?os], as {!Eio_fs_mem.v} does:
     [`Linux], the default, or [`Macos]. It picks the filesystem's answers and
     what a power cut keeps of each kind of sync. The choice comes from the
     argument, never from the host, so a test checks the same thing on every
     machine.
 
-    {!device} replays {e scenarios}, each a short sequence of operations
+    {!val-device} replays {e scenarios}, each a short sequence of operations
     recorded on each kernel. A report of {!run} names its runs as scenarios too:
     a fault at a place of the first run.
 
@@ -630,11 +631,11 @@ end
       never yields stops there;
     - a run stops at 10,000,000 turns. If no fiber waited 1 ms or more for a
       timer in the last 10,000,000, it fails as a busy loop: a poll by yields,
-      or by sleeps shorter than 1 ms, that never ends. Otherwise it fails as too
-      large for a check: a check repeats the run hundreds of times, so it
-      refuses a longer one, as it refuses one past its budget. Fibers on timers
-      take turns too: a thousand on a heartbeat of 100 ms reach 10,000,000 in
-      1000 s of clock;
+      or by sleeps shorter than 1 ms, that never ends. Otherwise it fails as a
+      busy loop or as too large for a check: a check repeats the run hundreds of
+      times, so it refuses a longer one, as it refuses one past its budget.
+      Fibers on timers take turns too: a thousand on a heartbeat of 100 ms reach
+      10,000,000 in 1000 s of clock;
     - a run still going after an hour of its clock fails as a hang: a poll that
       sleeps 1 ms or more between its tries and never ends.
 
@@ -698,11 +699,11 @@ end
    policies and controls, the law of the wrapper, and counters. *)
 module Private : sig
   val scenarios : string list
-  (** [scenarios] is the name of each scenario {!device} runs, in order. *)
+  (** [scenarios] is the name of each scenario {!val-device} runs, in order. *)
 
   val eio_posix_differs : [< Eio_chaos.os ] -> string list
   (** [eio_posix_differs os] is the scenarios whose answers eio_posix gave on
-      [os] differ from those {!device} expects. *)
+      [os] differ from those {!val-device} expects. *)
 
   val check_faults :
     ?budget:int ->

@@ -189,7 +189,7 @@ val pread :
   int
 (** [pread ~cached file ~file_offset buf ~pos ~len] reads up to [len] bytes of
     [file] from byte [file_offset] into [buf] at [pos], and is the count read,
-    [0] at the end of the file. It reads at most 65536 bytes, and [file]'s own
+    [0] at the end of the file. It reads at most 65,536 bytes, and [file]'s own
     offset does not move:
     - a file that registers {!Positioned} answers it;
     - a file over a host descriptor is read by POSIX [pread], which [Unix] does
@@ -214,7 +214,7 @@ val pwrite :
   _ Eio.File.rw -> file_offset:int -> string -> pos:int -> len:int -> int
 (** [pwrite file ~file_offset s ~pos ~len] writes up to [len] bytes of [s] from
     [pos] to [file] at byte [file_offset], and is the count written. It writes
-    at most 65536 bytes, [file]'s own offset does not move, and [file] answers
+    at most 65,536 bytes, [file]'s own offset does not move, and [file] answers
     it as it answers {!val-pread}: through {!Positioned}, by POSIX [pwrite] on a
     host descriptor, retried on [EINTR] while other threads run, or by one
     {!Eio.File.pwrite_single}.
@@ -295,7 +295,7 @@ val extents :
     hop covers many extents.
 
     @raise Invalid_argument
-      if [max] is not between 1 and 65536, [file_offset] or [length] is
+      if [max] is not between 1 and 65,536, [file_offset] or [length] is
       negative, or [file_offset + length] is past [max_int].
     @raise Unix.Unix_error
       as the platform call, and [ENOSYS] on a platform that has neither. *)
