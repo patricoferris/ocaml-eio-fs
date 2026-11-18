@@ -187,12 +187,12 @@ val publish :
   (Eio.Flow.sink_ty Eio.Resource.t -> 'b) ->
   'b
 (** [publish ~barrier ~perm ~exclusive ~tmp ~max_bytes path write] publishes
-    [path]'s contents atomically and durably, and is what [write] returns:
-    [write] streams into a temporary, which is synced, moved to [path], and
-    whose directory is synced. The sink [write] is given refuses, with
-    {!Limit_exceeded}, a write that would take it past [max_bytes]: a finite
-    ceiling is mandatory, so that streaming cannot turn an allocation failure
-    into unbounded disk consumption.
+    [path]'s contents atomically, and durably as far as [barrier] goes (see the
+    preamble for macOS), and is what [write] returns: [write] streams into a
+    temporary, which is synced, moved to [path], and whose directory is synced.
+    The sink [write] is given refuses, with {!Limit_exceeded}, a write that
+    would take it past [max_bytes]: a finite ceiling is mandatory, so that
+    streaming cannot turn an allocation failure into unbounded disk consumption.
 
     [barrier] (defaults to {!Barrier.portable}) issues both barriers;
     {!Barrier.none} keeps only the atomicity. [perm] (defaults to [0o644]) is

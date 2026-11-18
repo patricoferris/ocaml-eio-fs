@@ -225,7 +225,8 @@ simulated one; the program is not changed.
 
 - The filesystem is a page cache over a simulated disk. Writes stay in the
   cache until `fsync` or a directory sync makes them durable. A power cut
-  keeps only what ext4 (`data=writeback`) or APFS may keep.
+  keeps only what ext4 (`data=writeback`) may keep; under ``~os:`Macos``
+  only the sync rules of APFS differ (see [Limitations](#limitations)).
 - The clocks jump to the next timer, `secure_random` and `Random` are
   seeded, the standard streams are in memory, a domain manager runs its work
   on the run's own scheduler, and no process starts.
@@ -265,7 +266,9 @@ across power cuts, or about on-disk layout.
 - `eio-fs.chaos` has `Eio_fs_chaos`, the two checks above and the faults
   they are made of, so a program that uses only the filesystem links none of
   it.
-- `eio-fs.sync` writes a file atomically and durably on any Eio filesystem.
+- `eio-fs.sync` writes a file atomically on any Eio filesystem, and
+  durably with the barrier it is given: the default is enough on Linux,
+  while on macOS only `Eio_fs_unix.barrier` goes through the drive's cache.
 - `eio-fs.unix` binds POSIX calls that Eio and `Unix` lack, such as file
   locks and extended attributes.
 - `eio-fs.path` works on path strings, without touching a filesystem.
