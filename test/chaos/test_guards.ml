@@ -784,12 +784,11 @@ let test_heap_stays_flat () =
    so what is live grows with the trace, not with the scenarios it could
    run. *)
 let test_sampled_heap () =
-  let runs = ref 0 and top = ref 0 in
+  let heap = Heap.v ~every:20 () in
   Eio_fs_chaos.run
     ~setup:(fun env -> P.save ~create:(`Exclusive 0o644) P.(env#fs / "f") "x")
     (fun env ->
-      incr runs;
-      if !runs mod 20 = 0 then top := max !top (Gc.stat ()).live_words;
+      Heap.sample heap;
       try
         P.with_open_in P.(env#fs / "f") @@ fun f ->
         let buf = Cstruct.create 1 in
@@ -798,7 +797,9 @@ let test_sampled_heap () =
           with Eio.Io _ -> ()
         done
       with Eio.Io _ -> ());
-  if !top > 600_000 then Alcotest.failf "%d words live" !top
+  (* The bound is the growth of the words live from a compacted start, so it
+     does not depend on what the libraries hold. *)
+  Heap.check heap 800_000
 
 (* A save retried after a yield on a read-only filesystem: the run stops at
    100,000 operations. The check keeps only what the report shows, so the
