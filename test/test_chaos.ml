@@ -124,6 +124,19 @@ let test_sync_error () =
   Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
   expect_io "fsync failure" (fun () -> Eio.File.sync file)
 
+(* An injected error carries the code the wrapper exports, with the error
+   and the path it names, as a disk's error carries its backend's. *)
+let test_injected_code () =
+  with_chaos (at `Sync "f" (Fail `Eio)) @@ fun ~raw:_ ~chaos ->
+  Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (chaos / "f")
+  @@ fun file ->
+  match Eio.File.sync file with
+  | () -> Alcotest.fail "the sync succeeded"
+  | exception Eio.Io (Eio.Exn.X (Chaos.Injected_fault what), _) ->
+      Alcotest.(check bool)
+        "names EIO" true
+        (String.starts_with ~prefix:"EIO " what)
+
 (* A file opened read-only answers the barrier too, as fsync(2) does, and the
    schedule fails it as it fails a read-write one. *)
 let test_read_only_file_sync () =
@@ -515,6 +528,8 @@ let suite =
       Alcotest.test_case "streaming read error" `Quick (test_read_error false);
       Alcotest.test_case "positional read error" `Quick (test_read_error true);
       Alcotest.test_case "short write" `Quick test_short_write;
+      Alcotest.test_case "an injected error carries Injected_fault" `Quick
+        test_injected_code;
       Alcotest.test_case "torn write" `Quick test_torn_write;
       Alcotest.test_case "write error" `Quick test_write_error;
       Alcotest.test_case "sync error" `Quick test_sync_error;

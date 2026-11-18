@@ -319,9 +319,24 @@ let test_shutdown_as_eio_posix () =
     "the in-memory backend" "no shutdown"
     (outcome (Eio_fs_mem.v () / "."))
 
+(* An error Eio does not classify carries the code Eio_fs_mem exports, and
+   one it classifies carries it too, so that a handler can tell the
+   in-memory filesystem's errors apart. *)
+let test_error_code () =
+  with_fs @@ fun _ fs ->
+  Eio.Path.mkdirs ~perm:0o755 (fs / "d/e");
+  (match Eio.Path.rmdir (fs / "d") with
+  | () -> Alcotest.fail "removed a directory that is not empty"
+  | exception Eio.Io (Eio.Exn.X (Eio_fs_mem.Eio_fs what), _) ->
+      Alcotest.(check string) "what" "rmdir: directory not empty: d" what);
+  match Eio.Path.load (fs / "missing") with
+  | _ -> Alcotest.fail "loaded a missing file"
+  | exception Eio.Io (Eio.Fs.E (Not_found (Eio_fs_mem.Eio_fs _)), _) -> ()
+
 let suite =
   ( "memfs",
     [
+      Alcotest.test_case "errors carry Eio_fs_mem.Eio_fs" `Quick test_error_code;
       Alcotest.test_case "the stat trace names its provenance" `Quick test_trace;
       Alcotest.test_case "times move as on Linux" `Quick
         (as_linux "times" ~on:[ "tmpfs"; "ext4" ]);
