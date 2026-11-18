@@ -399,6 +399,12 @@ module Disk = struct
     match t.ctl with
     | Some ctl when t.power && not (M.Crash.is_crashed ctl) ->
         let lost = M.Crash.unsynced ctl in
+        let note =
+          if M.Crash.cached ctl then
+            "under macOS an fsync stops in the drive's cache; F_FULLFSYNC \
+             (Eio_fs_unix.sync_file, Eio_fs_unix.barrier) goes through it"
+          else ""
+        in
         M.Crash.crash ctl;
         let left = M.Crash.left ctl in
         let changes = String.concat "; " (List.map (change_text t.seqs) lost) in
@@ -419,7 +425,12 @@ module Disk = struct
               @ if n > 8 then [ Fmt.str "and %d more files" (n - 8) ] else [])
               |> String.concat "\n            "
         in
-        [ ("acked", acked_text (List.rev t.acked_at)); lost; ("left", left) ]
+        [
+          ("acked", acked_text (List.rev t.acked_at));
+          lost;
+          ("left", left);
+          ("note", note);
+        ]
     | _ -> []
 
   let restart t ~power ~cut =
@@ -458,9 +469,7 @@ let disk () = Disk_part.v (Disk.v ())
 let name = "Eio_fs_chaos.run"
 
 let run ?os ?budget ?seed ?replay ?setup ?inspect app =
-  Eio_chaos.Private.run ~name ?os ?budget ?seed ?replay ?setup ?inspect
-    [ disk () ]
-    app
+  Eio_chaos.run ~name ?os ?budget ?seed ?replay ?setup ?inspect [ disk () ] app
 
 let get name (env : env) =
   match Disk_part.find env#chaos with

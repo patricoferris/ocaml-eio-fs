@@ -326,6 +326,11 @@ module Crash : sig
       failure of a sync, and each file or mode an open meets: a sync or an open
       that leaves it as it was changed nothing a cut leaves. *)
 
+  val cached : t -> bool
+  (** [cached t] is [true] iff changes a plain sync flushed wait in the drive's
+      cache, which a crash loses: under [`Macos], those of an fsync(2) that no
+      full sync drained since. *)
+
   val unsynced : t -> unsynced list
   (** [unsynced t] are the changes not yet made durable, in program order: every
       write no sync made durable, and every journal entry not committed. That

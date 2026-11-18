@@ -1,14 +1,15 @@
 (** Filesystem faults and power cuts, for tests of Eio programs and of Eio
     filesystems.
 
-    [Eio_fs_chaos] answers two questions, with one function each:
+    [Eio_fs_chaos] has two checks, one function each:
 
-    - {!run}: does this Eio program cope with a filesystem that fails? It runs
-      the program many times on in-memory filesystems that fail, and each time
-      starts it again on what the failure left, as a machine restarts a service.
-    - {!device}: does this Eio filesystem answer as Linux or macOS does?
+    - {!run} checks that an Eio program copes with a filesystem that fails. It
+      runs the program many times on in-memory filesystems that fail, and each
+      time starts it again on what the fault left, as a machine restarts a
+      service.
+    - {!device} checks that an Eio filesystem answers as Linux or macOS does.
 
-    Both raise [Failure] with a report when the answer is no, as an assertion
+    Both raise [Failure] with a report when the check fails, as an assertion
     does, so they are the body of a test in any test runner. A test that wants
     one fault at one place builds it from the {{!blocks}building blocks}:
     {!wrap} for errors, {!Power} for a power cut by hand, {!ack} for a file the
@@ -21,7 +22,7 @@
     machine.
 
     How a check picks its {{!exploration}faults}, the {{!contracts}contracts} a
-    program meets, its {{!replay}failures and replay}, its {{!runs}runs} and the
+    program meets, its {{!replay}reports and replay}, its {{!runs}runs} and the
     {{!model}disk model} a power cut follows come after. *)
 
 type env = Eio_chaos.env
@@ -220,25 +221,25 @@ val device :
     unless one of them is a disk. Its scenarios first run as above, each on
     healthy parts. Then, if [under] is not empty, [device] is {!Eio_chaos.run}
     of a program that runs every scenario in turn, in one event loop, with
-    [budget], [seed] and [replay] as {!run} takes them, and the failures the
-    parts of [under] allow, but no power cut. It passes iff each run does:
+    [budget], [seed] and [replay] as {!run} takes them, and the faults the parts
+    of [under] allow, but no power cut. It passes iff each run does:
 
     - until a part fails, every answer is the kernel's;
     - once one failed ({!Eio_chaos.faulted}), an answer is the kernel's, or an
-      error eio-fs injects, which the failure below may explain: a missing file,
-      a refused access, a read-only or full filesystem, or an input/output
-      error. At the first such error the scenario ends, as the later answers
-      depend on whether the operation took effect, and so does one whose
-      directory cannot be made;
-    - the restart, with no failure, runs every scenario again, each in a new
+      error eio-fs injects, which the fault below may explain: a missing file, a
+      refused access, a read-only or full filesystem, or an input/output error.
+      At the first such error the scenario ends, as the later answers depend on
+      whether the operation took effect, and so does one whose directory cannot
+      be made;
+    - the restart, with no fault, runs every scenario again, each in a new
       directory, and every answer is the kernel's.
 
     So a hang fails, an error of another device that leaks, such as
     [Connection_reset] or [End_of_file], fails, and so does a success that
     differs from the kernel's, as a short read given as the whole file. A device
-    that turns a harmless failure below into an error of its own passes. A
-    failure report is that of {!run}, named after [device], and its replay line
-    runs that case alone.
+    that turns a harmless fault below into an error of its own passes. A report
+    is that of {!run}, named after [device], and its replay line runs that case
+    alone.
 
     @raise Failure
       if an answer differs, with one line for each such scenario: its name, its
@@ -540,9 +541,9 @@ end
     {b A check blocks its caller.} Each run has its own event loop, inside or
     outside another one; the caller's loop waits until the check returns. *)
 
-(** {1:replay Failures and replay}
+(** {1:replay Reports and replay}
 
-    A check is deterministic. A failure raises [Failure] with:
+    A check is deterministic. A failing run raises [Failure] with:
 
     - the scenario;
     - the operations of the failing run, each numbered by its place in the
@@ -554,7 +555,7 @@ end
       with where the stale data comes from;
     - what the program printed, its last lines;
     - the [Eio_fs_chaos.run ~replay:"..." app] call that runs that scenario
-      again.
+      again, which passes [~os:`Macos] for a check under macOS.
 
     A report's size is bounded by the program's structure, not by how long it
     spun:

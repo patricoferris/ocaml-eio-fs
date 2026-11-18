@@ -3598,6 +3598,7 @@ module Crash = struct
   let left ctl = ctl.left
   let seq ctl = ctl.seq
   let stamp ctl = ctl.seq + ctl.effects
+  let cached ctl = ctl.queued <> []
 
   let pp_unsynced ppf u =
     match u.kind with
