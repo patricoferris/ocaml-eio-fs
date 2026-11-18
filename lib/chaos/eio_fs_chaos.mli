@@ -10,10 +10,12 @@
     - {!device} checks that an Eio filesystem answers as Linux or macOS does.
 
     Both raise [Failure] with a report when the check fails, as an assertion
-    does, so they are the body of a test in any test runner. A test that wants
-    one fault at one place builds it from the {{!blocks}building blocks}:
-    {!wrap} for errors, {!Power} for a power cut by hand, {!ack} for a file the
-    program has promised to keep.
+    does, so they are the body of a test in any test runner. {!run} is
+    {!Eio_chaos.run} on one part, {!disk}: a program that also needs a network
+    is tested with [Eio_chaos.run [ disk (); Eio_net_chaos.network () ]]. A test
+    that wants one fault at one place builds it from the
+    {{!blocks}building blocks}: {!wrap} for errors, {!Power} for a power cut by
+    hand, {!ack} for a file the program has promised to keep.
 
     {!run}, {!device} and {!Power.v} take [?os], as {!Eio_fs_mem.v} does:
     [`Linux], the default, or [`Macos]. It picks the filesystem's answers and
@@ -21,32 +23,39 @@
     argument, never from the host, so a test checks the same thing on every
     machine.
 
+    {!device} replays {e scenarios}, each a short sequence of operations
+    recorded on each kernel. A report of {!run} names its runs as scenarios too:
+    a fault at a place of the first run.
+
     How a check picks its {{!exploration}faults}, the {{!contracts}contracts} a
     program meets, its {{!replay}reports and replay}, its {{!runs}runs} and the
     {{!model}disk model} a power cut follows come after. *)
 
 type env = Eio_chaos.env
 (** The type for what a program or a filesystem under test runs with: the
-    capabilities of {!Eio.Stdenv}, each simulated, so code written against the
-    accessors of {!Eio.Stdenv} takes it unchanged.
+    capabilities of [Eio.Stdenv], each simulated, so code written against the
+    accessors of [Eio.Stdenv] takes it unchanged. {!Eio_chaos.type-env} says
+    what each is.
 
-    - [fs] is the root of a fresh in-memory filesystem, and [cwd] the same
-      directory, confined to itself as eio_posix confines a process's (an
-      absolute path or link and a [".."] above it are refused with
-      [Permission_denied]). Both run as {!Eio_fs_mem.root};
-      {!Eio_fs_mem.as_user} runs them as another user.
-    - [clock] and [mono_clock] start at [0.], and a sleep takes no time
-      ({{!runs}runs}).
-    - [secure_random] draws bytes from a fixed seed, and the default [Random]
-      state is seeded before each run: the first run and each run with a fault
-      draw the same, and a restart draws others, as a new process does.
-    - [stdin] is empty. What [stdout], [stderr] and [Eio.traceln] print is kept,
-      and a report shows its last lines.
-    - [domain_mgr] runs its work in the calling fiber, on the run's scheduler.
-    - [process_mgr] starts nothing: [spawn] and [pipe] raise [Eio.Io].
-    - [debug] is Eio's, and [backend_id] is ["chaos"].
-    - [chaos] is the run's {!Eio_chaos.t}, for a device the program builds
-      itself.
+    - [fs] is the root of a fresh in-memory filesystem, the one that fails, and
+      [cwd] the same directory, confined to itself as eio_posix confines a
+      process's (an absolute path or link and a [".."] above it are refused with
+      [Permission_denied]). Both run as {!Eio_fs_mem.root}, and
+      {!Eio_fs_mem.as_user} runs them as another user. [net] refuses each
+      operation, unless another part gives it, as the network of eio-net does;
+    - [clock] and [mono_clock] start at [0.], and a wait takes no time
+      ({{!runs}runs});
+    - [secure_random] and the default [Random] state draw from a fixed seed,
+      whatever [~seed]: the first run and each run with a fault draw the same,
+      and a restart draws others, as a new process does;
+    - [stdin] is empty, and [stdout], [stderr] and [Eio.traceln] are kept in
+      memory: a report shows the last 2 KiB the program printed;
+    - [domain_mgr] runs its work in the calling fiber, on the run's own
+      scheduler;
+    - [process_mgr] starts nothing: [spawn] and [pipe] raise [Eio.Io] with
+      [Not_available];
+    - [debug] is Eio's, [backend_id] is ["chaos"], and [chaos] is the run's
+      {!Eio_chaos.t}, for a device the program builds itself.
 
     A program that reaches the system other than through [env], by [Unix], the
     standard library's channels, [Random.self_init], [Domain.spawn] or
@@ -58,10 +67,10 @@ type env = Eio_chaos.env
     of operation they make, the check fails with a report that names the first
     difference and its likely causes. *)
 
-(** {1:programs Testing a program} *)
+(** {1:program Testing a program} *)
 
 val run :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< Eio_chaos.os ] ->
   ?budget:int ->
   ?seed:int ->
   ?replay:string ->
@@ -141,10 +150,10 @@ val disk : unit -> Eio_chaos.part
     above. [run app] is [Eio_chaos.run [ disk () ] app], but for the name its
     reports give. *)
 
-(** {1:filesystems Testing a filesystem} *)
+(** {1:device Testing a filesystem} *)
 
 val device :
-  ?os:[< `Linux | `Macos ] ->
+  ?os:[< Eio_chaos.os ] ->
   ?user:Eio_fs_mem.user ->
   ?under:Eio_chaos.part list ->
   ?budget:int ->
@@ -157,16 +166,16 @@ val device :
     empty directory [dir ~sw env], and compares each answer with the kernel's.
     [sw] ends with the scenario, so what [dir] opens under it is closed there.
 
-    {[
-    let () = Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ())
-    ]}
-
     Each scenario runs in an event loop of its own, as a run of {!run} does,
     given an {!type-env} whose [fs] is a fresh in-memory filesystem that answers
     as [os] does. A filesystem built on other capabilities, such as a wrapper
     over a directory, takes them from that env, so its runs are as deterministic
     as a program's. A directory on the host works too: its calls run one at a
     time in the scenario's loop.
+
+    {[
+    let check_mem () = Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ())
+    ]}
 
     A scenario is a short sequence of {!Eio.Path} operations: names that differ
     by case or Unicode form, names and paths at their length limits, opens of
@@ -302,7 +311,10 @@ module Op : sig
   (** The type for operations. *)
 
   val pp : t Fmt.t
-  (** [pp] formats an operation for logs and reports. *)
+  (** [pp] formats an operation for logs and reports, as [#4 write /f@0+5]: its
+      {!index}, its kind and its {!path}, then, for a read or a write, [@] its
+      {!offset} and [+] its {!length}. A truncation ends with [to] its new
+      length, and a rename with [to] its {!dest}. *)
 end
 
 (** The faults a wrapper injects. *)
@@ -441,7 +453,7 @@ module Power : sig
   type t
   (** The type for power switches. *)
 
-  val v : ?os:[< `Linux | `Macos ] -> policy -> t
+  val v : ?os:[< Eio_chaos.os ] -> policy -> t
   (** [v ~os policy] is a power switch whose cut leaves what [policy] says, as
       the disk of [os] (defaults to [`Linux]) allows. *)
 
@@ -518,10 +530,10 @@ end
     as a hang when, with no success in between and its clock still but for the
     time operations take:
 
-    - one operation on one path fails 10000 times more than three times the
+    - one operation on one path fails 10,000 times more than three times the
       first run made it;
-    - or one kind of operation in one directory fails 10000 times more than 1000
-      times the first run made it.
+    - or one kind of operation in one directory fails 10,000 times more than
+      1000 times the first run made it.
 
     A batch that tries each item up to three times and drops what fails passes,
     and so does a pool that tries up to 1000 names for each name its first run
@@ -543,10 +555,7 @@ end
     operation it falls before, and from every one after, as in a cancelled
     fiber, and once every fiber waits it cancels them all, as nothing runs after
     a power cut. A run that makes 1000 more operations after the cut fails as a
-    hang.
-
-    {b A check blocks its caller.} Each run has its own event loop, inside or
-    outside another one; the caller's loop waits until the check returns. *)
+    hang. *)
 
 (** {1:replay Reports and replay}
 
@@ -605,22 +614,26 @@ end
 
 (** {1:runs Runs}
 
+    Each run, with its restart, has its own event loop, inside or outside
+    another one. A check runs to its end before it returns, so it blocks the
+    event loop it is called from: the other fibers of that loop wait for it.
+
     Each run's clocks start at [0.] and move to the next timer when every fiber
-    waits, so a sleep takes no time. Each turn, a fiber resumed by a yield,
+    waits, so a wait takes no time. Each turn, a fiber resumed by a yield,
     another fiber or a timer, also moves them by 1 us, as CPU time passes
     between two. Five guards stop a run that does not end:
 
     - a run in which every fiber waits and no timer is due fails as a hang;
     - a retry that never yields meets the spin guard above;
-    - a run that makes 100000 filesystem operations fails as a busy loop, or as
+    - a run that makes 100,000 filesystem operations fails as a busy loop, or as
       too large for a check, so a run's operations stay bounded: a poll that
       never yields stops there;
-    - a run stops at 10 million turns. If no fiber waited 1 ms or more for a
-      timer in the last 10 million, it fails as a busy loop: a poll by yields,
+    - a run stops at 10,000,000 turns. If no fiber waited 1 ms or more for a
+      timer in the last 10,000,000, it fails as a busy loop: a poll by yields,
       or by sleeps shorter than 1 ms, that never ends. Otherwise it fails as too
       large for a check: a check repeats the run hundreds of times, so it
       refuses a longer one, as it refuses one past its budget. Fibers on timers
-      take turns too: a thousand on a heartbeat of 100 ms reach 10 million in
+      take turns too: a thousand on a heartbeat of 100 ms reach 10,000,000 in
       1000 s of clock;
     - a run still going after an hour of its clock fails as a hang: a poll that
       sleeps 1 ms or more between its tries and never ends.
@@ -687,7 +700,7 @@ module Private : sig
   val scenarios : string list
   (** [scenarios] is the name of each scenario {!device} runs, in order. *)
 
-  val eio_posix_differs : [< `Linux | `Macos ] -> string list
+  val eio_posix_differs : [< Eio_chaos.os ] -> string list
   (** [eio_posix_differs os] is the scenarios whose answers eio_posix gave on
       [os] differ from those {!device} expects. *)
 
@@ -695,7 +708,7 @@ module Private : sig
     ?budget:int ->
     ?seed:int ->
     ?replay:string ->
-    ?os:[< `Linux | `Macos ] ->
+    ?os:[< Eio_chaos.os ] ->
     ?setup:(env -> unit) ->
     (env -> unit) ->
     unit
@@ -705,7 +718,7 @@ module Private : sig
     ?budget:int ->
     ?seed:int ->
     ?replay:string ->
-    ?os:[< `Linux | `Macos ] ->
+    ?os:[< Eio_chaos.os ] ->
     ?setup:(env -> unit) ->
     (ack:('a -> unit) -> env -> unit) ->
     recover:(acked:'a list -> env -> unit) ->
