@@ -1,7 +1,10 @@
 (library
  (name posix)
+ (wrapped false)
  (libraries
   eio.unix
+  alcotest
+  fmt
   (select
    posix.ml
    from

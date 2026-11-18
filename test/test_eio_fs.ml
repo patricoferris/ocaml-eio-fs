@@ -769,7 +769,8 @@ let suite =
       Alcotest.test_case "same_file" `Quick test_same_file;
       Alcotest.test_case "remove_empty" `Quick test_remove_empty;
       Alcotest.test_case "links" `Quick test_links;
-      Alcotest.test_case "unshare" `Quick test_unshare;
+      Alcotest.test_case "unshare" `Quick
+        (Host.posix_only "Windows keeps no POSIX mode" test_unshare);
       Alcotest.test_case "load asks its filter about the root first" `Quick
         test_load_filter_refuses_the_root;
       Alcotest.test_case "load refuses a regular file" `Quick

@@ -400,9 +400,12 @@ let suite =
       Alcotest.test_case "plain directory refused" `Quick
         test_refuses_plain_directory;
       Alcotest.test_case "POSIX read-only generation reclaimed" `Quick
-        test_posix_readonly_reclaimed;
+        (Host.posix_only "Windows syncs no file open for reading only"
+           test_posix_readonly_reclaimed);
       Alcotest.test_case "POSIX failed read-only population leaves no stage"
-        `Quick test_posix_readonly_failed_populate;
+        `Quick
+        (Host.posix_only "Windows syncs no file open for reading only"
+           test_posix_readonly_failed_populate);
       Alcotest.test_case "durable through a fault wrapper" `Quick
         test_durable_through_a_fault_wrapper;
     ] )

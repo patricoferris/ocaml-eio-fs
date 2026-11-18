@@ -553,9 +553,10 @@ let suite =
   ( "nofollow",
     [
       Alcotest.test_case "opens only a regular file of one link" `Quick
-        test_with_regular;
+        (Host.posix_only "Windows has no FIFO" test_with_regular);
       Alcotest.test_case "reads a file whose name was replaced" `Quick
-        test_with_regular_reads_a_replaced_file;
+        (Host.posix_only "Windows renames no file a handle holds open"
+           test_with_regular_reads_a_replaced_file);
       Alcotest.test_case "bounded read" `Quick
         test_read_nofollow_reads_a_bounded_regular_file;
       Alcotest.test_case "refuses the final link" `Quick
@@ -571,7 +572,8 @@ let suite =
       Alcotest.test_case "is one open through a wrapper" `Quick
         test_read_nofollow_is_one_open_through_its_wrapper;
       Alcotest.test_case "validates a FIFO before reading" `Quick
-        test_read_nofollow_validates_a_fifo_before_reading;
+        (Host.posix_only "Windows has no FIFO"
+           test_read_nofollow_validates_a_fifo_before_reading);
       Alcotest.test_case "costs the file, not the bound" `Quick
         test_read_nofollow_costs_the_file_not_the_bound;
       Alcotest.test_case "follows growth to the bound" `Quick

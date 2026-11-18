@@ -809,7 +809,9 @@ let suite =
         (test_long_name_in_memory `Macos "n");
       Alcotest.test_case "a 255-unit name in memory, macOS" `Quick
         (test_long_name_in_memory `Macos "\xe6\x97\xa5");
-      Alcotest.test_case "a 255-byte name on disk" `Quick test_long_name_on_disk;
+      Alcotest.test_case "a 255-byte name on disk" `Quick
+        (Host.posix_only "Windows syncs no file open for reading only"
+           test_long_name_on_disk);
       Alcotest.test_case "names under long directories" `Quick
         test_long_directories;
       Alcotest.test_case "a small value is copied through a small buffer" `Quick
@@ -839,11 +841,14 @@ let suite =
       Alcotest.test_case "append nothing" `Quick test_append_nothing;
       Alcotest.test_case "append refuses a line holding LF" `Quick
         test_append_refuses_lf;
-      Alcotest.test_case "append on posix" `Quick test_append_posix;
+      Alcotest.test_case "append on posix" `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_append_posix);
       Alcotest.test_case "append discards a torn tail" `Quick
         test_append_discards_a_torn_tail;
       Alcotest.test_case "append discards a torn tail on posix" `Quick
-        test_append_discards_a_torn_tail_posix;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_append_discards_a_torn_tail_posix);
       Alcotest.test_case "append nothing retries the barriers" `Quick
         test_append_nothing_retries_the_barriers;
       Alcotest.test_case "append retries a failed parent barrier" `Quick
@@ -851,9 +856,12 @@ let suite =
       Alcotest.test_case "posix needs no registration" `Quick
         test_posix_needs_no_registration;
       Alcotest.test_case "published mode ignores the umask" `Quick
-        test_publish_honours_perm_under_umask;
+        (Host.posix_only "Windows has no umask"
+           test_publish_honours_perm_under_umask);
       Alcotest.test_case "unissuable barrier raises" `Quick
-        test_unissuable_barrier_raises;
+        (Host.posix_only
+           "eio_windows syncs no directory, so it finds none missing"
+           test_unissuable_barrier_raises);
       Alcotest.test_case "failed save cleans temporary" `Quick
         test_failed_save_cleans_temporary;
       Alcotest.test_case "publish with a remote temporary" `Quick

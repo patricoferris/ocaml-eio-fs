@@ -8,5 +8,6 @@
   eio-fs
   eio-fs.mem
   eio-fs.chaos
+  posix
   alcotest
   fmt))

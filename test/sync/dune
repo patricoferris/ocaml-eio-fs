@@ -11,6 +11,7 @@
   eio_fs_sync
   cstruct
   optint
+  posix
   alcotest
   fmt
   unix))

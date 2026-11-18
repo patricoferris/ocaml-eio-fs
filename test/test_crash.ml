@@ -1647,19 +1647,29 @@ let suite =
       Alcotest.test_case "crash: a bare descriptor's write is not journalled"
         `Quick test_crash_omits_a_write_through_a_bare_descriptor;
       Alcotest.test_case "crash: a bare descriptor's barrier is not the model's"
-        `Quick test_crash_ignores_a_barrier_through_a_bare_descriptor;
+        `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_ignores_a_barrier_through_a_bare_descriptor);
       Alcotest.test_case "crash: an entry planted by name is dropped" `Quick
-        test_crash_drops_an_entry_planted_by_native_name;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_drops_an_entry_planted_by_native_name);
       Alcotest.test_case "crash: kept, an entry planted by name is in the image"
-        `Quick test_crash_keeps_an_entry_planted_by_native_name;
+        `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_keeps_an_entry_planted_by_native_name);
       Alcotest.test_case "crash: kept, a barrier on a child's directory" `Quick
-        test_crash_kept_barrier_on_a_childs_directory;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_kept_barrier_on_a_childs_directory);
       Alcotest.test_case "crash: kept, a lost rename over a child's file" `Quick
-        test_crash_kept_rename_over_a_childs_file_lost;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_kept_rename_over_a_childs_file_lost);
       Alcotest.test_case "crash: a public controller keeps a child's entry"
-        `Quick test_crash_public_controller_keeps_a_childs_entry;
+        `Quick
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_public_controller_keeps_a_childs_entry);
       Alcotest.test_case "a cut spares a new file's identity" `Quick
-        test_crash_cut_spares_a_new_file;
+        (Host.posix_only "eio_windows 1.7 has no positioned read"
+           test_crash_cut_spares_a_new_file);
       Alcotest.test_case "crash: a snapshot reads a file being rewritten" `Quick
         test_crash_snapshot_reads_a_file_being_rewritten;
     ] )
