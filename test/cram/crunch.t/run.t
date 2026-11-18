@@ -23,7 +23,7 @@ permissions, symbolic links and empty directories.
         File { path = "/static/site.css"; perm = 0o644; contents = "body {}\n" };
       ]
   
-  let load ?clock ?os () = Eio_fs.Crunch.load ?clock ?os entries
+  let load ?os ?clock () = Eio_fs.Crunch.load ?os ?clock entries
 
 
 
@@ -40,11 +40,11 @@ output.
   (** The embedded file tree. *)
   
   val load :
-    ?clock:_ Eio.Time.clock ->
     ?os:[< `Linux | `Macos ] ->
+    ?clock:_ Eio.Time.clock ->
     unit ->
     [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-  (** [load ~clock ~os ()] is the root of a new in-memory filesystem holding
+  (** [load ~os ~clock ()] is the root of a new in-memory filesystem holding
       {!entries}, as {!Eio_fs.Crunch.load} makes it. *)
 
 

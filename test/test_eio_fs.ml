@@ -516,7 +516,7 @@ module Crunch = struct
        \"x\\\"y\\nz\\000\" };\n\
       \      Symlink { path = \"/l\"; target = \"a b\" };\n\
       \    ]\n\n\
-       let load ?clock ?os () = Eio_fs.Crunch.load ?clock ?os entries\n"
+       let load ?os ?clock () = Eio_fs.Crunch.load ?os ?clock entries\n"
     in
     Alcotest.(check string)
       "source" expected
@@ -528,11 +528,11 @@ module Crunch = struct
        val entries : Eio_fs.Crunch.t\n\
        (** The embedded file tree. *)\n\n\
        val load :\n\
-      \  ?clock:_ Eio.Time.clock ->\n\
       \  ?os:[< `Linux | `Macos ] ->\n\
+      \  ?clock:_ Eio.Time.clock ->\n\
       \  unit ->\n\
       \  [ `Close | Eio.Fs.dir_ty ] Eio.Path.t\n\
-       (** [load ~clock ~os ()] is the root of a new in-memory filesystem \
+       (** [load ~os ~clock ()] is the root of a new in-memory filesystem \
        holding\n\
       \    {!entries}, as {!Eio_fs.Crunch.load} makes it. *)\n"
     in
