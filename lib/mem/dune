@@ -7,7 +7,7 @@
 (library
  (name eio_fs_mem_core)
  (package eio-fs)
- (modules extents low_level memfs image)
+ (modules extents name file_node low_level memfs image)
  (libraries
   hermetic
   eio

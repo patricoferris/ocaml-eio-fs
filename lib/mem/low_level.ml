@@ -146,73 +146,6 @@ module Names = Map.Make (String)
 
 type os = [ `Linux | `Macos | `Windows ]
 
-(* How [os] compares names. Linux compares bytes. APFS's default volume on
-   macOS compares a name by its key: decomposed (NFD), case-folded, decomposed
-   again, Unicode's canonical caseless match; it keeps the spelling a name
-   was made with. A name that is not UTF-8, which APFS never stores, is its
-   own key. *)
-module Name = struct
-  let nfd us =
-    let n = Uunf.create `NFD in
-    let out = ref [] in
-    let rec add v =
-      match Uunf.add n v with
-      | `Uchar u ->
-          out := u :: !out;
-          add `Await
-      | `Await | `End -> ()
-    in
-    List.iter (fun u -> add (`Uchar u)) us;
-    add `End;
-    List.rev !out
-
-  let uchars s =
-    let rec go i acc =
-      if i >= String.length s then List.rev acc
-      else
-        let d = String.get_utf_8_uchar s i in
-        go (i + Uchar.utf_decode_length d) (Uchar.utf_decode_uchar d :: acc)
-    in
-    go 0 []
-
-  (* NTFS's upcase table: each character's simple uppercase. *)
-  let upper u =
-    match Uucp.Case.Map.to_upper u with
-    | `Uchars [ u' ] -> u'
-    | `Self | `Uchars _ -> u
-
-  let key (os : os) name =
-    match os with
-    | `Linux -> name
-    | `Windows ->
-        let b = Buffer.create (String.length name) in
-        List.iter (fun u -> Buffer.add_utf_8_uchar b (upper u)) (uchars name);
-        Buffer.contents b
-    | `Macos when not (String.is_valid_utf_8 name) -> name
-    | `Macos ->
-        let folded =
-          List.concat_map
-            (fun u ->
-              match Uucp.Case.Fold.fold u with
-              | `Self -> [ u ]
-              | `Uchars us -> us)
-            (nfd (uchars name))
-        in
-        let b = Buffer.create (String.length name) in
-        List.iter (Buffer.add_utf_8_uchar b) (nfd folded);
-        Buffer.contents b
-
-  (* NAME_MAX: 255 bytes on Linux, 255 UTF-16 code units on APFS and NTFS. *)
-  let too_long (os : os) name =
-    match os with
-    | (`Macos | `Windows) when String.is_valid_utf_8 name ->
-        List.fold_left
-          (fun n u -> n + (Uchar.utf_16_byte_length u / 2))
-          0 (uchars name)
-        > 255
-    | `Linux | `Macos | `Windows -> String.length name > 255
-end
-
 let name_key = Name.key
 
 module Dir_node = struct
@@ -255,96 +188,7 @@ module Symlink = struct
   let v ~link_to stat = { stat; link_to; to_dir = false }
 end
 
-module File = struct
-  (* [Literal] aliases an immutable string (an embedded asset) and is turned
-     into an owned [Buffer] by the first write, so embedding a file costs no
-     copy until someone mutates it. A [Buffer] is at least as long as the file,
-     whose length is the stat's size, and grows by doubling, so a run of writes
-     costs linear time. *)
-  type contents = Literal of string | Buffer of Cstruct.t
-
-  (* [held] is the byte ranges a write covered: the rest of the file is a
-     hole. *)
-  type t = { stat : Eio.File.Stat.t; contents : contents; held : Extents.t }
-
-  let v ~stat = { stat; contents = Buffer Cstruct.empty; held = Extents.empty }
-
-  let literal ~stat contents =
-    let n = String.length contents in
-    { stat; contents = Literal contents; held = Extents.(add 0 n empty) }
-
-  let size f = Optint.Int63.to_int f.stat.size
-
-  (* The 512-byte blocks of the 4096-byte pages a write put bytes in, as
-     tmpfs counts them: a hole holds none. *)
-  let blocks f = Int64.of_int (Extents.pages f.held * (4096 / 512))
-
-  let blit t ~src_off dst ~dst_off ~len =
-    match t with
-    | Literal s -> Cstruct.blit_from_string s src_off dst dst_off len
-    | Buffer b -> Cstruct.blit b src_off dst dst_off len
-
-  (* The largest file, 4 GiB, or [max_int] where an [int] cannot hold it:
-     the bytes live in memory, holes included. *)
-  let max_size = if Sys.int_size > 33 then 1 lsl 32 else max_int
-
-  (* A buffer holding [f]'s bytes with room for [need], and every byte from
-     [f]'s size to [need] zero: a truncation leaves stale bytes past the end. *)
-  let reserve f need =
-    let size = size f in
-    let buf =
-      match f.contents with
-      | Buffer b when Cstruct.length b >= need -> b
-      | contents ->
-          let cap =
-            match contents with Buffer b -> Cstruct.length b | Literal _ -> 0
-          in
-          let b = Cstruct.create (max need (min max_size (2 * cap))) in
-          blit contents ~src_off:0 b ~dst_off:0 ~len:size;
-          b
-    in
-    if need > size then Cstruct.memset (Cstruct.sub buf size (need - size)) 0;
-    buf
-
-  (* EFBIG past [max_size], checked without overflowing. *)
-  let check_size ~off ~len =
-    if off > max_size || len > max_size - off then
-      raise (Eio.Fs.err Eio.Fs.File_too_large)
-
-  (* [f] with [src] written at [off]. *)
-  let write f ~off src =
-    let len = Cstruct.length src in
-    check_size ~off ~len;
-    let buf = reserve f (off + len) in
-    Cstruct.blit src 0 buf off len;
-    let size = Optint.Int63.of_int (max (size f) (off + len)) in
-    {
-      stat = { f.stat with size };
-      contents = Buffer buf;
-      held = Extents.add off (off + len) f.held;
-    }
-
-  (* [f] cut or zero-extended to [n] bytes. *)
-  (* A buffer cut below a quarter of its capacity is reallocated, so a file
-     emptied gives its memory back. *)
-  let truncate f n =
-    check_size ~off:n ~len:0;
-    let contents =
-      match f.contents with
-      | Buffer b when n <= size f && n < Cstruct.length b / 4 ->
-          let small = Cstruct.create n in
-          Cstruct.blit b 0 small 0 n;
-          Buffer small
-      | contents when n <= size f -> contents
-      | _ -> Buffer (reserve f n)
-    in
-    {
-      stat = { f.stat with size = Optint.Int63.of_int n };
-      contents;
-      held = Extents.cut n f.held;
-    }
-end
-
+module File = File_node
 module Fd_table = Map.Make (Num)
 
 (* What the tree holds. *)
@@ -1790,6 +1634,38 @@ let drive tree r =
   | d :: _ -> String.uppercase_ascii d
   | [] -> ""
 
+(* eio_windows refuses a directory over a file, a file over a directory,
+   and a directory over one that is not empty. *)
+let check_rename_kinds_windows ~old_res ~dst new_path =
+  match (!old_res, Option.map ( ! ) dst) with
+  | Resource.Dir _, Some (Resource.File _ | Symlink _) ->
+      Error.directory_name new_path
+  | (File _ | Symlink _), Some (Resource.Dir _) ->
+      Error.permission_denied new_path
+  | Resource.Dir _, Some (Resource.Dir d) when not (Dir_node.is_empty d) ->
+      Error.err ("rename: directory not empty: " ^ new_path)
+  | _ -> ()
+
+(* eio_windows refuses to move what a handle holds open, a directory below
+   itself, and anything over an entry held open or above the source. *)
+let check_rename_windows ~fs ~admin ~old_res ~ino ~old_parent ~new_parent ~dst
+    ~old_path new_path =
+  let above (d : resource ref) =
+    match !d with
+    | Resource.Dir dd -> Filesystem.within fs.tree old_parent dd.stat.ino
+    | _ -> false
+  in
+  let held r = (not admin) && held_open fs r in
+  if held old_res then Error.permission_denied old_path;
+  (match !old_res with
+  | Resource.Dir _ when Filesystem.within fs.tree new_parent ino ->
+      Error.permission_denied new_path
+  | _ -> ());
+  (match dst with
+  | Some d when above d || held d -> Error.permission_denied new_path
+  | _ -> ());
+  check_rename_kinds_windows ~old_res ~dst new_path
+
 (* A rename as eio_windows makes it, FILE_RENAME_FLAG_POSIX_SEMANTICS
    (eio#934): it replaces a file or an empty directory, but refuses to move
    a file over a directory, to move anything a handle holds open, or below
@@ -1830,28 +1706,8 @@ let rename_windows ~replace dir_fd old_path new_dir new_path =
       if (not replace) && Option.is_some existing then
         Error.already_exists new_path;
       let dst = Option.bind existing (fun i -> Entries.find_opt i tree) in
-      let above (d : resource ref) =
-        match !d with
-        | Resource.Dir dd -> Filesystem.within tree old_parent dd.stat.ino
-        | _ -> false
-      in
-      let held r = (not dir_fd.admin) && held_open fs r in
-      if held old_res then Error.permission_denied old_path;
-      (match !old_res with
-      | Resource.Dir _ when Filesystem.within tree new_parent ino ->
-          Error.permission_denied new_path
-      | _ -> ());
-      (match dst with
-      | Some d when above d || held d -> Error.permission_denied new_path
-      | _ -> ());
-      (match (!old_res, Option.map ( ! ) dst) with
-      | Resource.Dir _, Some (Resource.File _ | Symlink _) ->
-          Error.directory_name new_path
-      | (File _ | Symlink _), Some (Resource.Dir _) ->
-          Error.permission_denied new_path
-      | Resource.Dir _, Some (Resource.Dir d) when not (Dir_node.is_empty d) ->
-          Error.err ("rename: directory not empty: " ^ new_path)
-      | _ -> ());
+      check_rename_windows ~fs ~admin:dir_fd.admin ~old_res ~ino ~old_parent
+        ~new_parent ~dst ~old_path new_path;
       move_entry os ino ~old_parent ~old_name old_path ~new_parent ~new_name
         new_path;
       reparent old_res ~new_parent;
