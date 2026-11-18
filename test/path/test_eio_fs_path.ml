@@ -1,4 +1,4 @@
-module P = Eio_fs_path
+module P = Eio_fs.Path
 
 let refusal =
   Alcotest.testable

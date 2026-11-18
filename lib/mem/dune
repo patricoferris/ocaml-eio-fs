@@ -2,7 +2,7 @@
  (name eio_fs_mem)
  (public_name eio-fs.mem)
  (modules eio_fs_mem)
- (libraries hermetic eio eio-fs.path eio_fs_mem_core fmt))
+ (libraries hermetic eio eio_fs_path eio_fs_mem_core fmt))
 
 (library
  (name eio_fs_mem_core)
@@ -12,7 +12,7 @@
   hermetic
   eio
   eio.utils
-  eio-fs.path
+  eio_fs_path
   eio-fs.sync
   eio_fs_internal
   fmt

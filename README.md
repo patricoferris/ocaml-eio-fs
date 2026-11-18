@@ -272,7 +272,8 @@ across power cuts, or about on-disk layout.
   directory tree its `eio-fs-crunch` binary embeds in an executable, `Tree`
   walks, measures, copies and formats a tree on any Eio backend, and
   `Nofollow` reads a file, bounded, refusing a symbolic link at the final
-  path component.
+  path component, and `Path` works on path strings, without touching a
+  filesystem.
 - `eio-fs.mem` has `Eio_fs_mem`, the in-memory filesystem.
   [`eio_fs_mem.mli`](lib/mem/eio_fs_mem.mli) says how closely it follows
   each kernel.
@@ -284,7 +285,6 @@ across power cuts, or about on-disk layout.
   while on macOS only `Eio_fs_unix.barrier` goes through the drive's cache.
 - `eio-fs.unix` binds POSIX calls that Eio and `Unix` lack, such as file
   locks and extended attributes.
-- `eio-fs.path` works on path strings, without touching a filesystem.
 
 Each library documents itself in its `.mli`, under [`lib/`](lib/).
 
@@ -315,5 +315,5 @@ model of POSIX. The litmus tests of the power cut port the crash models of
 ## Licence
 
 ISC, see [LICENSE.md](LICENSE.md). The in-memory filesystem started as Patrick
-Ferris's [eio_mem](https://git.sirref.org/eio_mem), and `eio-fs.path` adapts
+Ferris's [eio_mem](https://git.sirref.org/eio_mem), and `Eio_fs.Path` adapts
 its modification of [fpath](https://github.com/dbuenzli/fpath).

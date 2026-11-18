@@ -15,7 +15,7 @@
   eio
   eio.unix
   eio-fs
-  eio-fs.path
+  eio_fs_path
   eio-fs.sync
   eio_fs_internal
   cstruct

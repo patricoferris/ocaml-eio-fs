@@ -21,7 +21,7 @@
   eio.utils
   eio-chaos
   eio-fs.mem
-  eio-fs.path
+  eio_fs_path
   eio-fs.sync
   eio_fs_internal
   eio_fs_mem_core

@@ -1,4 +1,4 @@
 (library
  (name eio_fs_internal)
  (package eio-fs)
- (libraries hermetic eio eio-fs.path cstruct optint))
+ (libraries hermetic eio eio_fs_path cstruct optint))

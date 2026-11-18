@@ -1,4 +1,4 @@
 (test
  (name test)
  (package eio-fs)
- (libraries eio-fs.path alcotest fmt))
+ (libraries eio-fs alcotest fmt))
