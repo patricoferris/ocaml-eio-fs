@@ -143,35 +143,31 @@ let name = "fs"
 let noun = "filesystem operation"
 let indeterminate _ = false
 
-let pp_op ppf (op : Eio_chaos.Op.t) =
-  match op.kind with
-  | "read" | "write" ->
-      Fmt.pf ppf "%s %s@%d+%d" op.kind op.target op.offset op.length
-  | "truncate" -> Fmt.pf ppf "truncate %s to %d" op.target op.offset
-  | "change" when op.detail <> "" ->
-      Fmt.pf ppf "rename %s to %s" op.target op.detail
-  | k -> Fmt.pf ppf "%s %s" k op.target
+let pp_op ppf op =
+  let module O = Eio_chaos.Op in
+  match O.kind op with
+  | ("read" | "write") as k ->
+      Fmt.pf ppf "%s %s@%d+%d" k (O.target op) (O.offset op) (O.length op)
+  | "truncate" -> Fmt.pf ppf "truncate %s to %d" (O.target op) (O.offset op)
+  | "change" when O.detail op <> "" ->
+      Fmt.pf ppf "rename %s to %s" (O.target op) (O.detail op)
+  | k -> Fmt.pf ppf "%s %s" k (O.target op)
 
-let generic (op : Op.t) : Eio_chaos.Op.t =
-  {
-    device = name;
-    kind = Op.kind_name op.kind;
-    target = op.path;
-    instance = "";
-    offset = op.offset;
-    length = op.length;
-    detail = Option.value ~default:"" op.dest;
-    structure =
-      (match op.kind with
-      | `Read | `Write -> Thin
-      | `Sync -> After "write"
-      | _ -> Every);
-    changes =
-      (match op.kind with
-      | `Write | `Truncate | `Change -> Always
-      | `Open_write | `Sync -> Maybe
-      | _ -> Never);
-  }
+let generic (op : Op.t) =
+  let structure : Eio_chaos.Op.structure =
+    match op.kind with
+    | `Read | `Write -> Thin
+    | `Sync -> After "write"
+    | _ -> Every
+  in
+  let changes : Eio_chaos.Op.changes =
+    match op.kind with
+    | `Write | `Truncate | `Change -> Always
+    | `Open_write | `Sync -> Maybe
+    | _ -> Never
+  in
+  Eio_chaos.Op.v ~offset:op.offset ~length:op.length ?detail:op.dest ~structure
+    ~device:name ~kind:(Op.kind_name op.kind) ~changes op.path
 
 let base t = Option.get t.base
 let crashed t = match t.ctl with Some c -> Crash.is_crashed c | None -> false
