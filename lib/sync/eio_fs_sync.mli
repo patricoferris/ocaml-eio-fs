@@ -129,8 +129,9 @@ val mkdirs :
   perm:Eio.File.Unix_perm.t ->
   _ Eio.Path.t ->
   unit
-(** [mkdirs ~exists_ok ~barrier ~perm p] creates [p] and its missing ancestors
-    with mode [perm] and issues [barrier]'s directory barrier (defaults to
+(** [mkdirs ~exists_ok ~barrier ~perm p] is like {!Eio.Path.mkdirs} but makes
+    each directory durable: it creates [p] and its missing ancestors with mode
+    [perm] and issues [barrier]'s directory barrier (defaults to
     {!Barrier.portable}) on the parent of each, existing ones included, parent
     first: a writer whose barrier failed may have left an existing directory
     visible but not durable. With [exists_ok] (defaults to [false]) [p] may

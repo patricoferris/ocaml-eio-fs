@@ -152,14 +152,15 @@ type removed = {
 (** The type for what {!remove_tree} did. *)
 
 val remove_tree : ?grant:bool -> ?last:string -> _ Eio.Path.t -> removed
-(** [remove_tree path] removes [path] and, when it is a directory, everything
-    under it, deepest first, each entry reached through [path]'s own directory
-    capability ({!Batch}): a symbolic link is removed and never followed. It
-    costs a stat and an unlink per entry and a listing per directory, in hops
-    per directory: a directory's entries are stated in one and unlinked in the
-    next, whatever they number, and the hops of different directories run at
-    once, four at a time. A cancellation ends it at the next hop, so none
-    outlasts one directory's entries.
+(** [remove_tree path] is like {!Eio.Path.rmtree} but says what it removed and
+    what it refused, and goes on past a refusal. It removes [path] and, when it
+    is a directory, everything under it, deepest first, each entry reached
+    through [path]'s own directory capability ({!Batch}): a symbolic link is
+    removed and never followed. It costs a stat and an unlink per entry and a
+    listing per directory, in hops per directory: a directory's entries are
+    stated in one and unlinked in the next, whatever they number, and the hops
+    of different directories run at once, four at a time. A cancellation ends it
+    at the next hop, so none outlasts one directory's entries.
 
     With [~grant:true] (defaults to [false]) each directory is granted its
     owner's read, write and search before it is read, as
