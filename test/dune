@@ -12,16 +12,9 @@
   eio-fs.chaos
   eio-fs.sync
   eio_fs_internal
-  stat_workload
-  provenance
   chaos_helpers
   unix
   alcotest
   fmt
   cstruct
-  optint)
- (deps
-  (source_tree stat/traces)
-  stat/scripts/generate.sh
-  stat/scripts/record.ml
-  stat/workload/stat_workload.ml))
+  optint))

@@ -1,5 +1,0 @@
-(rule
- (alias regen-traces)
- (deps
-  (alias traces/regen))
- (action (progn)))

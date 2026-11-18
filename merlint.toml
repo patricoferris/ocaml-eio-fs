@@ -27,6 +27,12 @@ exclude = ["E330"]
 files = ["test/interop/kernel/*"]
 exclude = ["E825", "E803"]
 
+# The stat trace is an unquoted table the recorder writes, read with
+# String.split_on_char, as for the kernel's trace.
+[[rules]]
+files = ["test/interop/stat/*"]
+exclude = ["E825"]
+
 # A setup's I_dir, I_file and I_link stand beside a node's Dir, File and Link
 # in the same module: bare, the later type would take the names.
 [[rules]]

@@ -1,0 +1,23 @@
+(test
+ (name test)
+ (package eio-fs)
+ (libraries
+  provenance
+  stat_workload
+  eio
+  eio.mock
+  eio-fs
+  eio-fs.mem
+  alcotest
+  fmt)
+ (deps
+  (source_tree traces)
+  scripts/generate.sh
+  scripts/record.ml
+  workload/stat_workload.ml))
+
+(rule
+ (alias regen-traces)
+ (deps
+  (alias traces/regen))
+ (action (progn)))

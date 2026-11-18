@@ -1,9 +1,9 @@
 #!/bin/bash
-# Records the stat answers of test/stat/workload through eio_posix on Linux, in
+# Records the stat answers of test/interop/stat/workload through eio_posix on Linux, in
 # Docker, in the image pinned below: on a tmpfs, and on an ext4 image the
 # container loop-mounts, which takes --privileged. The image has 4096-byte
 # blocks, mke2fs's choice for a disk rather than for a small image. The trace
-# starts with the "# key: value" lines test/stat/README.md lists.
+# starts with the "# key: value" lines test/interop/stat/README.md lists.
 #   generate.sh OUT
 set -euo pipefail
 command -v docker >/dev/null || { echo "docker not on PATH" >&2; exit 1; }
@@ -16,7 +16,7 @@ pkg=("$switch"/.opam-switch/packages/eio_posix.*)
 eio="${pkg[0]##*/eio_posix.}"
 image="ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460"
 
-scripts=(test/stat/scripts test/stat/workload)
+scripts=(test/interop/stat/scripts test/interop/stat/workload)
 revision="$(git -C "$src" log -1 --format=%H -- "${scripts[@]}")"
 [ -z "$(git -C "$src" status --porcelain -- "${scripts[@]}")" ] ||
   revision="$revision with uncommitted changes"
@@ -27,7 +27,7 @@ trap 'rm -rf "$work"' EXIT
 # Only the recorder is built, from the two directories it needs.
 docker run --rm --name fs-stat-rec --privileged --user opam \
   --tmpfs /work/tmpfs:exec,mode=1777 \
-  -v "$src/test/stat:/stat:ro" -v "$work:/out" "$image" bash -euc "
+  -v "$src/test/interop/stat:/stat:ro" -v "$work:/out" "$image" bash -euc "
     sudo apt-get update -qq >/dev/null
     sudo apt-get install -y -qq e2fsprogs >/dev/null
     truncate -s 64M /tmp/ext4.img
@@ -43,7 +43,7 @@ docker run --rm --name fs-stat-rec --privileged --user opam \
     opam exec -- dune build ./scripts/record.exe
     ./_build/default/scripts/record.exe tmpfs=/work/tmpfs ext4=/work/ext4 \\
       >/out/linux.csv
-    # test/test_memfs.ml checks this digest.
+    # test/interop/stat/test_stat.ml checks this digest.
     digest=\$(cat scripts/record.ml workload/stat_workload.ml | md5sum | cut -d' ' -f1)
     mnt() { awk -v m=\"\$1\" '\$2 == m { print \$3 \", \" \$4 }' /proc/mounts; }
     mkfs=\$(/sbin/mkfs.ext4 -V 2>&1 | head -1)
@@ -60,7 +60,7 @@ docker run --rm --name fs-stat-rec --privileged --user opam \
 
 {
   printf '# %s: %s\n' \
-    script test/stat/scripts/generate.sh \
+    script test/interop/stat/scripts/generate.sh \
     "script revision" "$revision" \
     recorded "$(date -u +%Y-%m-%d)"
   cat "$work/linux.meta" "$work/linux.csv"

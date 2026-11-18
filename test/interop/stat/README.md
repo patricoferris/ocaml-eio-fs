@@ -2,14 +2,14 @@
 
 `traces/linux.csv` holds what Linux answers to each workload of
 `workload/stat_workload.ml`: which times move at each operation, and the link
-and block counts of a small tree. `../test_memfs.ml` runs every workload on
-the in-memory filesystem and compares.
+and block counts of a small tree. `test_stat.ml` runs every workload on the
+in-memory filesystem and compares.
 
 ## Regenerate
 
 With Docker running:
 
-    REGEN=1 dune build @test/stat/regen-traces
+    REGEN=1 dune build @test/interop/stat/regen-traces
 
 `scripts/generate.sh` records in the Docker image it pins by digest, through
 the eio_posix of the opam switch dune builds in, as an ordinary user: once on
@@ -36,7 +36,7 @@ The trace starts with `# key: value` lines, written by `generate.sh`:
 | `linux eio_posix` | the eio_posix version the recorder was built with |
 | `tmpfs`, `ext4` | the type and mount options; for ext4, how it was made |
 
-The `stat trace` test fails when a line is missing or not measured, when the
-digest is not that of the current `record.ml` and `stat_workload.ml`, or when
-the image is not the one `generate.sh` pins. A failing check means
-re-recording; never edit a value by hand.
+The `trace names its provenance` test fails when a line is missing or not
+measured, when the digest is not that of the current `record.ml` and
+`stat_workload.ml`, or when the image is not the one `generate.sh` pins. A
+failing check means re-recording; never edit a value by hand.
