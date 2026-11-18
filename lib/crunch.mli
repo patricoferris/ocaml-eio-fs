@@ -17,7 +17,10 @@
     v} *)
 
 (** The type for nodes of an embedded file tree. Paths are absolute within the
-    image and use ["/"] as separator. *)
+    image and use ["/"] as separator. A tree is a list of them, every directory
+    before its children: [eio-fs-crunch] records its directory as
+    [Dir { path = "/"; _ }], then the entries below it in depth-first order,
+    names sorted, a symbolic link without following it. *)
 type entry =
   | Dir of { path : string; perm : int }
       (** A directory at [path] with mode [perm]. *)
@@ -26,13 +29,7 @@ type entry =
   | Symlink of { path : string; target : string }
       (** A symbolic link at [path] holding [target], never resolved. *)
 
-type t = entry list
-(** The type for embedded file trees. Every directory precedes its children.
-    [eio-fs-crunch] records its directory as [Dir { path = "/"; _ }], then the
-    entries below it in depth-first order, names sorted, a symbolic link without
-    following it. *)
-
-val find : string -> t -> string option
+val find : string -> entry list -> string option
 (** [find path entries] is [Some contents] for the first {!File} at [path] in
     [entries], and [None] if there is none. [path] is absolute within the image,
     as [eio-fs-crunch] records it, and compared as a string; a symbolic link is
@@ -42,7 +39,7 @@ val find : string -> t -> string option
 val load :
   ?os:[< `Linux | `Macos ] ->
   ?clock:_ Eio.Time.clock ->
-  t ->
+  entry list ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
 (** [load ~os ~clock entries] is the root of a new in-memory filesystem that
     answers as [os] (defaults to [`Linux]) does, holding [entries], with their
@@ -56,12 +53,12 @@ val load :
       missing, and with {!Eio.Fs.Already_exists} if its path is already taken.
 *)
 
-val source : t Fmt.t
-(** [source] formats a standalone OCaml module embedding the entries. The
-    generated module exposes [entries : Eio_fs.Crunch.t] and
-    [load ?os ?clock ()], which is {!load} of [entries] with the same optional
-    arguments. *)
+val pp_ml : entry list Fmt.t
+(** [pp_ml] formats the [.ml] file of a standalone OCaml module embedding the
+    entries. The generated module exposes [entries : Eio_fs.Crunch.entry list]
+    and [load ?os ?clock ()], which is {!load} of [entries] with the same
+    optional arguments. *)
 
 val interface : string
-(** [interface] is the [.mli] file matching what {!source} prints: it declares
+(** [interface] is the [.mli] file matching what {!pp_ml} prints: it declares
     the generated module's entry list and its loading function. *)
