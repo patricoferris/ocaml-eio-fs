@@ -664,7 +664,7 @@ let link_target path =
 
 (* The link is made under a fresh name and removed unless renamed into
    place, so a refusal or a raise leaves only what was there. *)
-let stage_link ~barrier ~expected ~target path =
+let stage_link ~barrier ~replace ~target path =
   let parent, name =
     match Eio.Path.split path with
     | Some pair -> pair
@@ -685,7 +685,7 @@ let stage_link ~barrier ~expected ~target path =
       Barrier.sync_parent barrier stage;
       match link_target path with
       | Error e -> Error e
-      | Ok actual when not (Option.equal String.equal actual expected) ->
+      | Ok actual when not (Option.equal String.equal actual (Some replace)) ->
           Error (`Changed actual)
       | Ok _ ->
           Eio.Cancel.protect (fun () ->
@@ -711,18 +711,19 @@ let link_in_place ~barrier ~target path =
       Ok ()
   | exception Eio.Io (Eio.Fs.E (Already_exists _), _) -> found ()
 
-let publish_link ?(barrier = Barrier.portable) ~expected ~target path =
+let publish_link ?(barrier = Barrier.portable) ?replace ~target path =
   if target = "" || String.contains target '\000' then
     Error (`Invalid "a symbolic link's target is empty or holds a NUL byte")
   else
-    match expected with
+    match replace with
     | None -> link_in_place ~barrier ~target path
-    | Some _ -> (
+    | Some replace -> (
         match link_target path with
         | Error e -> Error e
-        | Ok actual when not (Option.equal String.equal actual expected) ->
+        | Ok actual when not (Option.equal String.equal actual (Some replace))
+          ->
             Error (`Changed actual)
         | Ok (Some actual) when String.equal actual target ->
             Barrier.sync_parent barrier path;
             Ok ()
-        | Ok _ -> stage_link ~barrier ~expected ~target path)
+        | Ok _ -> stage_link ~barrier ~replace ~target path)

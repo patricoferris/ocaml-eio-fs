@@ -359,22 +359,23 @@ module Lock = Lock
 
 val publish_link :
   ?barrier:Barrier.t ->
-  expected:string option ->
+  ?replace:string ->
   target:string ->
   _ Eio.Path.t ->
   (unit, [ `Changed of string option | `Invalid of string ]) result
-(** [publish_link ~barrier ~expected ~target path] makes the entry at [path] a
-    symbolic link holding exactly [target]. The entry must hold what [expected]
-    says, read without following it: [None] is no entry, [Some raw] a symbolic
-    link whose target is the bytes [raw]. Anything else is [`Changed actual],
-    and an entry that is not a symbolic link is [`Invalid]; neither is replaced.
-    With [expected] [None], a link that already holds [target] is left as it is;
-    with [Some raw], only when [raw] is [target].
+(** [publish_link ~barrier ~replace ~target path] makes the entry at [path] a
+    symbolic link holding exactly [target]. Without [replace] there must be no
+    entry at [path]; with [replace raw] it must be a symbolic link whose target
+    is the bytes [raw], which is replaced. The entry is read without following
+    it. Anything else is [`Changed actual], [actual] the target found or [None]
+    for no entry, and an entry that is not a symbolic link is [`Invalid];
+    neither is replaced. Without [replace], a link that already holds [target]
+    is left as it is; with [replace raw], only when [raw] is [target].
 
-    Where no entry is expected, the link is made at [path] by symlink(2), which
-    refuses a name taken meanwhile. Otherwise it is made under a fresh sibling
-    name ({!fresh_name}), the entry at [path] is read again, and the link is
-    renamed over it; rename(2) keeps [path] naming the old entry or the new link
+    Without [replace], the link is made at [path] by symlink(2), which refuses a
+    name taken meanwhile. With it, the link is made under a fresh sibling name
+    ({!fresh_name}), the entry at [path] is read again, and the link is renamed
+    over it; rename(2) keeps [path] naming the old entry or the new link
     throughout. Targets are raw bytes, written and compared as given and never
     resolved or normalised; an empty target or one holding a NUL byte is
     [`Invalid].
@@ -383,8 +384,8 @@ val publish_link :
     {!Barrier.portable}) after the link is made, and before a rename too, so
     after a crash [path] holds the old entry or the new link. A barrier that
     fails after the link is visible raises, with uncertain durability; a later
-    call with the same [target] that expects it issues the barrier again.
-    {!Barrier.none} keeps only the atomicity.
+    call with [replace] and [target] both the new target issues the barrier
+    again. {!Barrier.none} keeps only the atomicity.
 
     One writer replaces a given [path] at a time: a caller with several wraps
     each call in {!Lock.use}, and a writer outside it can still race between the

@@ -354,10 +354,7 @@ let test_barrier_is_used () =
       Eio_fs.Sync.publish_generation ~barrier (fs / "g") (fun dir ->
           Eio.Path.save ~create:(`Exclusive 0o644) (dir / "f") "x"));
   issued "publish_link" ~files:0 ~dirs:1 (fun () ->
-      match
-        Eio_fs.Sync.publish_link ~barrier ~expected:None ~target:"target"
-          (fs / "k")
-      with
+      match Eio_fs.Sync.publish_link ~barrier ~target:"target" (fs / "k") with
       | Ok () -> ()
       | Error _ -> Alcotest.fail "publish_link refused a new link")
 
@@ -787,10 +784,7 @@ let publish_long_name fs unit =
   Alcotest.(check int)
     "two pointers, one generation of one, two of the other" 5
     (List.length (Eio.Path.read_dir (fs / "tree")));
-  (match
-     Eio_fs.Sync.publish_link ~expected:None ~target:"target"
-       (fs / "link" / name)
-   with
+  (match Eio_fs.Sync.publish_link ~target:"target" (fs / "link" / name) with
   | Ok () -> ()
   | Error _ -> Alcotest.fail "the link was refused");
   Alcotest.(check string)
@@ -832,9 +826,7 @@ let test_long_directories () =
   Alcotest.(check string)
     "a published generation" "g"
     (Eio.Path.load (dir / "tree" / "f"));
-  (match
-     Eio_fs.Sync.publish_link ~expected:None ~target:"target" (dir / "link")
-   with
+  (match Eio_fs.Sync.publish_link ~target:"target" (dir / "link") with
   | Ok () -> ()
   | Error _ -> Alcotest.fail "the link was refused");
   Eio.Path.mkdir ~perm:0o755 (dir / "long");
@@ -934,8 +926,8 @@ module Links = struct
     Eio_mock.Backend.run @@ fun () ->
     Eio_fs_mem.run @@ fun env -> test env#fs
 
-  let publish fs ?(barrier = Eio_fs.Sync.Barrier.none) expected target =
-    Eio_fs.Sync.publish_link ~barrier ~expected ~target (fs / "portal")
+  let publish fs ?(barrier = Eio_fs.Sync.Barrier.none) replace target =
+    Eio_fs.Sync.publish_link ~barrier ?replace ~target (fs / "portal")
 
   let test_raw () =
     fixture @@ fun fs ->
