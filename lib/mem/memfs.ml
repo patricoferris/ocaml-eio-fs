@@ -213,7 +213,7 @@ let fs ?(user = Low_level.User.root) t =
 let cwd ?(user = Low_level.User.root) t =
   dir ~label:"cwd" ~path:"." { at = Cwd t; user }
 
-let v ?clock ?(user = Low_level.User.root) ?os () =
+let v ?os ?(user = Low_level.User.root) ?clock () =
   (fs ~user (Low_level.v ?clock ~owner:user ?os ()), "/")
 
 (* A wrapper is rebuilt over its base as [user]. *)
@@ -273,7 +273,7 @@ let copy_regular fs (stat : Eio.File.Stat.t) v =
 (* The root is followed and must be a directory; the filter is asked about
    it before anything is made, and every entry below it is copied as it is,
    a link kept a link. *)
-let load ?clock ?(filter = fun _ -> true) ?os path =
+let load ?os ?clock ?(filter = fun _ -> true) path =
   let stat = Eio.Path.stat ~follow:true path in
   if stat.kind <> `Directory then
     Low_level.Error.err ("load: not a directory: " ^ snd path);

@@ -8,7 +8,8 @@
     Where Linux and macOS differ, the filesystem follows one, chosen by [?os]:
     [`Linux], the default, or [`Macos]. The choice comes from the argument,
     never from the host, so a test sees the same filesystem on every machine.
-    {!section-macos} lists what [`Macos] changes.
+    {!section-macos} lists what [`Macos] changes. Its answers are those recorded
+    on Linux and macOS, and [Eio_fs_chaos.device] checks them.
 
     An entry's stat carries what Linux gives on tmpfs. Its times come from the
     clock given to {!v}, and stay at [0.] without one; under [Eio_fs_chaos.run]
@@ -118,17 +119,18 @@ val root : user
 (** {1:filesystems Filesystems} *)
 
 val v :
-  ?clock:_ Eio.Time.clock ->
-  ?user:user ->
   ?os:[< `Linux | `Macos ] ->
+  ?user:user ->
+  ?clock:_ Eio.Time.clock ->
   unit ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [v ~clock ~user ~os ()] is the root of a fresh, empty in-memory filesystem
-    whose operations run as [user] (defaults to {!root}), who owns its root
-    directory, and answer as [os] (defaults to [`Linux]) does. Its times are
-    read from [clock]; without one, they stay at [0.]. Closing this capability
-    prevents further operations through its aliases. Directories already opened
-    from it keep their own lifetimes. *)
+(** [v ~os ~user ~clock ()] is the root of a fresh, empty filesystem following
+    the kernel [os] (defaults to [`Linux]), whose operations run as [user]
+    (defaults to {!root}), who owns its root directory. Its times are read from
+    [clock]; without one, they stay at [0.]. Closing the capability ends the
+    filesystem, as the end of [sw] ends a network of [Eio_net_mem.v]: no
+    operation goes through it or its aliases after, and only the directories
+    already opened from it keep their own lifetimes. *)
 
 val as_user : user -> 'a Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
 (** [as_user user path] is [path], an in-memory directory, with its operations
@@ -141,12 +143,12 @@ val as_user : user -> 'a Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
       if [path] is neither an in-memory directory nor such a wrapper. *)
 
 val load :
+  ?os:[< `Linux | `Macos ] ->
   ?clock:_ Eio.Time.clock ->
   ?filter:('a Eio.Path.t -> bool) ->
-  ?os:[< `Linux | `Macos ] ->
   'a Eio.Path.t ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [load ~clock ~filter ~os path] is the root of a new in-memory filesystem
+(** [load ~os ~clock ~filter path] is the root of a new in-memory filesystem
     that answers as [os] (defaults to [`Linux]) does, holding a copy of the
     directory tree at [path], at the same path from its root:
     [load (dir / "a/b")] holds [/a/b]. [path] is followed if it is a symbolic
@@ -171,13 +173,13 @@ type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
     filesystem and current directory. *)
 
 val run :
+  ?os:[< `Linux | `Macos ] ->
+  ?user:user ->
   ?clock:_ Eio.Time.clock ->
   ?cwd:string ->
-  ?user:user ->
-  ?os:[< `Linux | `Macos ] ->
   (stdenv -> 'a) ->
   'a
-(** [run ~clock ~cwd ~user ~os fn] calls [fn] with a new in-memory filesystem in
+(** [run ~os ~user ~clock ~cwd fn] calls [fn] with a new in-memory filesystem in
     place of the host's, that answers as [os] (defaults to [`Linux]) does, whose
     times are read from [clock], as {!v} reads them. Unlike [Eio_main.run], it
     starts no event loop and installs no effect handler: call it inside one,

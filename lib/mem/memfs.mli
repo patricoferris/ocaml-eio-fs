@@ -14,12 +14,12 @@ val cwd :
 (** [cwd ~user t] is access to [t] confined to its current directory. *)
 
 val v :
-  ?clock:_ Eio.Time.clock ->
-  ?user:Low_level.User.t ->
   ?os:[< `Linux | `Macos ] ->
+  ?user:Low_level.User.t ->
+  ?clock:_ Eio.Time.clock ->
   unit ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [v ~clock ~user ~os ()] is the root of a fresh, empty filesystem whose times
+(** [v ~os ~user ~clock ()] is the root of a fresh, empty filesystem whose times
     [clock] gives, that answers as [os] does. *)
 
 val as_user :
@@ -46,10 +46,10 @@ val set_times :
     otherwise. *)
 
 val load :
+  ?os:[< `Linux | `Macos ] ->
   ?clock:_ Eio.Time.clock ->
   ?filter:('a Eio.Path.t -> bool) ->
-  ?os:[< `Linux | `Macos ] ->
   'a Eio.Path.t ->
   [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [load ~clock ~filter ~os path] is a new filesystem holding a copy of the
+(** [load ~os ~clock ~filter path] is a new filesystem holding a copy of the
     tree at [path], that answers as [os] does. *)
