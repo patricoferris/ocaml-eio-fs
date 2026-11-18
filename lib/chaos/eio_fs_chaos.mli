@@ -264,7 +264,7 @@ module Op : sig
     | `Read  (** A read of a file's bytes. *)
     | `Read_dir  (** A listing of a directory's entries. *)
     | `Write  (** A write of a file's bytes. *)
-    | `Truncate  (** A truncation of a file; [file_offset] is its new length. *)
+    | `Truncate  (** A truncation of a file; [offset] is its new length. *)
     | `Sync  (** A sync of a file or of a directory. *)
     | `Change
       (** A change to a directory's entries ([mkdir], [symlink], [unlink],
@@ -285,7 +285,7 @@ module Op : sig
     rank : int;
         (** The operation's place among those of its kind on any path, from [1].
             A check aims its faults by [kind] and [rank]. *)
-    file_offset : int;
+    offset : int;
         (** Where a read or a write starts, a truncation's new length, [0]
             otherwise. *)
     length : int;  (** The bytes a read asks for or a write offers. *)

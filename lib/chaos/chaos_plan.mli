@@ -20,7 +20,7 @@ module Op : sig
     path : string;
     nth : int;
     rank : int;
-    file_offset : int;
+    offset : int;
     length : int;
     dest : string option;
   }

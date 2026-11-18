@@ -18,7 +18,7 @@ module Op = struct
     path : string;
     nth : int;
     rank : int;
-    file_offset : int;
+    offset : int;
     length : int;
     dest : string option;
   }
@@ -37,10 +37,9 @@ module Op = struct
   let pp ppf t =
     match t.kind with
     | `Read | `Write ->
-        Fmt.pf ppf "#%d %s %s@%d+%d" t.index (kind_name t.kind) t.path
-          t.file_offset t.length
-    | `Truncate ->
-        Fmt.pf ppf "#%d truncate %s to %d" t.index t.path t.file_offset
+        Fmt.pf ppf "#%d %s %s@%d+%d" t.index (kind_name t.kind) t.path t.offset
+          t.length
+    | `Truncate -> Fmt.pf ppf "#%d truncate %s to %d" t.index t.path t.offset
     | `Change when Option.is_some t.dest ->
         Fmt.pf ppf "#%d rename %s to %s" t.index t.path (Option.get t.dest)
     | k -> Fmt.pf ppf "#%d %s %s" t.index (kind_name k) t.path
@@ -151,13 +150,11 @@ let spread n l =
    writes whole. Bytes that extend a file tear anywhere. *)
 let tears ~size (op : Op.t) =
   let len = op.length in
-  let over = max 0 (min len (size - op.file_offset)) in
+  let over = max 0 (min len (size - op.offset)) in
   let sector =
     List.filter
       (fun k -> k > 0 && k < over)
-      (List.init
-         ((over / 512) + 2)
-         (fun j -> (512 * j) - (op.file_offset mod 512)))
+      (List.init ((over / 512) + 2) (fun j -> (512 * j) - (op.offset mod 512)))
   in
   let extend =
     if over < len then

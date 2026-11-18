@@ -75,16 +75,7 @@ let next ?(space = false) ?(offset = 0) ?(len = 0) ?dest t kind path =
   let nth = count (kind, Some path) in
   let rank = count (kind, None) in
   let op : Op.t =
-    {
-      index = t.index;
-      kind;
-      path;
-      nth;
-      rank;
-      file_offset = offset;
-      length = len;
-      dest;
-    }
+    { index = t.index; kind; path; nth; rank; offset; length = len; dest }
   in
   match t.hook ~space op with
   | Some f when applies ~space op f -> Some f
