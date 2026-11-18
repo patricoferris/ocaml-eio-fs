@@ -272,7 +272,7 @@ let test_borrowed_root () =
        (Crash.post_crash ctl / "anchor" / "child" / "leaf" / "record"))
 
 let suite =
-  ( "eio_fs_sync",
+  ( "mkdirs",
     [
       Alcotest.test_case "a fresh tree keeps what is published in it" `Quick
         test_a_fresh_tree_keeps_what_is_published_in_it;

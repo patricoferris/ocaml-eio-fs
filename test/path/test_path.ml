@@ -67,7 +67,7 @@ let test_a_canonical_path_is_normal () =
     [ "/a"; "/srv/app/logs"; "/a/..b/c." ]
 
 let suite =
-  ( "eio_fs_path",
+  ( "path",
     [
       Alcotest.test_case "a canonical path is its own spelling" `Quick
         test_a_canonical_path_is_its_own_spelling;

@@ -929,7 +929,7 @@ let test_long_directories () =
     (Filename.dirname (Eio_fs.Sync.fresh_name target))
 
 let suite =
-  ( "eio_fs_sync",
+  ( "sync",
     [
       Alcotest.test_case "a 255-byte name in memory" `Quick
         (test_long_name_in_memory `Linux "n");
