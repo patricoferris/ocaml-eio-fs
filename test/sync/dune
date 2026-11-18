@@ -9,6 +9,7 @@
   eio-fs.mem
   eio-fs.chaos
   eio-fs
+  eio_fs_sync
   eio-fs.unix
   cstruct
   optint
