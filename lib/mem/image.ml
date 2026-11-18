@@ -55,7 +55,9 @@ let scan ?filter ~at root =
     in
     Option.iter (fun e -> entries := (names, e) :: !entries) entry
   in
-  Walk.iter ~follow:true ?filter (fun names p stat -> record names stat p) root;
+  Eio_fs_internal.walk ~follow:true ?filter
+    (fun names p stat -> record names stat p)
+    root;
   (* Names compared one by one, a shorter list first, is depth-first order
      with sorted names. *)
   List.sort (fun (a, _) (b, _) -> List.compare String.compare a b) !entries

@@ -54,44 +54,6 @@ let add a b =
 let empty =
   { allocated_bytes = 0L; apparent_bytes = 0L; files = 0; latest_mtime = 0. }
 
-(* [f] on [path] and its stat, then the entries below it when it is a
-   directory. *)
-let visit f path =
-  let stat = Eio.Path.stat ~follow:false path in
-  f path stat;
-  if stat.kind <> `Directory then []
-  else
-    Eio.Path.read_dir path |> List.rev_map (fun name -> Eio.Path.(path / name))
-
-let batch f paths =
-  List.fold_left (fun next path -> List.rev_append (visit f path) next) [] paths
-
-(* Partition the level first so the number of fibers is bounded structurally;
-   each worker then performs its share sequentially. *)
-let level ~max_fibers f paths =
-  let worker_count = Int.min max_fibers (List.length paths) in
-  let work = Array.make worker_count [] in
-  List.iteri
-    (fun i path ->
-      let worker = i mod worker_count in
-      work.(worker) <- path :: work.(worker))
-    paths;
-  match Array.to_list work with
-  | [ paths ] -> batch f paths
-  | batches -> List.concat (Eio.Fiber.List.map (batch f) batches)
-
-let walk ~fn ~max_fibers f path =
-  if max_fibers <= 0 then
-    Fmt.invalid_arg "%s: max_fibers is %d, must be positive" fn max_fibers;
-  let rec loop = function
-    | [] -> ()
-    | paths -> loop (level ~max_fibers f paths)
-  in
-  loop [ path ]
-
-let iter ?(max_fibers = 32) f path =
-  walk ~fn:"Eio_fs.Tree.iter" ~max_fibers f path
-
 let rec grant_owner p =
   match Eio.Path.stat ~follow:false p with
   | { kind = `Directory; perm; _ } -> (
@@ -110,10 +72,16 @@ let rec revoke_writes p =
   if stat.kind <> `Symbolic_link && stat.perm land 0o222 <> 0 then
     Eio.Path.chmod ~follow:false ~perm:(stat.perm land lnot 0o222) p
 
-let usage ?(max_fibers = 32) path =
+let usage ?max_fibers path =
+  Option.iter
+    (fun n ->
+      if n <= 0 then
+        Fmt.invalid_arg "Eio_fs.Tree.usage: max_fibers is %d, must be positive"
+          n)
+    max_fibers;
   let total = ref empty in
-  walk ~fn:"Eio_fs.Tree.usage" ~max_fibers
-    (fun _ stat -> total := add !total (own stat))
+  Eio_fs_internal.walk ?max_fibers
+    (fun _ _ stat -> total := add !total (own stat))
     path;
   !total
 
@@ -198,7 +166,11 @@ let unshare ~spare path =
   let shared (stat : Eio.File.Stat.t) =
     stat.kind = `Regular_file && Int64.compare stat.nlink 1L > 0
   in
-  match iter (fun f stat -> if shared stat then copy_apart f stat) path with
+  match
+    Eio_fs_internal.walk
+      (fun _ f stat -> if shared stat then copy_apart f stat)
+      path
+  with
   | () -> Ok ()
   | exception Shared why -> Error why
 

@@ -15,9 +15,10 @@ val scan :
     order, names sorted, so every directory precedes its children. A symbolic
     link below [root] is recorded and not followed, and an entry that is neither
     a regular file, a directory nor a symbolic link is not recorded; it is
-    traced with [Eio.traceln]. [filter] is {!Walk.iter}'s: a path it refuses is
-    not recorded, nor anything under it. A regular file is read through an open
-    that does not follow a link, and must be the file its stat found.
+    traced with [Eio.traceln]. [filter] is [Eio_fs_internal.walk]'s: a path it
+    refuses is not recorded, nor anything under it. A regular file is read
+    through an open that does not follow a link, and must be the file its stat
+    found.
 
     @raise Eio.Io
       if [root] is not a directory, if it or an entry under it cannot be read,

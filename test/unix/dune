@@ -12,6 +12,7 @@
   eio-fs.mem
   eio-fs.chaos
   eio-fs.unix
+  eio_fs_internal
   cstruct
   optint
   mtime

@@ -1,9 +1,9 @@
 (** Trees and directories on any {!Eio} backend:
 
-    - walks over the tree under a path, which measure it ({!val-usage}), visit
-      it ({!iter}), read its links ({!links}), change its modes ({!grant_owner},
-      {!revoke_writes}), copy its files with other links apart ({!unshare}) or
-      format it ({!pp_tree});
+    - walks over the tree under a path, which measure it ({!val-usage}), read
+      its links ({!links}), change its modes ({!grant_owner}, {!revoke_writes}),
+      copy its files with other links apart ({!unshare}) or format it
+      ({!pp_tree});
     - the names a directory holds ({!entries}), and the removal of a chain of
       empty directories ({!remove_empty});
     - what a path is called outside the program ({!name}), and whether two paths
@@ -29,22 +29,6 @@ val usage : ?max_fibers:int -> _ Eio.Path.t -> usage
 
     @raise Invalid_argument if [max_fibers] is not positive.
     @raise Eio.Io as a stat or a listing of the walk raises. *)
-
-val iter :
-  ?max_fibers:int ->
-  ('a Eio.Path.t -> Eio.File.Stat.t -> unit) ->
-  'a Eio.Path.t ->
-  unit
-(** [iter ~max_fibers f path] is [f p stat] for [path] and each of its
-    descendants [p], with [stat] its one [Eio.Path.stat ~follow:false]: symbolic
-    links are not followed. A directory's [f] runs before its entries are read.
-    The walk is {!val-usage}'s: breadth-first, at most [max_fibers] workers per
-    level (defaults to [32]).
-
-    Filesystem errors and those [f] raises are propagated, the walk's other
-    workers cancelled.
-
-    @raise Invalid_argument if [max_fibers] is not positive. *)
 
 val grant_owner : _ Eio.Path.t -> unit
 (** [grant_owner p] grants its owner read, write and search on the directory [p]
@@ -105,9 +89,9 @@ val unshare : spare:'a Eio.Path.t -> 'a Eio.Path.t -> (unit, string) result
     more than one link by a copy of itself, so a write to it reaches no other
     link. A copy is made beside [spare], named [spare] with a count appended,
     with the file's permission bits, and renamed over the file. Symbolic links
-    are not followed, as {!iter} does not follow them. It is [Error why] for the
-    first file that cannot be copied apart, [why] naming it and the reason; the
-    files copied before it stay apart.
+    are not followed, as {!val-usage} does not follow them. It is [Error why]
+    for the first file that cannot be copied apart, [why] naming it and the
+    reason; the files copied before it stay apart.
 
     @raise Eio.Io as a stat or a listing of the walk raises. *)
 
