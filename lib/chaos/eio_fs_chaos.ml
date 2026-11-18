@@ -178,6 +178,7 @@ module Disk = struct
 
   let name = "fs"
   let noun = "filesystem operation"
+  let indeterminate _ = false
 
   let pp_op ppf (op : Eio_chaos.Op.t) =
     match op.kind with
@@ -193,6 +194,7 @@ module Disk = struct
       device = name;
       kind = Op.kind_name op.kind;
       target = op.path;
+      instance = "";
       offset = op.file_offset;
       length = op.length;
       detail = Option.value ~default:"" op.dest;
@@ -472,12 +474,20 @@ let ack env file =
 
 let acked env = Ack.acked (get "Eio_fs_chaos.acked" env)
 
-let device ?os ?user dir =
-  let run f =
-    let d = Disk.v () in
-    Eio_chaos.Private.within ?os [ Eio_chaos.quiet (Disk_part.v d) ] f
-  in
-  Device.check ?os ?user ~run dir
+(* The parts a device is built over, and a quiet disk unless one is. *)
+let below under =
+  if List.exists (fun p -> Eio_chaos.Private.name p = Disk.name) under then
+    under
+  else under @ [ Eio_chaos.quiet (disk ()) ]
+
+let device ?os ?user ?(under = []) ?budget ?seed ?replay dir =
+  let parts = below under in
+  let run f = Eio_chaos.Private.within ?os parts f in
+  if replay = None then Device.check ?os ?user ~run dir;
+  if under <> [] then
+    Eio_chaos.Private.run ~name:"Eio_fs_chaos.device" ~args:"dir"
+      ~passes:[ Errors ] ?os ?budget ?seed ?replay parts
+      (Device.program ?os ?user dir)
 
 module Private = struct
   let check_faults ?budget ?seed ?replay ?os ?setup run =

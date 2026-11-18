@@ -145,6 +145,10 @@ val disk : unit -> Eio_chaos.part
 val device :
   ?os:[< `Linux | `Macos ] ->
   ?user:Eio_fs.user ->
+  ?under:Eio_chaos.part list ->
+  ?budget:int ->
+  ?seed:int ->
+  ?replay:string ->
   (sw:Eio.Switch.t -> env -> _ Eio.Path.t) ->
   unit
 (** [device ~os ~user dir] runs each scenario recorded on the kernel of [os]
@@ -209,6 +213,32 @@ val device :
     [device] runs every scenario, whatever the earlier ones answered. In a
     scenario it stops at the first answer that differs, as the later ones depend
     on it. It blocks its caller, as {!run} does.
+
+    {b Over other parts.} A filesystem built over other devices, as a remote
+    filesystem over a network, takes them from its {!type-env}: [under]
+    (defaults to none) are the parts it holds, with a quiet {!disk} as its [fs]
+    unless one of them is a disk. Its scenarios first run as above, each on
+    healthy parts. Then, if [under] is not empty, [device] is {!Eio_chaos.run}
+    of a program that runs every scenario in turn, in one event loop, with
+    [budget], [seed] and [replay] as {!run} takes them, and the failures the
+    parts of [under] allow, but no power cut. It passes iff each run does:
+
+    - until a part fails, every answer is the kernel's;
+    - once one failed ({!Eio_chaos.faulted}), an answer is the kernel's, or an
+      error eio-fs injects, which the failure below may explain: a missing file,
+      a refused access, a read-only or full filesystem, or an input/output
+      error. At the first such error the scenario ends, as the later answers
+      depend on whether the operation took effect, and so does one whose
+      directory cannot be made;
+    - the restart, with no failure, runs every scenario again, each in a new
+      directory, and every answer is the kernel's.
+
+    So a hang fails, an error of another device that leaks, such as
+    [Connection_reset] or [End_of_file], fails, and so does a success that
+    differs from the kernel's, as a short read given as the whole file. A device
+    that turns a harmless failure below into an error of its own passes. A
+    failure report is that of {!run}, named after [device], and its replay line
+    runs that case alone.
 
     @raise Failure
       if an answer differs, with one line for each such scenario: its name, its

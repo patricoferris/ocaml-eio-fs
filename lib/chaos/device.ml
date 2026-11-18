@@ -212,3 +212,71 @@ let check ?os ?user ~run:run_in f =
       (ran - failed) failed left
       (if left > 0 then Fmt.str "; %d that need ~user" left else "")
   end
+
+(* An answer a failure below a device may explain: an error eio-fs injects,
+   as it answers it, a missing file, a refused access, a read-only or full
+   filesystem, or an input/output error. *)
+let contains ~sub s =
+  let n = String.length sub and m = String.length s in
+  let rec go i = i + n <= m && (String.sub s i n = sub || go (i + 1)) in
+  go 0
+
+let injected a =
+  a = "ENOENT" || a = "denied"
+  || String.starts_with ~prefix:"exn Eio.Io" a
+     &&
+     let a = String.lowercase_ascii a in
+     List.exists
+       (fun sub -> contains ~sub a)
+       [
+         "eio ";
+         "enospc";
+         "erofs";
+         "input/output error";
+         "no space left on device";
+         "read-only file system";
+       ]
+
+let program ?os ?user f (env : Eio_chaos.env) =
+  let os : os =
+    match os with Some `Macos -> `Macos | Some `Linux | None -> `Linux
+  in
+  let ids, run =
+    match user with
+    | Some u -> (ids u, fun _ -> true)
+    | None ->
+        ({ K.gid = 0; other_gid = 0 }, fun s -> not (List.mem s needs_user))
+  in
+  let posix = eio_posix_differs os in
+  (* A restart replays every scenario in directories of its own. *)
+  let suffix = if Eio_chaos.Private.restarted env then "r" else "" in
+  List.iteri
+    (fun i (scenario, ops) ->
+      if run scenario then begin
+        let failed_before = Eio_chaos.faulted env#chaos in
+        match
+          Eio.Switch.run @@ fun sw ->
+          let dir = Eio.Path.(f ~sw env / Fmt.str "%d%s" i suffix) in
+          Eio.Path.mkdir ~perm:0o755 dir;
+          K.run ids dir ops
+        with
+        | exception Eio.Io _ when failed_before || Eio_chaos.faulted env#chaos
+          ->
+            ()
+        | got ->
+            let lenient = Eio_chaos.faulted env#chaos in
+            let rec check j = function
+              | [] -> ()
+              | (a : answer) :: rest ->
+                  let g = List.nth got j in
+                  if g = a.want then check (j + 1) rest
+                  else if lenient && injected g then ()
+                  else
+                    failwith
+                      (String.trim
+                         (differs ~posix:(List.mem scenario posix) ~scenario
+                            ~ops ~got j a))
+            in
+            check 0 (answers os scenario ops)
+      end)
+    K.scenarios
