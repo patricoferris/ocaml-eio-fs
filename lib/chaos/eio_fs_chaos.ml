@@ -476,7 +476,7 @@ let get name (env : env) =
   match Disk_part.find env#chaos with
   | Some ({ ack = Some a; _ } : Disk.t) -> a
   | Some _ | None ->
-      Fmt.invalid_arg "%s: env is not that of a run of a check" name
+      Fmt.invalid_arg "%s: env is not that of a run of Eio_fs_chaos.run" name
 
 let ack env file =
   let name = "Eio_fs_chaos.ack" in
