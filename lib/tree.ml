@@ -218,7 +218,7 @@ and pp_child ppf guides branch rule (Node (label, children)) =
   pp_children ppf (guides ^ rule) children
 
 let pp_tree ~depth =
-  let name (_, p) = Low_level.last_component p in
+  let name (_, p) = Eio_fs_internal.last_component p in
   let rec node depth path =
     match Eio.Path.kind ~follow:false path with
     | `Regular_file -> Some (Node (name path, []))

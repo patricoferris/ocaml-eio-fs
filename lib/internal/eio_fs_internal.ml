@@ -73,3 +73,8 @@ let bounded_read ~max_bytes ~validate ~stat ~read =
             returned := true;
             Ok (Cstruct.sub !buffer 0 length)
           end)
+
+let last_component path =
+  match Eio_fs_path.basename path with
+  | "" -> if String.equal path "" then "." else path
+  | base -> base

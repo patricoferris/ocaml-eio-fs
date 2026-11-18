@@ -18,11 +18,6 @@ module Error : sig
       constructor for. *)
 end
 
-val last_component : string -> string
-(** [last_component path] is the last component of [path], or the whole of
-    [path] when it has none: ["/"] is ["/"], [".."] is [".."] and the empty path
-    is ["."]. *)
-
 val name_key : [ `Linux | `Macos ] -> string -> string
 (** [name_key os name] is what [os] compares [name] by: [name] itself on Linux,
     its canonical caseless form on macOS. Two names with one key name one entry.

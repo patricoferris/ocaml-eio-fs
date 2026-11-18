@@ -39,11 +39,6 @@ let () =
   in
   Eio.Exn.Backend.register_pp pp_eio_fs
 
-let last_component path =
-  match Eio_fs_path.basename path with
-  | "" -> if String.equal path "" then "." else path
-  | base -> base
-
 module Error = struct
   let not_found path = raise (Eio.Fs.err (Not_found (Eio_fs path)))
   let already_exists path = raise (Eio.Fs.err (Already_exists (Eio_fs path)))

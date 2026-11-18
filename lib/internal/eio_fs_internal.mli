@@ -72,3 +72,8 @@ val bounded_read :
     function returns or raises. [read] answering [0] or raising [End_of_file]
     ends the file, and what [validate] or [read] raises otherwise is propagated.
 *)
+
+val last_component : string -> string
+(** [last_component path] is the last component of [path], or the whole of
+    [path] when it has none: ["/"] is ["/"], [".."] is [".."] and the empty path
+    is ["."]. *)
