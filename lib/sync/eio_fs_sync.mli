@@ -71,8 +71,10 @@ type (_, _, _) Eio.Resource.pi +=
             stat reports a fixed one. *)
 
 val is_modeless : _ Eio.Resource.t -> bool
-(** [is_modeless res] is what [res] declares through {!Modeless}, and [false]
-    when it declares nothing. *)
+(** [is_modeless res] is what [res] declares through {!Modeless}, and when it
+    declares nothing, whether the host is Windows: there the native backend,
+    eio_windows, keeps no Unix mode (a file's reads [0o666] and a chmod below an
+    opened directory is refused), and it has no way to say so. *)
 
 (** {1:barriers Barrier pairs} *)
 
@@ -181,8 +183,8 @@ val publish :
     [barrier] (defaults to {!Barrier.portable}) issues both barriers;
     {!Barrier.none} keeps only the atomicity. [perm] (defaults to [0o644]) is
     the mode of the temporary, and so of the published file: exactly this,
-    whatever the process umask. A {!Modeless} backend keeps no mode, so there
-    the file is published without one.
+    whatever the process umask. A backend that keeps no mode ({!is_modeless}),
+    Windows' among them, publishes the file without one.
 
     Without [exclusive], [path] is replaced. With it, an existing target is
     refused atomically, through the {!Rename.Exclusive} operation [path]'s

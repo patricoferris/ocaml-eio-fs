@@ -120,14 +120,15 @@ let is_process_local (Eio.Resource.T (v, ops)) =
   | None -> false
 
 (* A backend that stores no modes has nothing a chmod could set; it registers
-   [Modeless]. Silence reads as a backend that keeps the mode it is given. *)
+   [Modeless]. Silence reads as the host's native filesystem: eio_windows
+   keeps no mode and cannot declare it, eio_posix keeps the one given. *)
 type (_, _, _) Eio.Resource.pi +=
   | Modeless : ('t, 't -> bool, [> `Modeless ]) Eio.Resource.pi
 
 let is_modeless (Eio.Resource.T (v, ops)) =
   match Eio.Resource.get_opt ops Modeless with
   | Some modeless -> modeless v
-  | None -> false
+  | None -> Sys.win32
 
 exception Limit_exceeded of { max_bytes : int64; attempted : int64 }
 

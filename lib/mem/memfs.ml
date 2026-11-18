@@ -225,7 +225,7 @@ module Make (P : SYNTAX) = struct
   and Handler : sig
     val v :
       ( Dir.t,
-        [ `Dir | `Close | `Dir_sync | `Process_local ] )
+        [ `Dir | `Close | `Dir_sync | `Process_local | `Modeless ] )
       Eio.Resource.handler
   end = struct
     let rec self =
@@ -252,6 +252,7 @@ module Make (P : SYNTAX) = struct
                  fun t ->
                    ignore (Dir.fd t);
                    true );
+             H (Eio_fs_sync.Modeless, fun t -> Low_level.windows (Dir.fd t));
            ])
 
     let v = Lazy.force self

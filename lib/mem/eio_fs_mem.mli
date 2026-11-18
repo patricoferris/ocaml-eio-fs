@@ -285,8 +285,8 @@ val run :
       [0o666] and a directory's [0o777], its uid and gid [0]. {!Eio.Path.chown}
       raises the error ["not supported"] names, as does {!Eio.Path.chmod} below
       an opened directory, as eio_windows refuses them; through the root a chmod
-      keeps nothing. [Eio_fs.Sync] so fails to publish a file whose mode it
-      would change, as it does on eio_windows.
+      keeps nothing. Its directories declare [Eio_fs.Sync.Modeless], so
+      [Eio_fs.Sync] publishes a file without a chmod, as it does on eio_windows.
     - [Eio.File.pread] and [Eio.File.pwrite] raise the error ["not supported"]
       names, as eio_windows does not implement them.
     - A directory sync does nothing, as eio_windows syncs none.
