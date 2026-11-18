@@ -730,7 +730,7 @@ let take_lease_lock ~shared ~patience ~on_wait ~name file =
    mutex is held by a fiber, the record lock by a process. *)
 let rec acquire ~sw ?lease ?(block : block = `Yes) ?patience
     ?(create : create = `If_missing 0o600) ?contents ?(on_wait = ignore) path =
-  let name = Eio_fs.Tree.name path in
+  let name = Eio_fs_internal.native_name path in
   let steps = ref [] in
   let taken give_back = steps := give_back :: !steps in
   let shared = lease = Some `Shared in
@@ -817,7 +817,7 @@ module Held = struct
     let file, let_go, _ = acquire ~sw ?block ?create ?contents ?on_wait path in
     let t =
       {
-        name = Eio_fs.Tree.name path;
+        name = Eio_fs_internal.native_name path;
         file = Some (file :> Eio.File.rw_ty Eio.Resource.t);
         let_go;
         writing = Eio.Mutex.create ();
@@ -916,7 +916,7 @@ let probe_opened ~name path =
 let probe_attempts = 8
 
 let rec probe_at ~attempts path =
-  let name = Eio_fs.Tree.name path in
+  let name = Eio_fs_internal.native_name path in
   let from_the_holder =
     match named_key ~name path with
     | None -> None
@@ -984,7 +984,7 @@ module Lease = struct
         Fmt.invalid_arg
           "Eio_fs_unix.Lease: path is %s, a file with no Unix descriptor for \
            flock"
-          (Eio_fs.Tree.name path)
+          (Eio_fs_internal.native_name path)
 
   (* The refusal an exclusive holder of [path] gives: a shared lease tried
      without waiting and let go at once is granted beside shared holders, and
@@ -1144,7 +1144,8 @@ let enter_lock ?block ?create ?contents path f =
     when not !began ->
       fail_unavailable "%s is not the lock's own regular file" name
   | exception (Eio.Io _ as e) when not !began ->
-      fail_unavailable "%s cannot be locked: %s" (Eio_fs.Tree.name path)
+      fail_unavailable "%s cannot be locked: %s"
+        (Eio_fs_internal.native_name path)
         (Printexc.to_string e)
   | exception Invalid_argument m when not !began -> fail_unavailable "%s" m
 

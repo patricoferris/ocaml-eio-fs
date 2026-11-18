@@ -5,8 +5,7 @@
       copy its files with other links apart ({!unshare}) or format it
       ({!pp_tree});
     - the removal of a chain of empty directories ({!remove_empty});
-    - what a path is called outside the program ({!name}), and whether two paths
-      name one file ({!same_file}). *)
+    - whether two paths name one file ({!same_file}). *)
 
 type usage = {
   allocated_bytes : int64;
@@ -63,11 +62,6 @@ val links : _ Eio.Path.t -> string -> (string * string) list option
     such entry.
 
     @raise Eio.Io when a directory or a link of the walk cannot be read. *)
-
-val name : _ Eio.Path.t -> string
-(** [name path] is [Eio.Path.native path], and the rendering {!Eio.Path.pp}
-    gives [path] where that is [None], as for an in-memory path: a name for a
-    message, which never raises where {!Eio.Path.native_exn} does. *)
 
 val same_file : _ Eio.Path.t -> _ Eio.Path.t -> bool
 (** [same_file a b] is [true] iff [a] and [b] both name a file and their stats

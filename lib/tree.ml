@@ -85,13 +85,6 @@ let usage ?max_fibers path =
     path;
   !total
 
-(* The native spelling names a host file; [Eio.Path.pp] renders through the
-   capability label, which is all an in-memory path has. *)
-let name path =
-  match Eio.Path.native path with
-  | Some native -> native
-  | None -> Fmt.to_to_string Eio.Path.pp path
-
 let same_file a b =
   let stat path =
     match Eio.Path.stat ~follow:true path with
@@ -155,7 +148,8 @@ let unshare ~spare path =
             (fun dst -> Eio.Flow.copy src dst));
       Eio.Path.rename spare file
     with Eio.Io _ as e ->
-      fail_shared "%s, linked %Ld times, cannot be copied apart: %a" (name file)
+      fail_shared "%s, linked %Ld times, cannot be copied apart: %a"
+        (Eio_fs_internal.native_name file)
         stat.nlink Eio.Exn.pp e
   in
   let shared (stat : Eio.File.Stat.t) =

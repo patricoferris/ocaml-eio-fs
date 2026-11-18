@@ -93,6 +93,11 @@ let basename path =
     in
     match name with "." | ".." -> "" | name -> name
 
+let native_name path =
+  match Eio.Path.native path with
+  | Some native -> native
+  | None -> Format.asprintf "%a" Eio.Path.pp path
+
 let last_component path =
   match basename path with
   | "" -> if String.equal path "" then "." else path

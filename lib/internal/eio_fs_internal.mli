@@ -73,6 +73,11 @@ val bounded_read :
     ends the file, and what [validate] or [read] raises otherwise is propagated.
 *)
 
+val native_name : _ Eio.Path.t -> string
+(** [native_name path] is [Eio.Path.native path], and the rendering
+    {!Eio.Path.pp} gives [path] where that is [None], as for an in-memory path:
+    the name a message gives a path. *)
+
 val last_component : string -> string
 (** [last_component path] is the last component of [path], or the whole of
     [path] when it has none: ["/"] is ["/"], [".."] is [".."] and the empty path

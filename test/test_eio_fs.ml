@@ -551,19 +551,6 @@ let test_close_twice_is_not_an_error () =
     "and a read handle closed twice takes nothing with it either" "payload"
     (Eio.Path.load (fs / "w"))
 
-(* An in-memory path has no native spelling, so [Tree.name] is the rendering
-   [Eio.Path.pp] gives it. *)
-let test_name_falls_back_to_the_eio_rendering () =
-  with_fs @@ fun fs ->
-  write fs "hello.txt" "world";
-  let path = fs / "hello.txt" in
-  Alcotest.(check (option string))
-    "an in-memory path has no native spelling to be named by" None
-    (Eio.Path.native path);
-  Alcotest.(check string)
-    "the name is what Eio.Path.pp renders the path as" "<fs:hello.txt>"
-    (Eio_fs.Tree.name path)
-
 (* [pp_tree] labels each node by its last component, a link by that and its
    target, and the root by the path given: a directory below the root, a
    name through a trailing slash, and the capability's root. *)
@@ -809,8 +796,6 @@ let suite =
         test_rename_across_roots_is_refused;
       Alcotest.test_case "tree labels each node by its last component" `Quick
         test_tree_labels_each_node_by_its_last_component;
-      Alcotest.test_case "name falls back to the Eio rendering" `Quick
-        test_name_falls_back_to_the_eio_rendering;
       Alcotest.test_case "close then switch release" `Quick
         test_close_then_switch_release;
       Alcotest.test_case "close read handle then switch release" `Quick
