@@ -29,7 +29,9 @@ type user = Low_level.User.t = {
 let root = Low_level.User.root
 let v = Memfs.v
 let as_user = Memfs.as_user
-let load = Memfs.load
+
+let load ?os ?clock ?filter path =
+  Image.load ?os ?clock (Image.scan ?filter ~at:(snd path) path)
 
 type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 

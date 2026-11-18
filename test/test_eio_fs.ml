@@ -377,37 +377,6 @@ module Crunch = struct
   let write ?(perm = 0o644) fs name contents =
     Eio.Path.save ~create:(`Or_truncate perm) (fs / name) contents
 
-  (* Scanning a tree and loading the entries rebuilds it exactly: contents,
-   permissions, symbolic links and empty directories all survive. *)
-  let test_roundtrip () =
-    with_fs @@ fun fs ->
-    Eio.Path.mkdir ~perm:0o750 (fs / "src");
-    write fs "src/hello.txt" "world";
-    write ~perm:0o755 fs "src/run.sh" "#!/bin/sh\n";
-    Eio.Path.mkdir ~perm:0o755 (fs / "src/sub");
-    write fs "src/sub/nested.txt" "deep";
-    Eio.Path.mkdir ~perm:0o700 (fs / "src/empty");
-    Eio.Path.symlink ~link_to:"hello.txt" (fs / "src/link");
-    let entries = Eio_fs.Crunch.scan (fs / "src") in
-    let fs = Eio_fs.Crunch.load entries in
-    Alcotest.(check string)
-      "contents" "world"
-      (Eio.Path.load (fs / "hello.txt"));
-    Alcotest.(check string)
-      "nested contents" "deep"
-      (Eio.Path.load (fs / "sub/nested.txt"));
-    let stat name = (Eio.Path.stat ~follow:false (fs / name)).perm in
-    Alcotest.(check int) "root perm" 0o750 (stat "/");
-    Alcotest.(check int) "file perm" 0o644 (stat "hello.txt");
-    Alcotest.(check int) "exec perm" 0o755 (stat "run.sh");
-    Alcotest.(check int) "empty dir perm" 0o700 (stat "empty");
-    Alcotest.(check string)
-      "symlink target" "hello.txt"
-      (Eio.Path.read_link (fs / "link"));
-    Alcotest.(check string)
-      "read through symlink" "world"
-      (Eio.Path.load (fs / "link"))
-
   (* [load] builds a filesystem of its own: nothing written elsewhere is in it. *)
   let test_load_resets () =
     with_fs @@ fun fs ->
@@ -466,13 +435,6 @@ module Crunch = struct
     in
     Alcotest.(check int) "pread length" 3 got;
     Alcotest.(check string) "pread contents" "cde" (Cstruct.to_string buf)
-
-  let test_scan_rejects_file () =
-    with_fs @@ fun fs ->
-    write fs "plain.txt" "x";
-    match Eio_fs.Crunch.scan (fs / "plain.txt") with
-    | _ -> Alcotest.fail "scan accepted a non-directory"
-    | exception Eio.Io (Eio.Exn.X _, _) -> ()
 
   (* [find] answers a file's contents by its image path, and nothing for a
    directory, a symbolic link or a path not in the image: an implementation that
@@ -541,11 +503,9 @@ module Crunch = struct
   let suite =
     ( "crunch",
       [
-        Alcotest.test_case "roundtrip" `Quick test_roundtrip;
         Alcotest.test_case "load resets" `Quick test_load_resets;
         Alcotest.test_case "copy on write" `Quick test_copy_on_write;
         Alcotest.test_case "embedded pread" `Quick test_embedded_pread;
-        Alcotest.test_case "scan rejects file" `Quick test_scan_rejects_file;
         Alcotest.test_case "find" `Quick test_find;
         Alcotest.test_case "source" `Quick test_source;
         Alcotest.test_case "interface" `Quick test_interface;
@@ -704,6 +664,34 @@ let test_directory_close_after_switch_release () =
   expect_closed "read_dir after switch release" (fun () ->
       Eio.Path.read_dir child)
 
+(* [load] copies a tree exactly, at its own path: contents, permissions,
+   symbolic links and empty directories all survive. *)
+let test_load_keeps_the_tree () =
+  with_fs @@ fun src ->
+  Eio.Path.mkdir ~perm:0o750 (src / "src");
+  write src "src/hello.txt" "world";
+  Eio.Path.save ~create:(`Exclusive 0o755) (src / "src/run.sh") "#!/bin/sh\n";
+  Eio.Path.mkdir ~perm:0o755 (src / "src/sub");
+  write src "src/sub/nested.txt" "deep";
+  Eio.Path.mkdir ~perm:0o700 (src / "src/empty");
+  Eio.Path.symlink ~link_to:"hello.txt" (src / "src/link");
+  let fs = Eio_fs_mem.load (src / "src") / "src" in
+  Alcotest.(check string) "contents" "world" (Eio.Path.load (fs / "hello.txt"));
+  Alcotest.(check string)
+    "nested contents" "deep"
+    (Eio.Path.load (fs / "sub/nested.txt"));
+  let stat name = (Eio.Path.stat ~follow:false (fs / name)).perm in
+  Alcotest.(check int) "root perm" 0o750 (stat "");
+  Alcotest.(check int) "file perm" 0o644 (stat "hello.txt");
+  Alcotest.(check int) "exec perm" 0o755 (stat "run.sh");
+  Alcotest.(check int) "empty dir perm" 0o700 (stat "empty");
+  Alcotest.(check string)
+    "symlink target" "hello.txt"
+    (Eio.Path.read_link (fs / "link"));
+  Alcotest.(check string)
+    "read through symlink" "world"
+    (Eio.Path.load (fs / "link"))
+
 (* [load] copies a tree from any filesystem, an in-memory one included, to
    the same path in a new one; a directory its filter refuses is not copied,
    and nothing under it is read. *)
@@ -736,8 +724,7 @@ let test_load_filter_refuses_the_root () =
   Alcotest.(check (list string)) "only the root asked" [ "tree" ] !asked;
   Alcotest.(check (list string)) "nothing copied" [] (Eio.Path.read_dir dst)
 
-(* [load] copies a directory tree; anything else is refused, as [Crunch.scan]
-   refuses it. *)
+(* [load] copies a directory tree; anything else is refused. *)
 let test_load_refuses_a_file () =
   with_fs @@ fun src ->
   write src "file" "bytes";
@@ -825,6 +812,7 @@ let suite =
       Alcotest.test_case "directory close after switch release" `Quick
         test_directory_close_after_switch_release;
       Alcotest.test_case "write/read" `Quick test_write_read;
+      Alcotest.test_case "load keeps the tree" `Quick test_load_keeps_the_tree;
       Alcotest.test_case "load copies what its filter accepts" `Quick
         test_load_filter;
       Alcotest.test_case "v roots share no file" `Quick

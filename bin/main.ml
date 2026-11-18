@@ -15,9 +15,19 @@ let output =
           "Write the generated module to $(docv) and its interface to the \
            matching .mli, instead of printing the module to standard output.")
 
+(* The walk Eio_fs_mem.load copies a tree with, its entries recorded from
+   the image's root. *)
+let scan dir : Eio_fs.Crunch.t =
+  Eio_fs_mem_core.Image.scan ~at:"/" dir
+  |> List.map (function
+    | Eio_fs_mem_core.Image.Dir { path; perm } ->
+        Eio_fs.Crunch.Dir { path; perm }
+    | File { path; perm; contents } -> File { path; perm; contents }
+    | Symlink { path; target } -> Symlink { path; target })
+
 let run dir output =
   Eio_main.run @@ fun env ->
-  match Eio_fs.Crunch.scan Eio.Path.(env#fs / dir) with
+  match scan Eio.Path.(env#fs / dir) with
   | entries -> (
       match output with
       | None ->

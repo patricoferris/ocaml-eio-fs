@@ -44,12 +44,3 @@ val set_times :
 (** [set_times path ~atime ~mtime ~ctime] sets the times of [path], not
     followed, as root, if it is in an in-memory filesystem, and does nothing
     otherwise. *)
-
-val load :
-  ?os:[< `Linux | `Macos ] ->
-  ?clock:_ Eio.Time.clock ->
-  ?filter:('a Eio.Path.t -> bool) ->
-  'a Eio.Path.t ->
-  [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
-(** [load ~os ~clock ~filter path] is a new filesystem holding a copy of the
-    tree at [path], that answers as [os] does. *)

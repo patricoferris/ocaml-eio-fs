@@ -1,7 +1,8 @@
 (** Compile-time file embedding for the in-memory filesystem, in the style of
     ocaml-crunch. The [eio-fs-crunch] binary serialises a directory tree into an
     OCaml module of {!Crunch.entry} values; at runtime the generated module's
-    [load ()] rebuilds the tree in a new in-memory filesystem.
+    [load ()] rebuilds the tree in a new in-memory filesystem. A copy of a
+    directory made at run time, with no binary, is [Eio_fs_mem.load].
 
     With [-o assets.ml] the binary writes the module and its interface,
     [assets.mli]. This dune rule regenerates them when the [static] directory
@@ -26,24 +27,16 @@ type entry =
       (** A symbolic link at [path] holding [target], never resolved. *)
 
 type t = entry list
-(** The type for embedded file trees. Every directory precedes its children. *)
-
-val scan : _ Eio.Path.t -> t
-(** [scan dir] serialises the directory tree rooted at [dir]. The root is
-    recorded as [Dir { path = "/"; _ }], entries follow in depth-first sorted
-    order, and symbolic links are recorded without being followed. An entry that
-    is neither a regular file, a directory nor a symbolic link is not recorded;
-    it is traced with [Eio.traceln].
-
-    @raise Eio.Io
-      if [dir] is not a directory, or if it or an entry under it cannot be read.
-*)
+(** The type for embedded file trees. Every directory precedes its children.
+    [eio-fs-crunch] records its directory as [Dir { path = "/"; _ }], then the
+    entries below it in depth-first order, names sorted, a symbolic link without
+    following it. *)
 
 val find : string -> t -> string option
 (** [find path entries] is [Some contents] for the first {!File} at [path] in
     [entries], and [None] if there is none. [path] is absolute within the image,
-    as {!scan} records it, and compared as a string; a symbolic link is not
-    followed. A program that embeds fixtures reads them with it and needs no
+    as [eio-fs-crunch] records it, and compared as a string; a symbolic link is
+    not followed. A program that embeds fixtures reads them with it and needs no
     filesystem. *)
 
 val load :
