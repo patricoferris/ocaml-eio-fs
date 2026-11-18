@@ -6,7 +6,8 @@
    with MD5s the generator files that decide the traces ("input: PATH MD5")
    and every trace ("trace: PATH MD5"), paths relative to the oracle
    directory. A trace two hosts record in turn, each its own columns, keeps
-   the other host's pins as "HOST.input: PATH MD5", which must hold too. *)
+   the other host's pins as "HOST.input: PATH MD5", which must hold too. The
+   generator is one of the inputs of the host that wrote the file. *)
 
 let required =
   [ "generator"; "regenerate"; "revision"; "recorded"; "uid"; "host" ]
@@ -63,6 +64,16 @@ let check dir () =
         k = "input" || String.ends_with ~suffix:".input" k)
   and recorded = pins file fields (String.equal "trace") in
   if inputs = [] then Alcotest.failf "%s pins no input" file;
+  let oracle = "test/interop/" ^ Filename.basename dir ^ "/" in
+  let own =
+    List.map
+      (fun (p, _) -> oracle ^ p)
+      (pins file fields (String.equal "input"))
+  in
+  let generator = List.assoc "generator" fields in
+  if not (List.mem generator own) then
+    Alcotest.failf "%s names the generator %s, which is not among its inputs"
+      file generator;
   check_pins dir ~regen ~what:"input" inputs;
   let held =
     Sys.readdir traces |> Array.to_list
