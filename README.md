@@ -18,6 +18,9 @@ filesystem answers as Linux or macOS does.
 opam install eio-fs
 ```
 
+`eio-fs.unix` is POSIX-only: its C stubs are not built on Windows, where the
+other libraries are.
+
 ## An in-memory filesystem
 
 `Eio_fs_mem.v ()` is the root of a new, empty filesystem. Two calls share no

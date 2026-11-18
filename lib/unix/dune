@@ -1,6 +1,8 @@
 (library
  (name eio_fs_unix)
  (public_name eio-fs.unix)
+ (enabled_if
+  (= %{os_type} Unix))
  (private_modules lock at regular inline)
  (foreign_stubs
   (language c)

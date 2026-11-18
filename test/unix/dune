@@ -1,6 +1,8 @@
 (test
  (name test)
  (package eio-fs)
+ (enabled_if
+  (= %{os_type} Unix))
  (libraries
   eio
   eio.mock
@@ -21,5 +23,7 @@
 
 (rule
  (aliases runtest guarded-link)
+ (enabled_if
+  (= %{os_type} Unix))
  (action
   (run %{exe:test.exe} test "^link$")))

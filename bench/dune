@@ -1,3 +1,5 @@
 (executable
  (name batch)
+ (enabled_if
+  (= %{os_type} Unix))
  (libraries eio eio.unix eio_main eio-fs.unix fmt unix))

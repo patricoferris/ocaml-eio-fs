@@ -40,7 +40,7 @@ depends: [
   "alcobar" {with-test}
   "csv" {with-test & >= "2.4"}
   "eio-net" {with-test & >= "0.1.0" & < "0.2.0"}
-  "eio_posix" {with-test & >= "1.7"}
+  "eio_posix" {with-test & >= "1.7" & os != "win32"}
   "odoc" {with-doc}
 ]
 build: [
@@ -59,10 +59,9 @@ build: [
 ]
 dev-repo: "git+https://github.com/samoht/ocaml-eio-fs.git"
 x-maintenance-intent: ["(latest)"]
-available: os != "win32"
 # eio-chaos is not on opam yet: drop its pin once it is released.
 # eio-net, which the tests use, is not on opam yet: drop its pin once it is released.
 pin-depends: [
   ["eio-chaos.0.1.0" "git+https://github.com/samoht/ocaml-eio-chaos.git#1a20dc1f1f8a835957fb8d41d2ebf88e735025ef"]
-  ["eio-net.0.1.0" "git+https://github.com/samoht/ocaml-eio-net.git#e880d98262a5daf01e27c642f3b006d50adc5072"]
+  ["eio-net.0.1.0" "git+https://github.com/samoht/ocaml-eio-net.git#49c3f63d27d78f1a59a5e2a8c7d5a9701d5516b1"]
 ]

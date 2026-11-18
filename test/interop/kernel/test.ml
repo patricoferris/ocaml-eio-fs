@@ -220,7 +220,12 @@ let remove dir =
   ignore (Sys.command (Filename.quote_command "chmod" [ "-R"; "u+rwx"; dir ]));
   ignore (Sys.command (Filename.quote_command "rm" [ "-rf"; dir ]))
 
+(* eio_posix, which Windows lacks: there the test is skipped. *)
+let eio_posix f =
+  match Posix.run with Some run -> run f | None -> Alcotest.skip ()
+
 let test_host () =
+  eio_posix @@ fun env ->
   match (host_os (), host_user ()) with
   | None, _ | _, None ->
       print_endline "skipped: not macOS or Linux, or root, or no second group";
@@ -229,7 +234,6 @@ let test_host () =
       ignore (Unix.umask 0o022);
       let tmp = Filename.temp_dir "conformance" "" in
       Fun.protect ~finally:(fun () -> remove tmp) @@ fun () ->
-      Eio_posix.run @@ fun env ->
       let n = ref 0 in
       (* Opened, a directory is confined, as the recorder's cwd was, and takes
          the user's group, as the recorder's did. *)

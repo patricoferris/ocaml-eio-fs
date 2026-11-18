@@ -1,7 +1,7 @@
 (test
  (name test)
  (package eio-fs)
- (libraries eio eio.mock eio_posix eio-fs.mem eio-fs.chaos unix fmt alcotest)
+ (libraries eio eio.mock posix eio-fs.mem eio-fs.chaos unix fmt alcotest)
  (deps
   (source_tree traces)))
 

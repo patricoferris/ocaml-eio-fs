@@ -177,8 +177,12 @@ let answers fs top =
   in
   (unconfined, confined)
 
+(* eio_posix, which Windows lacks: there the test is skipped. *)
+let eio_posix f =
+  match Posix.run with Some run -> run f | None -> Alcotest.skip ()
+
 let test_as_eio_posix () =
-  Eio_posix.run @@ fun env ->
+  eio_posix @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   let top = Filename.temp_file "eio-fs-absolute-link" "" in
   Sys.remove top;
@@ -232,7 +236,7 @@ let test_shutdown_as_eio_posix () =
     Eio.Path.with_open_out ~create:`Never (dir / "f")
     @@ fun (Eio.Resource.T (f, ops)) -> shutdown f (Eio.Resource.bindings ops)
   in
-  Eio_posix.run @@ fun env ->
+  eio_posix @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   let top = Filename.temp_file "eio-fs-shutdown" "" in
   Sys.remove top;

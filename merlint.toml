@@ -93,3 +93,8 @@ exclude = ["E610"]
 [[rules]]
 files = ["test/interop/kernel/traces/dune", "test/interop/windows/traces/dune"]
 exclude = ["E815"]
+
+# Dune's select picks one of these as posix.ml, which posix.mli describes.
+[[rules]]
+files = ["test/posix/posix.eio_posix.ml", "test/posix/posix.none.ml"]
+exclude = ["E505"]
