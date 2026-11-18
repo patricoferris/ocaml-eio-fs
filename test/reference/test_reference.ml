@@ -73,7 +73,7 @@ let crash ?block_size ~as_alice ops k policy =
       end)
     ops;
   let pending = Crash.unsynced ctl in
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Eio_fs_mem.as_user Eio_fs_mem.root (Crash.post_crash ctl) in
   let image =
     List.map

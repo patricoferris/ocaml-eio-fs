@@ -1374,7 +1374,7 @@ let distinct l =
   go 0 [] l
 
 (* What a cut decided of the journal, from which it draws the files' data. *)
-type cut = {
+type verdict = {
   ctl : t;
   data_rng : draw option;
   bytes : bool;
@@ -1402,7 +1402,7 @@ type cut = {
    shrink of [fs] freed, else the first removed file that had one there; and
    the pages a removed file held unsynced, which writeback may have put on
    disk before the removal. *)
-let same cut (fs : fstate) p =
+let same verdict (fs : fstate) p =
   (match List.assoc_opt p fs.freed with
     | Some pg -> [ (pg, fs.rel ^ " held there before its truncation") ]
     | None ->
@@ -1412,14 +1412,14 @@ let same cut (fs : fstate) p =
                Option.map
                  (fun pg -> (pg, "the removed " ^ path ^ " held there"))
                  (page_of c p))
-             cut.removed))
+             verdict.removed))
   @ List.filter_map
       (fun (path, durable, live) ->
         match (page_of live p, page_of durable p) with
         | Some pg, Some d when Cstruct.equal pg d -> None
         | Some pg, _ -> Some (pg, "the removed " ^ path ^ " held there unsynced")
         | None, _ -> None)
-      cut.unsynced_removed
+      verdict.unsynced_removed
 
 (* As ext4 may give a freed block to any offset of any file, the pages other
    shrinks freed, and those of removed files. *)
@@ -1459,15 +1459,15 @@ let elsewhere ctl ~removed ~unsynced_removed =
 
 (* The stale contents the page [p] of [fs] may hold: [same], then
    [elsewhere], each content once. *)
-let old cut (fs : fstate) p =
-  match Hashtbl.find_opt cut.olds (fs.id, p) with
+let old verdict (fs : fstate) p =
+  match Hashtbl.find_opt verdict.olds (fs.id, p) with
   | Some l -> l
   | None ->
-      let l = distinct (same cut fs p @ Lazy.force cut.elsewhere) in
-      Hashtbl.replace cut.olds (fs.id, p) l;
+      let l = distinct (same verdict fs p @ Lazy.force verdict.elsewhere) in
+      Hashtbl.replace verdict.olds (fs.id, p) l;
       l
 
-let describe cut (fs : fstate) mine size runs =
+let describe verdict (fs : fstate) mine size runs =
   let durable = Cstruct.length (bytes_of fs.durable) in
   let run (off, n, src) =
     let at = Fmt.str "@%d+%d" off n in
@@ -1501,7 +1501,8 @@ let describe cut (fs : fstate) mine size runs =
     else if size = durable then ", as its last sync left it"
     else ""
   in
-  cut.described <- Fmt.str "%s, %d bytes%s" fs.rel size held :: cut.described
+  verdict.described <-
+    Fmt.str "%s, %d bytes%s" fs.rel size held :: verdict.described
 
 (* Under a scripted policy, a change from [upto] on that would set the
    length does not survive. *)
@@ -1525,19 +1526,20 @@ let keep_length (fs : fstate) ~upto survivors =
 
 (* The bytes of [fs] with the changes of [mine] for which [pred] holds and
    the truncations that land. *)
-let survive cut (fs : fstate) ~mine ~truncated ~upto pred =
+let survive verdict (fs : fstate) ~mine ~truncated ~upto pred =
   let kept =
     List.filter (fun e -> pred e || truncated e) mine |> keep_length fs ~upto
   in
   List.map (fun e -> (e.change, e.cached)) kept
-  |> replay_cached ~bs:cut.ctl.block_size ~cache:fs.cache (bytes_of fs.durable)
+  |> replay_cached ~bs:verdict.ctl.block_size ~cache:fs.cache
+       (bytes_of fs.durable)
   |> fst
   |> sectors_together ~cache:fs.cache (bytes_of fs.durable)
        (List.map (fun e -> (e.change, e.cached, List.memq e kept)) mine)
 
 (* The bytes of [fs] with the changes of [mine] written back in blocks drawn
    from [rng]. *)
-let written_back cut (fs : fstate) ~mine ~len_upto ~len_from rng =
+let written_back verdict (fs : fstate) ~mine ~len_upto ~len_from rng =
   let changes = List.map (fun e -> (e.change, e.cached)) mine in
   (* A writeback that failed only partly wrote any of the blocks it lost. *)
   let over =
@@ -1556,24 +1558,26 @@ let written_back cut (fs : fstate) ~mine ~len_upto ~len_from rng =
   (* The page cache kept what a failed sync lost, or evicted it, whether a
      later sync ran or not. *)
   if (Option.is_some fs.cache || Option.is_some fs.evicted) && rng.bool () then
-    writeback ~over ~len_upto ~len_from ~bytes:cut.bytes ~held:fs.held
-      ~old:(old cut fs) ~describe:(describe cut fs mine) ~rng
-      ~bs:cut.ctl.block_size ~cache:None
+    writeback ~over ~len_upto ~len_from ~bytes:verdict.bytes ~held:fs.held
+      ~old:(old verdict fs) ~describe:(describe verdict fs mine) ~rng
+      ~bs:verdict.ctl.block_size ~cache:None
       (Option.value ~default:(bytes_of fs.durable) fs.evicted)
       (List.map (fun (c, _) -> (c, false)) changes)
   else
-    writeback ~over ~len_upto ~len_from ~bytes:cut.bytes ~held:fs.held
-      ~old:(old cut fs) ~describe:(describe cut fs mine) ~rng
-      ~bs:cut.ctl.block_size ~cache:fs.cache (bytes_of fs.durable) changes
+    writeback ~over ~len_upto ~len_from ~bytes:verdict.bytes ~held:fs.held
+      ~old:(old verdict fs) ~describe:(describe verdict fs mine) ~rng
+      ~bs:verdict.ctl.block_size ~cache:fs.cache (bytes_of fs.durable) changes
 
 (* What the cut left in [fs], drawn once. *)
-let content cut (fs : fstate) =
-  match Hashtbl.find_opt cut.contents fs.id with
+let content verdict (fs : fstate) =
+  match Hashtbl.find_opt verdict.contents fs.id with
   | Some data -> data
   | None ->
       let mine = List.rev fs.pending in
       let truncated (e : entry) =
-        match e.change with Resize _ -> e.seq <= cut.kept | Write _ -> false
+        match e.change with
+        | Resize _ -> e.seq <= verdict.kept
+        | Write _ -> false
       in
       (* The changes up to the last truncation that lands set the length,
          wherever the cut first loses an entry. *)
@@ -1586,22 +1590,23 @@ let content cut (fs : fstate) =
         List.length (List.filter (fun (e : entry) -> e.seq < s) mine)
       in
       let upto =
-        if cut.lost = max_int then None else Some (max cut.lost (from + 1))
+        if verdict.lost = max_int then None
+        else Some (max verdict.lost (from + 1))
       in
       let len_upto = match upto with None -> max_int | Some s -> count s in
       let len_from = if from = min_int then 0 else count (from + 1) in
       let data =
-        match (cut.ctl.policy, cut.data_rng) with
+        match (verdict.ctl.policy, verdict.data_rng) with
         | (Reorder_unsynced _ | Choose _), Some rng ->
-            written_back cut fs ~mine ~len_upto ~len_from rng
+            written_back verdict fs ~mine ~len_upto ~len_from rng
         | Survive pred, _ ->
-            survive cut fs ~mine ~truncated ~upto (fun e ->
+            survive verdict fs ~mine ~truncated ~upto (fun e ->
                 pred (to_unsynced e))
         | Drop_unsynced, _ when List.exists truncated mine ->
-            survive cut fs ~mine ~truncated ~upto (fun _ -> false)
+            survive verdict fs ~mine ~truncated ~upto (fun _ -> false)
         | _ -> copy_cs (bytes_of fs.durable)
       in
-      Hashtbl.replace cut.contents fs.id data;
+      Hashtbl.replace verdict.contents fs.id data;
       data
 
 (* The uncommitted entries of [pending] the policy keeps: a prefix of
@@ -1731,22 +1736,22 @@ let with_outside ctl ~owner ~root_path tree =
 
 (* Each tracked file is rewritten where the image holds it, which a rename
    may have made another name than the one it was met at. *)
-let rewrite_files cut ~owner ~root_path ~tree ~locs ~rewrites =
+let rewrite_files verdict ~owner ~root_path ~tree ~locs ~rewrites =
   let rel_of key = Eio_fs_path.append root_path key in
-  let proot = Option.get cut.ctl.root_box in
+  let proot = Option.get verdict.ctl.root_box in
   Paths.iter
     (fun key ls ->
       if (not (in_limbo (path_segments key))) && rewrites key then
         let rel = rel_of key in
         List.iter
           (fun (fs, _) ->
-            let content = content cut fs in
+            let content = content verdict fs in
             let (Base_dir ((module B), bv)) = owner in
             match B.stat bv ~follow:false rel with
             | { kind = `Regular_file; _ } ->
                 fs.owner <- proot;
                 fs.rel <- rel;
-                rewrite cut.ctl fs content;
+                rewrite verdict.ctl fs content;
                 (* The later of the versions the image and its last sync
                    hold. *)
                 let times =
@@ -1758,12 +1763,12 @@ let rewrite_files cut ~owner ~root_path ~tree ~locs ~rewrites =
                     ]
                   |> List.sort (fun a b -> Float.compare b.ctime a.ctime)
                 in
-                Option.iter (cut.ctl.set_times rel) (List.nth_opt times 0)
+                Option.iter (verdict.ctl.set_times rel) (List.nth_opt times 0)
             | _ | (exception Eio.Io _) -> ())
           ls)
     locs.at
 
-let rebuilt_image cut ~tree ~locs =
+let rebuilt_image verdict ~tree ~locs =
   fold_nodes
     (fun segs node acc ->
       match segs with
@@ -1777,7 +1782,7 @@ let rebuilt_image cut ~tree ~locs =
             | File f -> (
                 match Paths.find_opt key locs.at with
                 | Some ((fs, _) :: _) ->
-                    `File (Cstruct.to_string (content cut fs))
+                    `File (Cstruct.to_string (content verdict fs))
                 | Some [] | None -> `File (Cstruct.to_string f.data))
           in
           (key, ino_of node, kind) :: acc)
@@ -1802,7 +1807,7 @@ let without_limbo = function
 
 (* The image is rebuilt whole even in a fiber being cancelled, as the one
    whose operation cuts the power often is. *)
-let do_crash ctl =
+let cut ctl =
   if not ctl.crashed then begin
     if Option.is_none ctl.base then err_not_wrapped ();
     ctl.crashed <- true;
@@ -1828,7 +1833,7 @@ let do_crash ctl =
     let removed, unsynced_removed = removed_files ctl tree locs in
     let tree, rewrites = with_outside ctl ~owner ~root_path tree in
     restore_root ~stamp:ctl.set_times owner root_path tree;
-    let cut =
+    let verdict =
       {
         ctl;
         data_rng;
@@ -1843,9 +1848,9 @@ let do_crash ctl =
         described = [];
       }
     in
-    rewrite_files cut ~owner ~root_path ~tree ~locs ~rewrites;
-    ctl.left <- List.rev cut.described;
-    ctl.image <- rebuilt_image cut ~tree ~locs
+    rewrite_files verdict ~owner ~root_path ~tree ~locs ~rewrites;
+    ctl.left <- List.rev verdict.described;
+    ctl.image <- rebuilt_image verdict ~tree ~locs
   end
 
 (* The inodes of the directories a rename to [dst] lands under, from the
@@ -3008,7 +3013,6 @@ let wrap ctl (base, path) =
   snap ctl (state_of (snapshot_at admin path) no_locs);
   (wrap_cdir ctl ~ino:None ~root:proot ~prefix:"" ~base, path)
 
-let crash = do_crash
 let is_crashed ctl = ctl.crashed
 
 let sync_metadata ctl =
@@ -3016,7 +3020,7 @@ let sync_metadata ctl =
   commit_metadata ctl
 
 let post_crash ctl =
-  do_crash ctl;
+  cut ctl;
   Option.get ctl.base
 
 let left ctl = ctl.left

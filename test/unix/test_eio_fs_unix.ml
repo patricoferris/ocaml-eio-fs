@@ -966,7 +966,7 @@ let test_exclusive_publication_reaches_crash_model () =
   Eio_fs.Sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
     ~max_bytes:7L (fs / "state")
     (Eio.Flow.copy_string "payload");
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "published bytes survive" "payload"
     (Eio.Path.load (Crash.post_crash ctl / "state"))

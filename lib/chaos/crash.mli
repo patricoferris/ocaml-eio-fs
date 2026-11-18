@@ -232,8 +232,8 @@ val wrap : t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
       if [t] is already wrapped, or if the tree under [base] holds an entry that
       is neither a regular file, a directory nor a symbolic link. *)
 
-val crash : t -> unit
-(** [crash t] triggers a crash now: it reconstructs the post-crash image per
+val cut : t -> unit
+(** [cut t] cuts the power now: it reconstructs the post-crash image per
     {!type-policy} and rewrites the base to it in place: an entry that is still
     the one the image names keeps its inode and times, as on a disk. A second
     call does nothing. After a crash, every operation through the wrapper (a

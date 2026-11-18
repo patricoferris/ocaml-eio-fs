@@ -362,7 +362,7 @@ let cut t =
            (Eio_fs_unix.sync_file, Eio_fs_unix.barrier) goes through it"
         else ""
       in
-      Crash.crash ctl;
+      Crash.cut ctl;
       let left = Crash.left ctl in
       let changes = String.concat "; " (List.map (change_text t.seqs) lost) in
       let lost =

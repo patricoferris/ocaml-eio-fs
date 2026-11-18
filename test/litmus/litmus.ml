@@ -224,7 +224,7 @@ let run ?(block_size = 4096) ~policy ~crash_at t =
          if Crash.is_crashed ctl then raise Power_lost;
          (try exec ~sw ~fds ~mark fs op
           with Eio.Io _ when Crash.is_crashed ctl -> raise Power_lost);
-         if crash_at = Some (i + 1) then Crash.crash ctl)
+         if crash_at = Some (i + 1) then Crash.cut ctl)
        t.body
    with
   | Power_lost -> ()

@@ -38,7 +38,7 @@ let test_crash_appends () =
       for _ = 1 to 32_000 do
         Eio.Flow.copy_string line f
       done);
-  Crash.crash ctl;
+  Crash.cut ctl;
   let copied = Eio_fs_chaos.Private.Internal.replay_copied () - before in
   at_most "bytes copied, for 6.4 MB of appends" ~bound:(8. *. 6.4e6)
     (float copied)
@@ -86,7 +86,7 @@ let test_crash_many_files () =
             (fs / "flat" / string_of_int i)
             "x"
         done;
-        Crash.crash ctl)
+        Crash.cut ctl)
   in
   at_most "words per file, for 20k files and a crash" ~bound:50_000.
     (w /. 20_000.)

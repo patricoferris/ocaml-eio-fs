@@ -18,9 +18,7 @@ let test_crash_unwrapped_refused () =
   let refused f =
     match f () with _ -> false | exception Invalid_argument _ -> true
   in
-  Alcotest.(check bool)
-    "crash refused" true
-    (refused (fun () -> Crash.crash ctl));
+  Alcotest.(check bool) "crash refused" true (refused (fun () -> Crash.cut ctl));
   Alcotest.(check bool) "not crashed" false (Crash.is_crashed ctl);
   Alcotest.(check bool)
     "post_crash refused" true
@@ -613,7 +611,7 @@ let test_crash_stops_directory_ops () =
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "x") "x";
   Eio.Path.mkdir ~perm:0o755 (fs / "d");
   Eio.Path.mkdir ~perm:0o755 (fs / "e");
-  Crash.crash ctl;
+  Crash.cut ctl;
   let refused label f =
     Alcotest.(check bool)
       label true
@@ -659,7 +657,7 @@ let test_crash_dir_sync_leaves_its_own_entry_pending () =
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.mkdir ~perm:0o755 (fs / "b");
   Eio.Path.sync_dir (fs / "a");
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
     "the barriered directory's own entry stayed pending" true
@@ -681,7 +679,7 @@ let test_crash_dir_sync_commits_its_own_entries () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
   Eio.Path.sync_dir (fs / "a");
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the entry created in the barriered directory survives" "data"
@@ -698,7 +696,7 @@ let test_crash_root_sync_commits_both_siblings () =
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.mkdir ~perm:0o755 (fs / "b");
   Eio.Path.sync_dir fs;
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
     "first sibling durable" true
@@ -723,7 +721,7 @@ let test_crash_dir_sync_does_not_reach_a_grandchild () =
       Eio.File.pwrite_all file ~file_offset:(i63 0) [ Cstruct.of_string "data" ];
       Eio.File.sync file);
   Eio.Path.sync_dir (fs / "a");
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool)
     "the child directory, an entry of the barriered one, is durable" true
@@ -950,7 +948,7 @@ let test_crash_cancelled_real () =
       match
         Eio.Cancel.sub (fun cc ->
             Eio.Cancel.cancel cc Exit;
-            Crash.crash ctl)
+            Crash.cut ctl)
       with
       | () | (exception Eio.Cancel.Cancelled _) -> ())
     ~check:(fun post ->
@@ -983,7 +981,7 @@ let test_crash_replaced_under_pending_real () =
       Eio.Path.mkdir ~perm:0o755 (fs / "other");
       Eio.Path.rename (fs / "refs" / "x.lock") (fs / "refs" / "x");
       Eio.Path.sync_dir (fs / "refs");
-      Crash.crash ctl)
+      Crash.cut ctl)
     ~check:(fun post ->
       Alcotest.(check bool)
         "real fs: the pending directory kept" true

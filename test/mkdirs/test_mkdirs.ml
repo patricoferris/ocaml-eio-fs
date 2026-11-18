@@ -36,7 +36,7 @@ let test_a_fresh_tree_keeps_what_is_published_in_it () =
   Alcotest.(check (list string))
     "every created entry is committed" [] (pending ctl);
   Eio_fs.Sync.save (fs / "a" / "b" / "c" / "record") "data";
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the record survives the power cut" "data"
@@ -50,7 +50,7 @@ let test_without_it_the_tree_is_lost () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
   Eio_fs.Sync.save (fs / "a" / "b" / "c" / "record") "data";
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool) "the tree is gone" false (is_directory (post / "a"))
 
@@ -62,7 +62,7 @@ let test_an_existing_prefix () =
   Eio.Path.sync_dir fs;
   Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a" / "b");
   Alcotest.(check (list string)) "the new entry is committed" [] (pending ctl);
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check bool)
     "it survives the power cut" true
     (is_directory (Crash.post_crash ctl / "a" / "b"))
@@ -86,7 +86,7 @@ let test_unsynced_prefix () =
   Eio.Path.mkdirs ~perm:0o755 (fs / "a" / "b");
   Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
   Eio_fs.Sync.save (fs / "a" / "b" / "c" / "record") "prefix retained";
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "all existing ancestors survive" "prefix retained"
     (Eio.Path.load (Crash.post_crash ctl / "a" / "b" / "c" / "record"))
@@ -111,7 +111,7 @@ let test_barrier_retry () =
     "mkdir succeeded before the barrier failed" true (is_directory target);
   Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 (faulted / "a");
   Eio_fs.Sync.save (faulted / "a" / "record") "retry retained";
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "retry establishes the existing entry's durability" "retry retained"
     (Eio.Path.load (Crash.post_crash ctl / "a" / "record"))
@@ -137,7 +137,7 @@ let test_racing_prefix () =
     "an existing directory's mode is unchanged" 0o755
     (Eio.Path.stat ~follow:true (fs / "a" / "b")).perm;
   Eio_fs.Sync.save (observed / "a" / "b" / "record") "race retained";
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "the competing entry was barriered" "race retained"
     (Eio.Path.load (Crash.post_crash ctl / "a" / "b" / "record"))
@@ -234,7 +234,7 @@ let test_parent_order () =
       Alcotest.(check (list string))
         "exactly one barrier per traversed entry, parent first"
         (List.rev parents) (List.rev !syncs);
-      Crash.crash ctl;
+      Crash.cut ctl;
       let post = Crash.post_crash ctl in
       Alcotest.(check bool)
         "the complete path survives" true
@@ -265,7 +265,7 @@ let test_borrowed_root () =
         "barriers stay below the borrowed root" [ ""; "child" ]
         (List.rev !syncs);
       Eio_fs.Sync.save (local / "child" / "leaf" / "record") "confined");
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "the confined record survives" "confined"
     (Eio.Path.load

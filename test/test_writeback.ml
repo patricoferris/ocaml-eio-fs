@@ -124,7 +124,7 @@ let test_crash_over_a_user_view () =
   Eio.Path.mkdir ~perm:0o755 (fs / "e");
   Eio.Path.chmod ~follow:true ~perm:0o000 (fs / "e");
   Eio.Path.mkdir ~perm:0o755 (fs / "g");
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check (list string))
     "the durable tree" [ "d" ]
     (List.sort String.compare (Eio.Path.read_dir (root / "home")));
@@ -519,7 +519,7 @@ let test_crash_move_needs_ancestor_moves () =
         | `File s -> p ^ "=" ^ s
         | `Link t -> p ^ "->" ^ t)
       (Chaos.Private.Crash.image
-         (Crash.crash ctl;
+         (Crash.cut ctl;
           ctl))
     |> List.sort String.compare
   in

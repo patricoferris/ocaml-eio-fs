@@ -86,7 +86,7 @@ let every_crash_point ~policy ~setup ~before =
       (match op.kind with
       | `Write | `Truncate | `Sync | `Change | `Open_write ->
           incr seen;
-          if !seen = n then Crash.crash ctl
+          if !seen = n then Crash.cut ctl
       | `Read | `Read_dir | `Stat | `Open_read -> ());
       None
     in

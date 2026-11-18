@@ -379,7 +379,7 @@ let test_exclusive_publication_survives_crash () =
   Eio_fs.Sync.publish ~max_bytes:7L ~exclusive:Eio_fs.Sync.Rename.capability
     (fs / "state")
     (Eio.Flow.copy_string "payload");
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "published data survives its barriers" "payload"
     (Eio.Path.load (Crash.post_crash ctl / "state"))
@@ -586,7 +586,7 @@ let test_append_nothing_retries_the_barriers () =
   | () -> Alcotest.fail "the directory barrier did not fail"
   | exception Eio.Io _ -> ());
   Eio_fs.Sync.append_lines p [];
-  Crash.crash ctl;
+  Crash.cut ctl;
   Alcotest.(check string)
     "the log survives" "1\n"
     (Eio.Path.load (Crash.post_crash ctl / "log.jsonl"))
@@ -742,7 +742,7 @@ let test_sparse_durable_and_empty () =
     [ (0L, Cstruct.of_string "HDR"); (12L, Cstruct.of_string "TAIL") ];
   Eio_fs.Sync.publish_sparse ~max_bytes:0L
     ~exclusive:Eio_fs.Sync.Rename.capability ~size_bytes:0L (fs / "empty") [];
-  Crash.crash ctl;
+  Crash.cut ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "sparse bytes survive file and directory barriers"
@@ -1085,7 +1085,7 @@ module Links = struct
       (Result.get_ok
          (publish wrapped ~barrier:Eio_fs.Sync.Barrier.portable (Some "../old")
             "../new library//./checkout"));
-    Crash.crash ctl;
+    Crash.cut ctl;
     Alcotest.(check string)
       "raw link survives native metadata barriers" "../new library//./checkout"
       (Eio.Path.read_link (Crash.post_crash ctl / "portal"))
@@ -1120,7 +1120,7 @@ module Links = struct
       (Result.get_ok
          (publish disk ~barrier:Eio_fs.Sync.Barrier.portable (Some "../new")
             "../new"));
-    Crash.crash ctl;
+    Crash.cut ctl;
     Alcotest.(check string)
       "durable no-op redeems publication" "../new"
       (Eio.Path.read_link (Crash.post_crash ctl / "portal"))
