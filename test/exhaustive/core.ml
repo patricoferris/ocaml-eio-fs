@@ -323,7 +323,7 @@ let run ?(observe = fun _ _ -> ()) ?(before_crash = fun _ -> ()) ~init ~policy
   before_crash t;
   let _pc = C.post_crash t in
   let pc = base in
-  let img = Ch.Private.Internal.crash_image t in
+  let img = Ch.Private.Crash.image t in
   let img =
     List.map
       (fun (p, ino, c) ->

@@ -13,7 +13,6 @@
   journal
   wrapper
   crash
-  chaos_model
   device
   device_traces)
  (libraries

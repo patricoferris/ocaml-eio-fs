@@ -518,7 +518,7 @@ let test_crash_move_needs_ancestor_moves () =
         | `Dir -> p ^ "/"
         | `File s -> p ^ "=" ^ s
         | `Link t -> p ^ "->" ^ t)
-      (Chaos.Private.Internal.crash_image
+      (Chaos.Private.Crash.image
          (Crash.crash ctl;
           ctl))
     |> List.sort String.compare

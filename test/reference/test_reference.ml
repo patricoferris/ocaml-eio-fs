@@ -84,7 +84,7 @@ let crash ?block_size ~as_alice ops k policy =
         | `File content -> { path; k = `F; id; perm; content }
         | `Dir -> { path; k = `D; id; perm; content = "" }
         | `Link _ -> failwith "unexpected link")
-      (Eio_fs_chaos.Private.Internal.crash_image ctl)
+      (Eio_fs_chaos.Private.Crash.image ctl)
   in
   (List.sort compare image, pending)
 

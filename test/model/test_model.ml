@@ -854,7 +854,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
       let pc = Eio_fs_mem.as_user Eio_fs_mem.root (Crash.post_crash ctl) in
       let got = render_real pc in
       (* Invariants on the image, by inode. *)
-      let image = Eio_fs_chaos.Private.Internal.crash_image ctl in
+      let image = Eio_fs_chaos.Private.Crash.image ctl in
       let inos = List.map (fun (_, ino, _) -> ino) image in
       (match
          List.find_opt

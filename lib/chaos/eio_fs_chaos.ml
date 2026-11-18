@@ -89,7 +89,11 @@ module Private = struct
   let scenarios = Device.scenarios
   let eio_posix_differs = Device.eio_posix_differs
 
-  module Crash = Chaos_model.Crash
-  module Law = Chaos_model.Law
-  module Internal = Chaos_model.Internal
+  module Crash = Crash
+  module Law = Law
+
+  module Internal = struct
+    let replay_copied () = Atomic.get Blocks.copied
+    let descriptors = Memfs.descriptors
+  end
 end
