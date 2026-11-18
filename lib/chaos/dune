@@ -8,11 +8,9 @@
   fault
   ack
   disk
-  law
   blocks
   journal
   wrapper
-  crash
   device
   device_traces)
  (libraries
