@@ -16,4 +16,5 @@ let () =
       Test_sampling.suite;
       Test_restart.suite;
       Test_ack.suite;
+      Test_under.suite;
     ]

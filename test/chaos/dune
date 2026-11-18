@@ -3,6 +3,10 @@
  (libraries
   eio
   eio.mock
+  eio.unix
+  eio-chaos
+  eio-net.chaos
+  unix
   eio_fs
   eio-fs.chaos
   eio-fs.sync
