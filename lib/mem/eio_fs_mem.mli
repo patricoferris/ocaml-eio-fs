@@ -86,6 +86,22 @@
       runs as {!root}, the default, misses the bugs a user meets: a directory it
       cannot create in, a file it cannot open. *)
 
+(** {1:errors Errors}
+
+    An error Eio classifies raises the {!Eio.Fs} error of its class:
+    [Not_found], [Already_exists], [Permission_denied], [File_too_large], and
+    [Symlink] for a path through too many links. Every other error is an
+    {!Eio.Io} error of no class, as eio_posix raises it. Each carries {!Eio_fs},
+    but [Symlink], which carries nothing, and the [Permission_denied] of a
+    confined directory, whose code names the path asked for. Below, "the error
+    EISDIR names" is the one whose {!Eio_fs} names EISDIR's error, "is a
+    directory", and likewise for each errno. *)
+
+type Eio.Exn.Backend.t +=
+  | Eio_fs of string
+        (** The backend code of the filesystem's errors: the operation, the
+            error and the path, as ["rmdir: directory not empty: /d"]. *)
+
 (** {1:users Users} *)
 
 type user = {

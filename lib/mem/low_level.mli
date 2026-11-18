@@ -3,6 +3,11 @@
     This is an internal interface: the functions mirror the POSIX [*at] calls,
     each resolving against the file system its directory belongs to. *)
 
+type Eio.Exn.Backend.t +=
+  | Eio_fs of string
+        (** The code of the filesystem's errors: the operation, the error and
+            the path, as ["rmdir: directory not empty: /d"]. *)
+
 module Error : sig
   val badf : unit -> 'a
   (** [badf ()] raises [Invalid_argument] for a closed descriptor or directory

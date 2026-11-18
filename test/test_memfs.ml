@@ -328,7 +328,7 @@ let test_error_code () =
   (match Eio.Path.rmdir (fs / "d") with
   | () -> Alcotest.fail "removed a directory that is not empty"
   | exception Eio.Io (Eio.Exn.X (Eio_fs_mem.Eio_fs what), _) ->
-      Alcotest.(check string) "what" "rmdir: directory not empty: d" what);
+      Alcotest.(check string) "what" "rmdir: directory not empty: /d" what);
   match Eio.Path.load (fs / "missing") with
   | _ -> Alcotest.fail "loaded a missing file"
   | exception Eio.Io (Eio.Fs.E (Not_found (Eio_fs_mem.Eio_fs _)), _) -> ()

@@ -15,16 +15,17 @@ let code_name = function
 
 (* Faults surface as ordinary [Eio.Io] exceptions so consumers cannot tell a
    real backend failure from an injected one. *)
-type Eio.Exn.Backend.t += Chaos of string
+type Eio.Exn.Backend.t += Injected_fault of string
 
 let () =
   Eio.Exn.Backend.register_pp (fun ppf -> function
-    | Chaos s ->
+    | Injected_fault s ->
         Fmt.pf ppf "chaos:%s" s;
         true
     | _ -> false)
 
-let backend code ctx = Fmt.kstr (fun s -> Chaos s) "%s %s" (code_name code) ctx
+let backend code ctx =
+  Fmt.kstr (fun s -> Injected_fault s) "%s %s" (code_name code) ctx
 
 let raise_open code path =
   match code with

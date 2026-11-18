@@ -17,6 +17,8 @@
 open! Hermetic
 open Eio_fs_mem_core
 
+type Eio.Exn.Backend.t += Eio_fs = Low_level.Eio_fs
+
 type user = Low_level.User.t = {
   uid : int64;
   gid : int64;

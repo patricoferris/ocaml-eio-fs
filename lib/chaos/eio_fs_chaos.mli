@@ -255,6 +255,13 @@ val device :
 
 (** {1:blocks Building blocks} *)
 
+type Eio.Exn.Backend.t +=
+  | Injected_fault of string
+        (** The backend code carried by the errors a wrapper raises, the
+            [Not_found] and [Permission_denied] of a refused access included:
+            the errno's name and the path, as ["EIO /f"]. So an injected error
+            is an {!Eio.Io} error of the shape a disk's error has. *)
+
 (** The operations a wrapper sees. *)
 module Op : sig
   type kind =

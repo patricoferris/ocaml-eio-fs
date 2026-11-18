@@ -3,6 +3,7 @@ module M = Chaos_model
 module Plan = Chaos_plan
 
 type env = Eio_chaos.env
+type Eio.Exn.Backend.t += Injected_fault = M.Injected_fault
 
 module Op = Plan.Op
 module Fault = Plan.Fault

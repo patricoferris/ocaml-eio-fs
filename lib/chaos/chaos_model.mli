@@ -9,6 +9,11 @@
     {!Crash} models power loss: it tracks which writes and directory changes a
     barrier has made durable, and rebuilds the base as a cut leaves it. *)
 
+type Eio.Exn.Backend.t +=
+  | Injected_fault of string
+        (** The code of an injected error: its errno's name and what it names,
+            as ["EIO /f"]. *)
+
 type hook = space:bool -> Chaos_plan.Op.t -> Chaos_plan.Fault.t option
 (** The type for what a wrapper asks about each operation. [space] is whether
     the operation may fail for want of room: a write, an open that makes its
