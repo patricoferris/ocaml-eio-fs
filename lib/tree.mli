@@ -48,8 +48,8 @@ val revoke_writes : _ Eio.Path.t -> unit
     @raise Eio.Io when an entry cannot be read or changed. *)
 
 val entries : _ Eio.Path.t -> string list
-(** [entries dir] is the names in the directory [dir], and [[]] when nothing
-    stands at [dir].
+(** [entries dir] is [Eio.Path.read_dir dir], and [[]] where nothing stands at
+    [dir]: a directory not made yet reads as an empty one.
 
     @raise Eio.Io when [dir] cannot be listed for another reason. *)
 
@@ -72,9 +72,9 @@ val links : _ Eio.Path.t -> string -> (string * string) list option
     @raise Eio.Io when a directory or a link of the walk cannot be read. *)
 
 val name : _ Eio.Path.t -> string
-(** [name path] is what [path] is called outside the program: its native
-    spelling when the capability has one, and the rendering {!Eio.Path.pp} gives
-    it when not. *)
+(** [name path] is [Eio.Path.native path], and the rendering {!Eio.Path.pp}
+    gives [path] where that is [None], as for an in-memory path: a name for a
+    message, which never raises where {!Eio.Path.native_exn} does. *)
 
 val same_file : _ Eio.Path.t -> _ Eio.Path.t -> bool
 (** [same_file a b] is [true] iff [a] and [b] both name a file and their stats
