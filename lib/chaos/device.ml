@@ -5,31 +5,40 @@ type os = [ `Linux | `Macos ]
 
 let os_name : os -> string = function `Linux -> "Linux" | `Macos -> "macOS"
 
-type row = {
-  linux : string list;
-  macos : string list;
-  linux_eio : string list;
-  macos_eio : string list;
-}
-
+(* A trace: each row's outcomes by the name of their column, keyed by the
+   row's operations. A column is found by its name, so one added later
+   changes nothing here. *)
 let parse csv =
-  String.split_on_char '\n' csv
-  |> List.filter (fun l -> l <> "" && not (String.starts_with ~prefix:"#" l))
-  |> List.tl
-  |> List.map (fun line ->
-      let outcomes s = String.split_on_char '|' s in
-      match String.split_on_char ',' line with
-      | [ ops; l; m; le; me ] ->
-          ( ops,
-            {
-              linux = outcomes l;
-              macos = outcomes m;
-              linux_eio = outcomes le;
-              macos_eio = outcomes me;
-            } )
-      | _ -> Fmt.failwith "Eio_fs: a malformed kernel trace line: %s" line)
+  let lines =
+    String.split_on_char '\n' csv
+    |> List.filter (fun l -> l <> "" && not (String.starts_with ~prefix:"#" l))
+  in
+  match lines with
+  | [] -> Fmt.failwith "Eio_fs: an empty kernel trace"
+  | header :: lines ->
+      let columns = List.tl (String.split_on_char ',' header) in
+      List.map
+        (fun line ->
+          match String.split_on_char ',' line with
+          | ops :: cols when List.length cols = List.length columns ->
+              ( ops,
+                List.combine columns (List.map (String.split_on_char '|') cols)
+              )
+          | _ -> Fmt.failwith "Eio_fs: a malformed kernel trace line: %s" line)
+        lines
 
 let rows = lazy (parse Device_traces.csv)
+
+(* The columns that hold [os]'s answers: the kernel's straight, and Eio's
+   backend's. *)
+let columns : os -> string * string = function
+  | `Linux -> ("linux", "linux eio_posix")
+  | `Macos -> ("macos", "macos eio_posix")
+
+let column row name =
+  match List.assoc_opt name row with
+  | Some c -> c
+  | None -> Fmt.failwith "Eio_fs: the kernel trace has no column %S" name
 
 (* Operations where an Eio directory answers as eio_posix does, not as the
    kernel, and why. *)
@@ -65,9 +74,8 @@ let answers ?(trace = rows) (os : os) name ops =
     | None -> Fmt.failwith "Eio_fs: no kernel trace for the scenario %S" name
   in
   let kernel, eio =
-    match os with
-    | `Linux -> (row.linux, row.linux_eio)
-    | `Macos -> (row.macos, row.macos_eio)
+    let k, e = columns os in
+    (column row k, column row e)
   in
   let cut =
     let rec go j = function
@@ -160,9 +168,7 @@ let eio_posix_differs os =
   List.filter_map
     (fun (scenario, ops) ->
       let row = List.assoc (K.key ops) (Lazy.force rows) in
-      let eio =
-        match os with `Linux -> row.linux_eio | `Macos -> row.macos_eio
-      in
+      let eio = column row (snd (columns os)) in
       let want = List.map (fun a -> a.want) (answers os scenario ops) in
       if eio <> want then Some scenario else None)
     K.scenarios
