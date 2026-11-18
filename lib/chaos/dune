@@ -4,10 +4,13 @@
  (flags
   (:standard -open Eio_fs_mem_core))
  (private_modules
-  chaos_plan
-  chaos_blocks
-  chaos_journal
-  chaos_law
+  op
+  fault
+  ack
+  disk
+  law
+  blocks
+  journal
   chaos_model
   device
   device_traces)

@@ -1,5 +1,5 @@
 open Alcobar
-open Chaos_journal
+open Journal
 
 (* Workloads over six inodes, so entries share directories. Inodes [0] and
    [1] are on disk before the journal starts; the others exist once an entry

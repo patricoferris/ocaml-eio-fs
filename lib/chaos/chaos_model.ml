@@ -37,9 +37,6 @@ let raise_open code path =
 
 let raise_io code ctx = raise (Eio.Exn.create (Eio.Exn.X (backend code ctx)))
 
-module Op = Chaos_plan.Op
-module Fault = Chaos_plan.Fault
-
 type hook = space:bool -> Op.t -> Fault.t option
 
 (* The hook and what numbers the operations it is asked about: every
@@ -582,7 +579,7 @@ let wrap sched (base, path) =
    reorder unsynced writes. Writes and reads are delegated unchanged while the
    program runs; the base is rewritten only at crash time. *)
 module Crash = struct
-  open Chaos_blocks
+  open Blocks
 
   type boxed = base_dir
 
@@ -904,7 +901,7 @@ module Crash = struct
     mutable recorded : location list;
   }
 
-  type metadata_entry = op Chaos_journal.entry
+  type metadata_entry = op Journal.entry
 
   (* Documented in chaos.mli. *)
   type policy =
@@ -948,7 +945,7 @@ module Crash = struct
            log is compacted. *)
     mutable logged : int; (* the log's length *)
     mutable pending_changes : int; (* its entries still pending *)
-    journal : op Chaos_journal.t;
+    journal : op Journal.t;
         (* Every entry since the last whole snapshot, committed or not. *)
     mutable snapshot : state option; (* the last whole snapshot *)
     mutable snapped : (string * Cstruct.t) Inos.t;
@@ -1048,7 +1045,7 @@ module Crash = struct
         ctl.log
     in
     let metadata =
-      Chaos_journal.fold
+      Journal.fold
         (fun (e : metadata_entry) acc ->
           if e.committed then acc else e.op.meta :: acc)
         ctl.journal []
@@ -1608,7 +1605,7 @@ module Crash = struct
         (locs_of ~root:(path_segments root_path) (locations ctl))
     in
     snap ctl st;
-    Chaos_journal.reset ~upto:ctl.seq ctl.journal
+    Journal.reset ~upto:ctl.seq ctl.journal
 
   (* The proper prefixes of [segs], outermost first: the directories above
      the entry it names. *)
@@ -1630,7 +1627,7 @@ module Crash = struct
   let touched ?(committed = false) ctl =
     let root = root_segs ctl in
     let paths = Hashtbl.create 16 and inos = Hashtbl.create 16 in
-    Chaos_journal.fold
+    Journal.fold
       (fun (e : metadata_entry) () ->
         if committed || not e.committed then begin
           List.iter (fun segs -> Hashtbl.replace paths segs ()) e.op.paths;
@@ -1760,7 +1757,7 @@ module Crash = struct
   (* How the entry that made [ino] put it: where, as what, and the files it
      recorded below it. *)
   let made_node ctl ino =
-    match Chaos_journal.made ctl.journal ino with
+    match Journal.made ctl.journal ino with
     | None -> None
     | Some e ->
         List.find_map
@@ -1781,7 +1778,7 @@ module Crash = struct
     | None, None -> err_not_wrapped ()
     | None, Some snapshot ->
         let st =
-          Chaos_journal.fold
+          Journal.fold
             (fun (e : metadata_entry) st ->
               if e.committed then replay_in ctl st e else st)
             ctl.journal snapshot
@@ -1796,12 +1793,12 @@ module Crash = struct
     | None -> ()
     | Some snapshot ->
         let rec go st =
-          match Chaos_journal.pop_committed ctl.journal with
+          match Journal.pop_committed ctl.journal with
           | Some e ->
               let st = replay_in ctl st e in
               List.iter
                 (fun n ->
-                  if Inos.mem n st.inos then Chaos_journal.forget ctl.journal n)
+                  if Inos.mem n st.inos then Journal.forget ctl.journal n)
                 e.nodes;
               go st
           | None -> st
@@ -1838,7 +1835,7 @@ module Crash = struct
   let settle ctl =
     (* The image the commits replay over, built before any of them. *)
     let (_ : state) = durable ctl in
-    Chaos_journal.settle ctl.journal
+    Journal.settle ctl.journal
       ~reached:(fun e -> reached (durable ctl) e)
       ~commit:(fun newly ->
         ctl.effects <- ctl.effects + List.length newly;
@@ -1848,7 +1845,7 @@ module Crash = struct
   (* Hold a barrier on the directory [ino] for the entries that changed it,
      then commit what it can. *)
   let commit_dir_ino ?upto ctl ino =
-    ctl.effects <- ctl.effects + Chaos_journal.bar ?upto ctl.journal ino;
+    ctl.effects <- ctl.effects + Journal.bar ?upto ctl.journal ino;
     settle ctl
 
   let dir_ino ctl dir =
@@ -1859,9 +1856,8 @@ module Crash = struct
      once the image holds the file. It covers the changes made before
      [upto], as a barrier on a directory does. *)
   let commit_attrs ~upto ctl ~ino =
-    if Chaos_journal.has_attrs ctl.journal then begin
-      ctl.effects <-
-        ctl.effects + Chaos_journal.sync_attrs ~upto ctl.journal ino;
+    if Journal.has_attrs ctl.journal then begin
+      ctl.effects <- ctl.effects + Journal.sync_attrs ~upto ctl.journal ino;
       settle ctl
     end
 
@@ -1874,8 +1870,8 @@ module Crash = struct
     let segs =
       Option.value ~default:[] (tree_path ~root:(root_segs ctl) fs.rel)
     in
-    Chaos_journal.add ctl.journal
-      (Chaos_journal.entry ~seq:ctl.seq ~attrs_ino:st.ino ~clear:true
+    Journal.add ctl.journal
+      (Journal.entry ~seq:ctl.seq ~attrs_ino:st.ino ~clear:true
          {
            meta =
              metadata_unsynced ~path:fs.rel
@@ -1942,7 +1938,7 @@ module Crash = struct
               | Place _ | Move _ | Remove _ | Attrs _ | Times _ -> false)
             e.op.delta
         in
-        Chaos_journal.fold
+        Journal.fold
           (fun (e : metadata_entry) () ->
             if in_delta e then e.op.recorded <- location :: e.op.recorded)
           ctl.journal ()
@@ -2224,7 +2220,7 @@ module Crash = struct
       in
       let journal =
         List.rev
-          (Chaos_journal.fold
+          (Journal.fold
              (fun (e : metadata_entry) acc -> e :: acc)
              ctl.journal [])
       in
@@ -2274,14 +2270,14 @@ module Crash = struct
                 if !again then st
                 else if Hashtbl.mem included e.seq then replay_in ctl st e
                 else if reached st e then begin
-                  let clears = Chaos_journal.clears_before ctl.journal e.seq in
+                  let clears = Journal.clears_before ctl.journal e.seq in
                   List.iter
                     (fun (d : metadata_entry) ->
                       if not (Hashtbl.mem included d.seq) then begin
                         Hashtbl.replace included d.seq ();
                         if d != e then again := true
                       end)
-                    (clears @ Chaos_journal.closure ctl.journal e);
+                    (clears @ Journal.closure ctl.journal e);
                   replay_in ctl st e
                 end
                 else st)
@@ -2292,10 +2288,10 @@ module Crash = struct
         build ()
       in
       lost :=
-        Chaos_journal.first_lost ctl.journal ~kept:(fun e ->
+        Journal.first_lost ctl.journal ~kept:(fun e ->
             Hashtbl.mem included e.seq);
       kept :=
-        Chaos_journal.last_kept ctl.journal ~kept:(fun e ->
+        Journal.last_kept ctl.journal ~kept:(fun e ->
             Hashtbl.mem included e.seq);
       let tree =
         match tree with
@@ -2558,9 +2554,9 @@ module Crash = struct
           | Place _ | Attrs _ | Times _ -> (moved, removed))
         delta ([], [])
     in
-    Chaos_journal.add ctl.journal
-      (Chaos_journal.entry ~seq:ctl.seq ~dirs ?attrs_ino ~nodes ~parents
-         ~ancestors ~moved ~removed
+    Journal.add ctl.journal
+      (Journal.entry ~seq:ctl.seq ~dirs ?attrs_ino ~nodes ~parents ~ancestors
+         ~moved ~removed
          {
            meta;
            delta;
@@ -3530,7 +3526,7 @@ module Crash = struct
       files = Hashtbl.create 8;
       known = Hashtbl.create 8;
       log = [];
-      journal = Chaos_journal.v ();
+      journal = Journal.v ();
       snapshot = None;
       snapped = Inos.empty;
       left = [];
@@ -3608,10 +3604,10 @@ module Crash = struct
         Fmt.pf ppf "chown %s %Ld:%Ld #%d" u.path uid gid u.seq
 end
 
-module Law = Chaos_law
+module Law = Law
 
 module Internal = struct
-  let replay_copied () = Atomic.get Chaos_blocks.copied
+  let replay_copied () = Atomic.get Blocks.copied
   let crash_image (ctl : Crash.t) = List.rev ctl.image
   let descriptors = Memfs.descriptors
 end

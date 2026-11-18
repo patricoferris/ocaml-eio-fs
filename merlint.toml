@@ -54,7 +54,7 @@ exclude = ["E606"]
 # The law's table: one entry per operation, made where a module of Eio's
 # interface signature defines it, so an operation Eio adds fails to compile.
 [[rules]]
-files = ["lib/chaos/chaos_law.ml"]
+files = ["lib/chaos/law.ml"]
 exclude = ["E005"]
 
 # Eio_fs_unix includes this module: its names are the library's own, such as
@@ -65,7 +65,7 @@ exclude = ["E330"]
 
 # Crash is one controller: its journal, the cut and the handles it wraps read
 # and write the same mutable state, and no seam left in it brings a part under
-# the bound without exporting that state. Chaos_blocks and Chaos_journal hold
+# the bound without exporting that state. Blocks and Journal hold
 # the parts that stand alone.
 [[rules]]
 files = ["lib/chaos/chaos_model.ml"]

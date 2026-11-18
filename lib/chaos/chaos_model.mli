@@ -14,7 +14,7 @@ type Eio.Exn.Backend.t +=
         (** The code of an injected error: its errno's name and what it names,
             as ["EIO /f"]. *)
 
-type hook = space:bool -> Chaos_plan.Op.t -> Chaos_plan.Fault.t option
+type hook = space:bool -> Op.t -> Fault.t option
 (** The type for what a wrapper asks about each operation. [space] is whether
     the operation may fail for want of room: a write, an open that makes its
     file, a [mkdir], a [symlink] or a [rename]. *)
@@ -26,7 +26,7 @@ type sched
 val schedule : hook -> sched
 (** [schedule f] asks [f] about each operation, numbered from [1]. *)
 
-val applies : space:bool -> Chaos_plan.Op.t -> Chaos_plan.Fault.t -> bool
+val applies : space:bool -> Op.t -> Fault.t -> bool
 (** [applies ~space op f] is [true] iff [f] does something to [op]: a fault of
     another kind of operation does nothing, and neither does an [ENOSPC] on an
     open or a change that makes nothing, as Linux never answers it there. *)
@@ -354,7 +354,7 @@ end
 
 (* For this package's tests. It hands out nothing a schedule's holder could
    not reach by running an operation through a wrapper. *)
-module Law = Chaos_law
+module Law = Law
 (** What {!wrap} does with each operation of each interface it binds. *)
 
 module Internal : sig

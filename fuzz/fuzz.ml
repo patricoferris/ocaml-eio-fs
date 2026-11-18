@@ -1,5 +1,5 @@
 (* Quick check: [dune build @fuzz]; with AFL: [crow start --cpus=4].
-   Extents, Chaos_blocks and Chaos_journal are private to eio_fs: their
+   Extents, Blocks and Journal are private to eio_fs: their
    sources are compiled in here. *)
 
 let () =

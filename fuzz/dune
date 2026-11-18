@@ -2,10 +2,10 @@
  (files ../lib/mem/extents.{ml,mli}))
 
 (copy_files#
- (files ../lib/chaos/chaos_blocks.{ml,mli}))
+ (files ../lib/chaos/blocks.{ml,mli}))
 
 (copy_files#
- (files ../lib/chaos/chaos_journal.{ml,mli}))
+ (files ../lib/chaos/journal.{ml,mli}))
 
 (executable
  (name fuzz)

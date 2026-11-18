@@ -1,5 +1,5 @@
 open Alcobar
-open Chaos_blocks
+open Blocks
 
 (* Small offsets, lengths and block sizes, so changes share blocks. *)
 let change =

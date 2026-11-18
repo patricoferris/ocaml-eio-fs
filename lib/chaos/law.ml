@@ -1,6 +1,6 @@
 open! Hermetic
 
-type kind = Chaos_plan.Op.kind
+type kind = Op.kind
 type cls = Forwarded | Intercepted of kind | Synthesized | Unsupported
 type iface = Dir | Read | Write | Dir_handler | File_handler
 type t = { iface : iface; name : string; cls : cls; why : string }
@@ -326,7 +326,7 @@ let pp_iface ppf = function
 
 let pp_cls ppf = function
   | Forwarded -> Fmt.string ppf "forwarded"
-  | Intercepted k -> Fmt.pf ppf "intercepted (%s)" (Chaos_plan.Op.kind_name k)
+  | Intercepted k -> Fmt.pf ppf "intercepted (%s)" (Op.kind_name k)
   | Synthesized -> Fmt.string ppf "synthesized"
   | Unsupported -> Fmt.string ppf "unsupported"
 
