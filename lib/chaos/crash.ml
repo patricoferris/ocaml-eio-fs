@@ -439,7 +439,7 @@ let clog_change ctl fs change =
 let clog_write ctl fs ~offset data =
   if Cstruct.length data > 0 then clog_change ctl fs (Write { offset; data })
 
-let to_unsynced e =
+let unsynced_of_entry e =
   match e.change with
   | Write { offset; data } ->
       {
@@ -461,7 +461,7 @@ let to_unsynced e =
 let unsynced ctl =
   let data =
     List.filter_map
-      (fun e -> if is_pending e then Some (to_unsynced e) else None)
+      (fun e -> if is_pending e then Some (unsynced_of_entry e) else None)
       ctl.log
   in
   let metadata =
@@ -1605,7 +1605,7 @@ let content verdict (fs : fstate) =
             written_back verdict fs ~mine ~len_upto ~len_from rng
         | Survive pred, _ ->
             survive verdict fs ~mine ~truncated ~upto (fun e ->
-                pred (to_unsynced e))
+                pred (unsynced_of_entry e))
         | Drop_unsynced, _ when List.exists truncated mine ->
             survive verdict fs ~mine ~truncated ~upto (fun _ -> false)
         | _ -> copy_cs (bytes_of fs.durable)

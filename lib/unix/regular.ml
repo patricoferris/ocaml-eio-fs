@@ -37,6 +37,8 @@ let rec read_into fd (buffer : Cstruct.t) =
    a cancel is seen between reads; it is closed before the result. *)
 type t = { contents : string; perm : Eio.File.Unix_perm.t }
 
+let pp ppf t = Fmt.pf ppf "%d bytes, mode %o" (String.length t.contents) t.perm
+
 let read ~max_bytes path =
   if max_bytes < 0 || max_bytes = max_int then
     Fmt.invalid_arg

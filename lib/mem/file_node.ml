@@ -9,6 +9,9 @@ let literal ~stat contents =
 
 let size f = Optint.Int63.to_int f.stat.size
 
+let pp ppf f =
+  Fmt.pf ppf "%d bytes, %d pages held" (size f) (Extents.pages f.held)
+
 (* The 512-byte blocks of the 4096-byte pages a write put bytes in, as
    tmpfs counts them: a hole holds none. *)
 let blocks f = Int64.of_int (Extents.pages f.held * (4096 / 512))

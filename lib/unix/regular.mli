@@ -4,6 +4,9 @@
 type t = { contents : string; perm : Eio.File.Unix_perm.t }
 (** See {!Eio_fs_unix.regular}. *)
 
+val pp : t Fmt.t
+(** [pp] formats a file's size and mode. *)
+
 val read :
   max_bytes:int -> _ Eio.Path.t -> (t option, Eio_fs.Nofollow.error) result
 (** See {!Eio_fs_unix.read_regular}. *)

@@ -17,6 +17,9 @@ type t = {
       (** The byte ranges a write covered: the rest of the file is a hole. *)
 }
 
+val pp : t Fmt.t
+(** [pp] formats a file's size and the bytes its writes hold. *)
+
 val v : stat:Eio.File.Stat.t -> t
 (** [v ~stat] is an empty file. *)
 
