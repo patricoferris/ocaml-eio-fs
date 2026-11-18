@@ -1,7 +1,7 @@
 (** Sequences of filesystem operations and their outcomes, run through
     {!Eio.Path} on any backend: eio_posix to record a kernel, any directory to
-    compare with the recording. [fs.csv] beside this module holds what Linux and
-    macOS answered. *)
+    compare with the recording. [test/interop/kernel/traces/fs.csv] holds what
+    Linux and macOS answered. *)
 
 type ids = { gid : int; other_gid : int }
 (** The type for the groups an outcome names: the user's primary group, and a

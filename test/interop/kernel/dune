@@ -12,7 +12,13 @@
   fmt
   alcotest)
  (deps
-  ../../lib/kernel/fs.csv
+  (source_tree traces)
   scripts/generate.sh
   scripts/record.ml
-  ../../lib/kernel/eio_fs_kernel.ml))
+  ../../../lib/kernel/eio_fs_kernel.ml))
+
+(rule
+ (alias regen-traces)
+ (deps
+  (alias traces/regen))
+ (action (progn)))

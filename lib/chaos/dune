@@ -29,13 +29,13 @@
 
 (rule
  (target device_traces.ml)
- (deps ../kernel/fs.csv)
+ (deps ../../test/interop/kernel/traces/fs.csv)
  (action
   (with-stdout-to
    %{target}
    (progn
     (echo "let csv = {fs_csv|")
-    (cat ../kernel/fs.csv)
+    (cat ../../test/interop/kernel/traces/fs.csv)
     (echo "|fs_csv}\n")))))
 
 (mdx

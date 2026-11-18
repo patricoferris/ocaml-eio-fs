@@ -1,21 +1,22 @@
 # Kernel traces
 
-`lib/kernel/fs.csv` holds what Linux and macOS answer to each scenario of
-`lib/kernel/eio_fs_kernel.ml`, recorded straight from the kernel through
-`Unix` and through eio_posix. The library ships both. `test.ml` replays every
-scenario on the in-memory filesystem and compares.
+`traces/fs.csv` holds what Linux and macOS answer to each scenario of
+[`lib/kernel/eio_fs_kernel.ml`](../../../lib/kernel/eio_fs_kernel.ml),
+recorded straight from the kernel through `Unix` and through eio_posix. The
+library ships both. `test.ml` replays every scenario on the in-memory
+filesystem and compares.
 
 ## Regenerate
 
 On macOS, with Docker running:
 
-    REGEN=1 dune build @lib/kernel/regen-traces
+    REGEN=1 dune build @test/interop/kernel/regen-traces
 
 `scripts/generate.sh` records macOS natively in `$TMPDIR` and Linux in the
 Docker image it pins by digest, on a tmpfs, both as an ordinary user with a
 supplementary group. Both run the eio_posix of the opam switch dune builds in:
 Linux installs that version in the image. dune promotes the result into
-`lib/kernel/fs.csv`.
+`traces/fs.csv`.
 
 ## Provenance
 

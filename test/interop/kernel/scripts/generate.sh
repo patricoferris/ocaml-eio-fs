@@ -2,7 +2,7 @@
 # Records the outcomes through eio_posix as a user: macOS natively, on the
 # default case-insensitive APFS, so this runs on a Mac, and Linux in Docker,
 # on a tmpfs, in the image pinned below. The trace starts with the "# key:
-# value" lines test/os/README.md lists.
+# value" lines test/interop/kernel/README.md lists.
 #   generate.sh OUT RECORD_EXE
 set -euo pipefail
 [ "$(uname -s)" = Darwin ] || {
@@ -23,12 +23,12 @@ pin="$(sed -n 's/^ *src: "\(.*\)"$/\1/p' "$switch/.opam-switch/overlay/eio_posix
 eio_label="$eio${pin:+ from $pin}"
 image="ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460"
 
-scripts=(test/os/scripts lib/kernel/eio_fs_kernel.ml lib/kernel/eio_fs_kernel.mli)
+scripts=(test/interop/kernel/scripts lib/kernel/eio_fs_kernel.ml lib/kernel/eio_fs_kernel.mli)
 revision="$(git -C "$src" log -1 --format=%H -- "${scripts[@]}")"
 [ -z "$(git -C "$src" status --porcelain -- "${scripts[@]}")" ] ||
   revision="$revision with uncommitted changes"
-# test/os/test.ml checks this digest.
-digest="$(cat "$src/test/os/scripts/record.ml" "$src/lib/kernel/eio_fs_kernel.ml" | md5 -q)"
+# test/interop/kernel/test.ml checks this digest.
+digest="$(cat "$src/test/interop/kernel/scripts/record.ml" "$src/lib/kernel/eio_fs_kernel.ml" | md5 -q)"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/fs-traces.XXXXXX")"
 trap 'chmod -R u+rwx "$work"; rm -rf "$work"' EXIT
@@ -42,7 +42,7 @@ if [ -e "$work/case/A" ]; then case_=case-insensitive; else case_=case-sensitive
 
 # Only the recorder is built, from the interpreter and its own directory.
 docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:exec,mode=1777 \
-  -v "$src/test/os/scripts:/os/scripts:ro" -v "$src/lib/kernel:/os/kernel:ro" \
+  -v "$src/test/interop/kernel/scripts:/os/scripts:ro" -v "$src/lib/kernel:/os/kernel:ro" \
   -v "$work/out:/out" "$image" bash -euc "
     mkdir -p ~/rec/kernel && cp -r /os/scripts ~/rec
     cp /os/kernel/eio_fs_kernel.ml /os/kernel/eio_fs_kernel.mli ~/rec/kernel
@@ -70,7 +70,7 @@ macos_os="$(sw_vers -productName) $(sw_vers -productVersion), $(uname -srm)"
 macos_user="uid $(id -u), groups $(id -G)"
 {
   printf '# %s: %s\n' \
-    script test/os/scripts/generate.sh \
+    script test/interop/kernel/scripts/generate.sh \
     "script revision" "$revision" \
     "script digest" "$digest" \
     recorded "$(date -u +%Y-%m-%d)" \

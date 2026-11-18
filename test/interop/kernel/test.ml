@@ -231,7 +231,7 @@ let test_host () =
 (* record.ml and eio_fs_kernel.ml decide every outcome; generate.sh decides
    only where they run, which the other lines record. *)
 let test_provenance () =
-  Provenance.check ~trace:"../../lib/kernel/fs.csv"
+  Provenance.check ~trace:"traces/fs.csv"
     ~keys:
       [
         "script";
@@ -250,11 +250,11 @@ let test_provenance () =
         "linux user";
         "linux eio_posix";
       ]
-    ~code:[ "scripts/record.ml"; "../../lib/kernel/eio_fs_kernel.ml" ]
+    ~code:[ "scripts/record.ml"; "../../../lib/kernel/eio_fs_kernel.ml" ]
     ~script:"scripts/generate.sh"
 
 let () =
-  Alcotest.run "eio-fs.os"
+  Alcotest.run "eio-fs.kernel"
     [
       ( "trace",
         [ Alcotest.test_case "names its provenance" `Quick test_provenance ] );

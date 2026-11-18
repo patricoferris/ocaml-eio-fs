@@ -1,0 +1,13 @@
+(rule
+ (alias regen)
+ (mode promote)
+ (enabled_if
+  (= %{env:REGEN=0} 1))
+ (targets fs.csv)
+ (deps
+  ../scripts/record.exe
+  (source_tree ../scripts)
+  ../../../../lib/kernel/eio_fs_kernel.ml
+  ../../../../lib/kernel/eio_fs_kernel.mli)
+ (action
+  (run bash ../scripts/generate.sh fs.csv ../scripts/record.exe)))

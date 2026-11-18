@@ -16,8 +16,16 @@ exclude = ["E005", "E105"]
 # The traces pin the recorder's digest: renaming its entry point means
 # recording them again on Linux and on macOS.
 [[rules]]
-files = ["test/os/scripts/record.ml"]
+files = ["test/interop/kernel/scripts/record.ml"]
 exclude = ["E330"]
+
+# The kernel's trace is an unquoted table the recorder writes, read with
+# String.split_on_char, as eio-net reads its own. The host test removes its
+# scratch directory, which the scenarios leave unwritable, with chmod and rm:
+# it runs no oracle.
+[[rules]]
+files = ["test/interop/kernel/*"]
+exclude = ["E825", "E803"]
 
 # A setup's I_dir, I_file and I_link stand beside a node's Dir, File and Link
 # in the same module: bare, the later type would take the names.

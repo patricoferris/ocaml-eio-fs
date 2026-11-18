@@ -2,21 +2,3 @@
  (name eio_fs_kernel)
  (package eio-fs)
  (libraries eio fmt cstruct optint))
-
-(rule
- (alias regen-traces)
- (mode promote)
- (enabled_if
-  (= %{env:REGEN=0} 1))
- (targets fs.csv)
- (deps
-  ../../test/os/scripts/record.exe
-  (source_tree ../../test/os/scripts)
-  eio_fs_kernel.ml
-  eio_fs_kernel.mli)
- (action
-  (run
-   bash
-   ../../test/os/scripts/generate.sh
-   fs.csv
-   ../../test/os/scripts/record.exe)))
