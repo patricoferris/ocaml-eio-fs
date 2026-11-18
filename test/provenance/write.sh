@@ -5,9 +5,10 @@
 # ORACLE is the oracle directory from the project root; PROBE, a script that
 # prints "key: value" lines naming the oracle and the kernel it ran on, and
 # each INPUT, a file that decides the traces, are relative to ORACLE; TRACE
-# is a file recorded, provenance itself being skipped. The revision and the
-# inputs are read before COMMAND runs: a recording can take an hour, and a
-# commit made meanwhile did not record the traces.
+# is a file recorded, provenance itself being skipped. The generator named is
+# COMMAND's first word that is a file, a script of ORACLE. The revision and
+# the inputs are read before COMMAND runs: a recording can take an hour, and
+# a commit made meanwhile did not record the traces.
 set -euo pipefail
 oracle=$1 probe=$2
 shift 2
@@ -24,6 +25,21 @@ while [ "$1" != -- ]; do
 done
 shift
 src="${DUNE_SOURCEROOT:?run through dune}"
+
+generator=
+for w in "$@"; do
+  if [ -f "$w" ]; then
+    generator=$w
+    break
+  fi
+done
+case "$generator" in
+../*) generator="$oracle/${generator#../}" ;;
+*)
+  echo "write.sh: no script of $oracle in the command: $*" >&2
+  exit 2
+  ;;
+esac
 
 md5() {
   if command -v md5sum >/dev/null; then
@@ -47,7 +63,7 @@ for f in "${inputs[@]}"; do pins+=("input: $f $(md5 "../$f")"); done
 {
   echo "# Where the traces beside this file come from. write.sh rewrites it on"
   echo "# REGEN=1; test/provenance checks it."
-  echo "generator: $oracle/scripts/generate.sh"
+  echo "generator: $generator"
   echo "regenerate: REGEN=1 dune build @$oracle/regen-traces"
   echo "revision: $revision"
   echo "recorded: $(date -u +%Y-%m-%dT%H:%M:%SZ)"
