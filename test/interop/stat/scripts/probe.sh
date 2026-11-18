@@ -8,7 +8,8 @@ image="$(sed -n 's/^image="\(.*\)"$/\1/p' "$dir/generate.sh")"
 [ -n "$image" ] || { echo "probe.sh: no image in generate.sh" >&2; exit 1; }
 switch="${OPAM_SWITCH_PREFIX:?run in an opam switch}"
 pkg=("$switch"/.opam-switch/packages/eio_posix.*)
-echo "eio_posix: ${pkg[0]##*/eio_posix.}"
+pin="$(sed -n 's/^ *src: "\(.*\)"$/\1/p' "$switch/.opam-switch/overlay/eio_posix/opam" 2>/dev/null || true)"
+echo "eio_posix: ${pkg[0]##*/eio_posix.}${pin:+ from $pin}"
 
 echo "docker: $(docker version --format '{{.Server.Version}}')"
 echo "linux.image: $image"
