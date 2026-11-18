@@ -1,4 +1,6 @@
-(** Bounded reads that refuse a symbolic link at the final path component. *)
+(** Reads and walks that follow no symbolic link: bounded reads that refuse one
+    at the final path component, and the parents of a path opened one component
+    at a time ({!with_parent}). *)
 
 type error =
   [ `Invalid of string
@@ -46,3 +48,40 @@ val with_regular :
     leaves it with no name, and it is read as it was opened.
 
     @raise Eio.Io when the stat or the open fails, or as [f] raises. *)
+
+(** {1:parents Parents} *)
+
+type Eio.Exn.Backend.t +=
+  | Unsafe_parent of string
+        (** Why {!with_parent} refused a path: it names nothing beneath its
+            directory, or a parent on the way is not a directory, or was
+            replaced while it was opened. *)
+
+val with_parent :
+  ?create:[ `Never | `If_missing of Eio.File.Unix_perm.t ] ->
+  _ Eio.Path.t ->
+  (Eio.Fs.dir_ty Eio.Path.t -> 'a) ->
+  'a
+(** [with_parent ~create path fn] is [fn leaf], [leaf] the last component of
+    [path] in its parent, which is opened one component at a time from [path]'s
+    directory, following no symbolic link. [path]'s name must be relative, with
+    no empty, ["."] or [".."] component and no NUL byte. Each parent must be a
+    directory, and the one opened must be the one its stat found just before, so
+    a parent replaced meanwhile, by a symbolic link or anything else, is
+    refused. [create] (defaults to [`Never]) says what a missing parent does:
+    [`If_missing perm] makes it with mode [perm], less the umask, and [`Never]
+    refuses it; a parent made stays when a later one is refused.
+
+    A parent renamed while it is open still holds [leaf]. The parents are closed
+    when [fn] returns or raises, and [leaf] must not be used after that;
+    [path]'s directory stays open. [with_parent] does not follow a last
+    component that is a symbolic link; what [fn] does with [leaf] resolves it as
+    {!Eio.Path} does. Any backend serves, a directory with no host descriptor
+    included.
+
+    @raise Eio.Io
+      with {!Eio.Fs.Permission_denied} carrying {!Unsafe_parent} for a refused
+      name, a parent that is not a directory, or one replaced while it was
+      opened; with {!Eio.Fs.Not_found} for a missing parent under [`Never]; and
+      as the stat, open or mkdir of a parent raises otherwise. [fn] is then not
+      called. *)

@@ -389,8 +389,7 @@ val publish_link :
 
     One writer replaces a given [path] at a time: a caller with several wraps
     each call in {!Lock.use}, and a writer outside it can still race between the
-    last read and the rename. [Eio_fs_unix.Link.publish] makes a link only where
-    there is none, beneath parents it opens without following links, and syncs
-    nothing.
+    last read and the rename. Under [Eio_fs.Nofollow.with_parent], no symbolic
+    link on the way to [path] redirects the publication.
 
     @raise Eio.Io as the filesystem operations and barriers raise. *)

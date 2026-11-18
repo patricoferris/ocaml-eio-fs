@@ -1,8 +1,8 @@
 (** System calls on descriptors and beneath directory descriptors, each the one
     call its name says, with the runtime released around it. They block, so a
     fiber makes them from a system thread; they perform no effect, so any Eio
-    backend runs them. {!Eio_fs_unix.Link} makes one per system-thread hop,
-    {!Eio_fs_unix.Batch} many. *)
+    backend runs them. {!Eio_fs_unix.read_regular} makes one per system-thread
+    hop, {!Eio_fs_unix.Batch} many. *)
 
 type raw_stat = {
   dev : int64;
@@ -54,10 +54,3 @@ val kind_of_mode : int -> Eio.File.Stat.kind
 
 val stat_of_raw : raw_stat -> Eio.File.Stat.t
 (** [stat_of_raw s] is [s] as an {!Eio.File.Stat.t}. *)
-
-type Eio.Exn.Backend.t +=
-  | Unsafe_parent of string  (** See {!Eio_fs_unix.Unsafe_parent}. *)
-
-val unsafe_parent : string -> 'a
-(** [unsafe_parent why] raises {!Eio.Io} with {!Eio.Fs.Permission_denied}
-    carrying [Unsafe_parent why]. *)

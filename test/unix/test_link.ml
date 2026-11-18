@@ -1,6 +1,6 @@
-(* POSIX openat(2), O_NOFOLLOW and symlinkat(2): authority is the opened
-   directory, and an existing destination must never be overwritten. *)
-module Link = Eio_fs_unix.Link
+(* A link published and a regular file read beneath parents held by
+   [Eio_fs.Nofollow.with_parent]: authority is the opened directory, and an
+   existing destination must never be overwritten. *)
 
 let ( / ) = Eio.Path.( / )
 
@@ -25,13 +25,13 @@ let exists path =
   | _ -> true
   | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> false
 
-let publish ?create root path target =
-  Link.with_parent ?create (root / path) (fun parent ->
-      Link.publish parent ~target)
+let publish_in leaf ~target =
+  Eio_fs.Sync.publish_link ~barrier:Eio_fs.Sync.Barrier.none ~target leaf
 
-let publication message expected actual =
-  let show = function Link.Created -> "created" | Present -> "present" in
-  Alcotest.(check string) message (show expected) (show (get actual))
+let publish ?create root path target =
+  Eio_fs.Nofollow.with_parent ?create (root / path) (publish_in ~target)
+
+let published message actual = Alcotest.(check unit) message () (get actual)
 
 let contains needle text =
   let n = String.length needle and len = String.length text in
@@ -41,29 +41,29 @@ let contains needle text =
   loop 0
 
 (* A parent refused raises before the callback, naming the path. *)
-let refused_parent root path fn =
+let refused_parent path fn =
   match fn () with
   | _ -> Alcotest.failf "%s was not refused" path
   | exception (Eio.Io _ as e) ->
       Alcotest.(check bool)
-        "names the path" true
-        (contains (Eio.Path.native_exn (root / path)) (Printexc.to_string e))
+        ("names the path: " ^ Printexc.to_string e)
+        true
+        (contains path (Printexc.to_string e))
 
 let mkdir = `If_missing 0o755
 
-let refusal ?kind root path result =
+let refusal ?kind result =
   match result with
   | Ok _ -> Alcotest.fail "unexpected publication"
   | Error (`Changed _) -> Alcotest.fail "refused as a link to another target"
   | Error (`Invalid message) ->
-      List.iter
-        (fun expected ->
-          Alcotest.(check bool) expected true (contains expected message))
-        ([ Eio.Path.native_exn (root / path); "repair" ] @ Option.to_list kind)
+      Option.iter
+        (fun kind -> Alcotest.(check bool) kind true (contains kind message))
+        kind
 
 let test_missing_parents () =
   with_dir @@ fun root ->
-  publication "new link" Link.Created
+  published "new link"
     (publish ~create:mkdir root "packages/engine/library" "/selected");
   Alcotest.(check string)
     "exact target" "/selected"
@@ -73,15 +73,14 @@ let test_existing_parent () =
   with_dir @@ fun root ->
   Eio.Path.mkdir ~perm:0o755 (root / "packages");
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "packages/kept") "untouched";
-  publication "new leaf" Link.Created
-    (publish root "packages/library" "/selected");
+  published "new leaf" (publish root "packages/library" "/selected");
   Alcotest.(check string)
     "unrelated bytes" "untouched"
     (Eio.Path.load (root / "packages/kept"))
 
 let test_missing_refusal () =
   with_dir @@ fun root ->
-  refused_parent root "missing/library" (fun () ->
+  refused_parent "missing/library" (fun () ->
       publish root "missing/library" "/selected");
   Alcotest.(check bool) "no parent created" false (exists (root / "missing"))
 
@@ -91,7 +90,7 @@ let test_ancestor_link () =
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "outside/kept")
     "outside bytes";
   Eio.Path.symlink ~link_to:"outside" (root / "packages");
-  refused_parent root "packages/library" (fun () ->
+  refused_parent "packages/library" (fun () ->
       publish ~create:mkdir root "packages/library" "/selected");
   Alcotest.(check string)
     "outside untouched" "outside bytes"
@@ -103,8 +102,7 @@ let test_ancestor_link () =
 let test_foreign_leaf () =
   with_dir @@ fun root ->
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "library") "foreign bytes";
-  refusal ~kind:"regular file" root "library"
-    (publish root "library" "/selected");
+  refusal ~kind:"regular file" (publish root "library" "/selected");
   Alcotest.(check string)
     "foreign bytes" "foreign bytes"
     (Eio.Path.load (root / "library"))
@@ -122,7 +120,7 @@ let test_wrong_link () =
 let test_existing_exact () =
   with_dir @@ fun root ->
   Eio.Path.symlink ~link_to:"/selected" (root / "library");
-  publication "observation" Link.Present (publish root "library" "/selected");
+  published "observation" (publish root "library" "/selected");
   Alcotest.(check string)
     "link text" "/selected"
     (Eio.Path.read_link (root / "library"))
@@ -131,9 +129,9 @@ let test_parent_file () =
   with_dir @@ fun root ->
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "parent") "parent bytes";
   let called = ref false in
-  refused_parent root "parent/library" (fun () ->
-      Link.with_parent ~create:mkdir (root / "parent/library") (fun _ ->
-          called := true));
+  refused_parent "parent/library" (fun () ->
+      Eio_fs.Nofollow.with_parent ~create:mkdir (root / "parent/library")
+        (fun _ -> called := true));
   Alcotest.(check bool) "no callback for a non-directory" false !called;
   Alcotest.(check string)
     "parent bytes preserved" "parent bytes"
@@ -144,7 +142,7 @@ let test_nested_link () =
   Eio.Path.mkdir ~perm:0o755 (root / "packages");
   Eio.Path.mkdir ~perm:0o755 (root / "packages/outside");
   Eio.Path.symlink ~link_to:"outside" (root / "packages/nested");
-  refused_parent root "packages/nested/library" (fun () ->
+  refused_parent "packages/nested/library" (fun () ->
       publish ~create:mkdir root "packages/nested/library" "/selected");
   Alcotest.(check (list string))
     "outside stays empty" []
@@ -155,7 +153,7 @@ let test_directory_leaf () =
   Eio.Path.mkdir ~perm:0o755 (root / "library");
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "library/kept")
     "nested bytes";
-  refusal ~kind:"directory" root "library" (publish root "library" "/selected");
+  refusal ~kind:"directory" (publish root "library" "/selected");
   Alcotest.(check string)
     "directory content preserved" "nested bytes"
     (Eio.Path.load (root / "library/kept"))
@@ -164,8 +162,7 @@ let test_fifo_leaf () =
   with_dir @@ fun root ->
   let path = Eio.Path.native_exn (root / "library") in
   Unix.mkfifo path 0o600;
-  refusal ~kind:"foreign filesystem entry" root "library"
-    (publish root "library" "/selected");
+  refusal ~kind:"fifo" (publish root "library" "/selected");
   match (Unix.lstat path).Unix.st_kind with
   | Unix.S_FIFO -> ()
   | _ -> Alcotest.fail "the FIFO was replaced"
@@ -174,11 +171,11 @@ let test_parent_race () =
   with_dir @@ fun root ->
   Eio.Path.mkdir ~perm:0o755 (root / "packages");
   Eio.Path.mkdir ~perm:0o755 (root / "outside");
-  publication "held descriptor" Link.Created
-    (Link.with_parent (root / "packages/library") (fun parent ->
+  published "held descriptor"
+    (Eio_fs.Nofollow.with_parent (root / "packages/library") (fun parent ->
          Eio.Path.rename (root / "packages") (root / "held");
          Eio.Path.symlink ~link_to:"outside" (root / "packages");
-         Link.publish parent ~target:"/selected"));
+         publish_in parent ~target:"/selected"));
   Alcotest.(check string)
     "held directory receives link" "/selected"
     (Eio.Path.read_link (root / "held/library"));
@@ -188,11 +185,11 @@ let test_parent_race () =
 
 let test_leaf_race () =
   with_dir @@ fun root ->
-  refusal root "library"
-    (Link.with_parent (root / "library") (fun parent ->
+  refusal
+    (Eio_fs.Nofollow.with_parent (root / "library") (fun parent ->
          Eio.Path.save ~create:(`Exclusive 0o600) (root / "library")
            "racing bytes";
-         Link.publish parent ~target:"/selected"));
+         publish_in parent ~target:"/selected"));
   Alcotest.(check string)
     "racing writer preserved" "racing bytes"
     (Eio.Path.load (root / "library"))
@@ -209,7 +206,8 @@ let test_admission () =
     "no admission side effects" [] (Eio.Path.read_dir root)
 
 let read ?(max_bytes = 1024) root path =
-  Link.with_parent (root / path) (Link.read_regular ~max_bytes)
+  Eio_fs.Nofollow.with_parent (root / path)
+    (Eio_fs_unix.read_regular ~max_bytes)
 
 let read_refused ~kind root path =
   match read root path with
@@ -218,7 +216,8 @@ let read_refused ~kind root path =
   | Error (`Invalid message) ->
       Alcotest.(check bool) kind true (contains kind message);
       Alcotest.(check bool)
-        "names the path" true
+        ("names the path: " ^ message)
+        true
         (contains (Eio.Path.native_exn (root / path)) message)
 
 let test_read_regular () =
@@ -226,7 +225,7 @@ let test_read_regular () =
   Eio.Path.mkdir ~perm:0o755 (root / "packages");
   Eio.Path.save ~create:(`Exclusive 0o640) (root / "packages/library") "bytes";
   (match get (read root "packages/library") with
-  | Some { Link.contents; perm } ->
+  | Some { Eio_fs_unix.contents; perm } ->
       Alcotest.(check string) "the file's bytes" "bytes" contents;
       Alcotest.(check int) "the descriptor's permission bits" 0o640 perm
   | None -> Alcotest.fail "a present regular file read as absent");
@@ -243,7 +242,8 @@ let test_read_symlink_leaf () =
   | Error `Too_large -> Alcotest.fail "a symbolic link refused as too large"
   | Error (`Invalid message) ->
       Alcotest.(check bool)
-        "names the path" true
+        ("names the path: " ^ message)
+        true
         (contains (Eio.Path.native_exn (root / "library")) message)
 
 let test_read_directory_leaf () =
@@ -267,7 +267,7 @@ let test_read_too_large () =
       Alcotest.(check (option string))
         "at the bound" (Some "12345")
         (Option.map
-           (fun (r : Link.regular) -> r.contents)
+           (fun (r : Eio_fs_unix.regular) -> r.contents)
            (get (read ~max_bytes:5 root "library")))
 
 (* The bound is Nofollow's: a negative one or max_int is refused. *)

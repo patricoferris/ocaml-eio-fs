@@ -67,17 +67,3 @@ let stat_of_raw (r : raw_stat) : Eio.File.Stat.t =
     mtime = r.mtime;
     ctime = r.ctime;
   }
-
-(* Why a [with_parent] refused a path: it names nothing beneath its
-   directory, or a parent on the way is not a directory it may descend. *)
-type Eio.Exn.Backend.t += Unsafe_parent of string
-
-let () =
-  Eio.Exn.Backend.register_pp (fun f -> function
-    | Unsafe_parent reason ->
-        Fmt.string f reason;
-        true
-    | _ -> false)
-
-let unsafe_parent reason =
-  raise (Eio.Fs.err (Eio.Fs.Permission_denied (Unsafe_parent reason)))

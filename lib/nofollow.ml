@@ -48,3 +48,80 @@ let with_regular path f =
       match refused ~opened:true stat with
       | Some why -> Error (`Invalid why)
       | None -> Ok (f file stat))
+
+type Eio.Exn.Backend.t += Unsafe_parent of string
+
+let () =
+  Eio.Exn.Backend.register_pp (fun f -> function
+    | Unsafe_parent reason ->
+        Fmt.string f reason;
+        true
+    | _ -> false)
+
+let fail_unsafe_parent fmt =
+  Fmt.kstr
+    (fun reason ->
+      raise (Eio.Fs.err (Eio.Fs.Permission_denied (Unsafe_parent reason))))
+    fmt
+
+(* A missing parent is made as [create] says, and one another caller made
+   meanwhile is stated all the same. *)
+let stat_parent ~create next =
+  match Eio.Path.stat ~follow:false next with
+  | stat -> stat
+  | exception (Eio.Io (Eio.Fs.E (Not_found _), _) as e) -> (
+      match create with
+      | `Never -> raise e
+      | `If_missing perm ->
+          (try Eio.Path.mkdir ~perm next
+           with Eio.Io (Eio.Fs.E (Already_exists _), _) -> ());
+          Eio.Path.stat ~follow:false next)
+
+(* Each parent is stated, opened, and stated again through the opened handle:
+   one replaced between the two, by a link or anything else, is refused. A
+   failure of these steps names the path asked for; what [fn] raises passes
+   through. *)
+let with_parent ?(create = `Never) (input : _ Eio.Path.t) fn =
+  let root, path = (input :> Eio.Fs.dir_ty Eio.Path.t) in
+  let parent_step f =
+    try f ()
+    with Eio.Io _ as ex ->
+      let bt = Printexc.get_raw_backtrace () in
+      Eio.Exn.reraise_with_context ex bt "opening the parents of %S" path
+  in
+  let parents, leaf =
+    match Eio_fs_internal.beneath path with
+    | Ok parts -> parts
+    | Error reason -> fail_unsafe_parent "%s" reason
+  in
+  let rec descend (dir : Eio.Fs.dir_ty Eio.Path.t) = function
+    | [] -> fn Eio.Path.(dir / leaf)
+    | name :: rest ->
+        Eio.Switch.run @@ fun sw ->
+        let held =
+          parent_step @@ fun () ->
+          let next = Eio.Path.(dir / name) in
+          let before = stat_parent ~create next in
+          if before.kind <> `Directory then
+            fail_unsafe_parent "%S has a non-directory parent" path;
+          let held = Eio.Path.open_dir ~sw next in
+          let after = Eio.Path.stat ~follow:false held in
+          if
+            not
+              (Int64.equal before.dev after.dev
+              && Int64.equal before.ino after.ino
+              && after.kind = `Directory)
+          then fail_unsafe_parent "%S changed while opening its parent" path;
+          held
+        in
+        descend (held :> Eio.Fs.dir_ty Eio.Path.t) rest
+  in
+  match parents with
+  | [] ->
+      Eio.Switch.run @@ fun sw ->
+      let held =
+        parent_step @@ fun () ->
+        Eio.Path.open_dir ~sw Eio.Path.(of_dir root / ".")
+      in
+      descend (held :> Eio.Fs.dir_ty Eio.Path.t) []
+  | _ -> descend (Eio.Path.of_dir root) parents

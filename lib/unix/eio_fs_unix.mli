@@ -7,9 +7,9 @@
     {{!trees}tree removal} in batches, {{!files}positioned reads and writes},
     the {{!sparse}sparse map}, {{!rename}exclusive rename}, POSIX
     {{!record_locks}record locks}, {{!lock_files}lock files} and their leases,
-    {{!val-xattrs}extended attributes}, {{!links}links} and {{!batches}batches}
-    confined beneath a directory, and a root whose calls run
-    {{!inline}on the calling thread}.
+    {{!val-xattrs}extended attributes}, {{!regular_files}regular files} read
+    without waiting on a FIFO, {{!batches}batches} confined beneath a directory,
+    and a root whose calls run {{!inline}on the calling thread}.
 
     A call that takes an [Eio.Path.t] or an [Eio.File.t] reports a failure as
     [Eio.Io], as Eio's own backends do; one that takes a [Unix.file_descr]
@@ -727,88 +727,41 @@ val set_xattr : _ Eio.Path.t -> string -> string -> unit
       descriptor.
     @raise Invalid_argument if [path] or [name] holds a NUL byte. *)
 
-(** {1:links Confined links} *)
+(** {1:regular_files Regular files} *)
 
-type Eio.Exn.Backend.t +=
-  | Unsafe_parent of string
-        (** Why {!Link.with_parent} or {!Batch.with_parent} refused a path: it
-            names nothing beneath its directory, or a parent on the way is not
-            one it may descend. *)
+type regular = { contents : string; perm : Eio.File.Unix_perm.t }
+(** The type for a regular file read: its bytes and its permission bits, both
+    from the one descriptor. *)
 
-(** Symbolic links published beneath a parent directory held open, each
-    component opened with [O_NOFOLLOW], so no link on the way can redirect the
-    publication. *)
-module Link : sig
-  type t
-  (** The type for a held parent directory and the final component of a path
-      beneath it, as {!val-with_parent} passes them. *)
+val read_regular :
+  max_bytes:int ->
+  _ Eio.Path.t ->
+  (regular option, Eio_fs.Nofollow.error) result
+(** [read_regular ~max_bytes path] is like {!Eio_fs.Nofollow.read_file} but
+    opens [path]'s last component with [O_NONBLOCK | O_NOCTTY] too, so a FIFO is
+    refused without waiting for a writer and a terminal never becomes the
+    controlling one, reads an absent entry as [None], and gives the file's
+    permission bits. It is [Ok (Some r)], [r] the bytes read from the descriptor
+    [openat] gives with [O_NOFOLLOW] and its permission bits by [fstat], or
+    [Ok None] if the entry is absent. It is [Error `Too_large] for a file of
+    more than [max_bytes] bytes or one that grows beyond its size at open, and
+    [Error (`Invalid msg)] for a symbolic link or another non-regular entry and
+    for a failed open, [msg] naming the path. The descriptor is closed before
+    the result. [path]'s parent is opened as {!Eio.Path.open_dir} opens it;
+    {!Eio_fs.Nofollow.with_parent} hands over a [path] whose parents follow no
+    symbolic link.
 
-  (** The type for what {!publish} found. *)
-  type publication =
-    | Created  (** The link was made. *)
-    | Present  (** A link holding exactly the target was already there. *)
+    {b Warning.} A hard link is the file it names, wherever its other names are:
+    a regular file linked beneath the parent from outside the root is read. Only
+    a process that can write both directories makes such a link.
 
-  val with_parent : ?create:create -> _ Eio.Path.t -> (t -> 'a) -> 'a
-  (** [with_parent ~create path fn] opens each parent component of [path]
-      beneath its directory with [O_DIRECTORY | O_NOFOLLOW], then is [fn]
-      applied to the held parent and final basename. [path]'s name must be
-      non-empty, canonical and relative, with no empty, dot, dot-dot or NUL
-      components. [create] (defaults to [`Never]) says what a missing parent
-      does: [`If_missing mode] creates it with [mode] less the umask, and
-      [`Never] refuses it. Created parents survive a later refusal.
-
-      The handle is closed when [fn] returns and must not escape its scope. A
-      renamed parent remains the held directory; this does not promise that its
-      original textual path still names it. Where [fn]'s result or exception
-      comes from [fn], it passes through unchanged.
-
-      @raise Eio.Io
-        with {!Eio.Fs.Permission_denied} carrying {!Unsafe_parent} if [path]'s
-        name is refused, and as [openat] or [mkdirat] fails on a parent
-        otherwise ({!Eio.Fs.Not_found} for a missing one, {!Eio.Fs.Symlink} for
-        a symbolic link); [fn] is then not called.
-      @raise Invalid_argument if [path]'s directory carries no Unix descriptor.
-  *)
-
-  val publish :
-    t ->
-    target:string ->
-    (publication, [ `Changed of string option | `Invalid of string ]) result
-  (** [publish parent ~target] is [Ok Created] once [symlinkat] has made a
-      symbolic link holding [target] where there was no entry, and [Ok Present]
-      if a link holding exactly [target] is there already. It is
-      [Error (`Changed (Some held))] if a link holding [held] is there, and
-      [Error (`Invalid msg)] for any other entry, for an empty [target] or one
-      holding a NUL byte, and for a failed call, [msg] naming the path and what
-      to do before a retry. Nothing is replaced. {!Eio_fs.Sync.publish_link}
-      replaces an entry, on any backend, and syncs it. *)
-
-  type regular = { contents : string; perm : Eio.File.Unix_perm.t }
-  (** The type for a regular file read: its bytes and its permission bits, both
-      from the one descriptor. *)
-
-  val read_regular :
-    max_bytes:int -> t -> (regular option, Eio_fs.Nofollow.error) result
-  (** [read_regular ~max_bytes parent] opens the final entry beneath the held
-      parent with [O_NOFOLLOW | O_NONBLOCK | O_NOCTTY] and is [Ok (Some r)], [r]
-      the bytes read from that descriptor and its permission bits by [fstat], or
-      [Ok None] if the entry is absent. It is [Error `Too_large] for a file of
-      more than [max_bytes] bytes or one that grows beyond its size at open, and
-      [Error (`Invalid msg)] for a symbolic link or another non-regular entry (a
-      FIFO is refused without waiting for a writer, and a terminal never becomes
-      the controlling one) and for a failed open, [msg] naming the path. The
-      descriptor is closed before the result. The enclosing {!val-with_parent}
-      refuses symbolic links at every parent component.
-
-      {b Warning.} A hard link is the file it names, wherever its other names
-      are: a regular file linked beneath the parent from outside the root is
-      read. Only a process that can write both directories makes such a link.
-
-      @raise Eio.Io if the opened entry cannot be stated or read.
-      @raise Invalid_argument
-        if [max_bytes] is negative or [max_int], as {!Eio_fs.Nofollow.read_file}
-        refuses it. *)
-end
+    @raise Eio.Io
+      if [path]'s parent cannot be opened, or the opened entry cannot be stated
+      or read.
+    @raise Invalid_argument
+      if [max_bytes] is negative or [max_int], as {!Eio_fs.Nofollow.read_file}
+      refuses it, if [path] is the root of its capability, or if its parent has
+      no Unix descriptor. *)
 
 (** {1:batches Batched directory operations} *)
 
@@ -829,21 +782,6 @@ end
     identity before descending. The last component is never followed either. The
     directories a run opens are held for the run only. *)
 module Batch : sig
-  val with_parent : _ Eio.Path.t -> (Eio.Fs.dir_ty Eio.Path.t -> 'a) -> 'a
-  (** [with_parent path fn] is [fn leaf], [leaf] the last component of [path] in
-      its parent, which is opened one component at a time from [path]'s
-      directory. Each parent must be a directory, and the one opened must be the
-      one its stat found just before, so a parent replaced meanwhile, by a
-      symbolic link or anything else, is refused. A parent renamed while it is
-      open still holds [leaf]. The parents are closed when [fn] returns or
-      raises, and [leaf] must not be used after that; [path]'s directory stays
-      open. A last component that is a symbolic link is not followed.
-
-      @raise Eio.Io
-        with {!Eio.Fs.Permission_denied} carrying {!Unsafe_parent} for a refused
-        name, a parent that is not a directory, or one replaced while it was
-        opened; with {!Eio.Fs.Not_found} for a missing parent. *)
-
   type t
   (** The type for a directory that batches run beneath. *)
 

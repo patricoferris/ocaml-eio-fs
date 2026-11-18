@@ -93,6 +93,23 @@ let basename path =
     in
     match name with "." | ".." -> "" | name -> name
 
+let beneath path =
+  let refuse fmt = Printf.ksprintf (fun reason -> Error reason) fmt in
+  if String.equal path "" then refuse "empty path"
+  else if Char.equal path.[0] '/' then refuse "%S is absolute" path
+  else if String.contains path '\000' then refuse "%S holds a NUL byte" path
+  else
+    let parts = String.split_on_char '/' path in
+    match
+      List.find_opt (function "" | "." | ".." -> true | _ -> false) parts
+    with
+    | Some "" -> refuse "%S has an empty component" path
+    | Some c -> refuse "%S has a %s component" path c
+    | None -> (
+        match List.rev parts with
+        | leaf :: rev_parents -> Ok (List.rev rev_parents, leaf)
+        | [] -> refuse "empty path")
+
 let native_name path =
   match Eio.Path.native path with
   | Some native -> native

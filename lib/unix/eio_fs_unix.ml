@@ -298,9 +298,9 @@ module Rename_backend = Eio_fs_sync.Rename.Make (Exclusive_rename)
 let exclusive_rename = Rename_backend.v ()
 let inline_fs = Inline.fs
 
-type Eio.Exn.Backend.t += Unsafe_parent = At.Unsafe_parent
+type regular = Regular.t = { contents : string; perm : Eio.File.Unix_perm.t }
 
-module Link = Link
+let read_regular = Regular.read
 
 (* {1 Extended attributes} *)
 
@@ -405,21 +405,9 @@ module Batch = struct
   (* The parent components and the last one, or a refusal for any path that
      could name something outside the root. *)
   let split path =
-    if String.equal path "" then fail_refused "empty path"
-    else if Char.equal path.[0] '/' then fail_refused "%S is absolute" path
-    else if String.contains path '\000' then
-      fail_refused "%S holds a NUL byte" path
-    else
-      let parts = String.split_on_char '/' path in
-      List.iter
-        (function
-          | "" -> fail_refused "%S has an empty component" path
-          | ("." | "..") as c -> fail_refused "%S has a %s component" path c
-          | _ -> ())
-        parts;
-      match List.rev parts with
-      | leaf :: rev_parents -> (List.rev rev_parents, leaf)
-      | [] -> fail_refused "empty path"
+    match Eio_fs_internal.beneath path with
+    | Ok parts -> parts
+    | Error reason -> raise (Refused reason)
 
   (* The directories one run has opened, by their path beneath the root. A
      rename or a directory removal may move or delete any of them, so either
@@ -498,54 +486,25 @@ module Batch = struct
     | exception Unix.Unix_error (code, call, arg) ->
         Error (`Unix (code, call, arg))
 
-  let with_parent (input : _ Eio.Path.t) fn =
-    let root, path = (input :> Eio.Fs.dir_ty Eio.Path.t) in
-    let parents, leaf =
-      match split path with
-      | parts -> parts
-      | exception Refused reason -> At.unsafe_parent reason
-    in
-    let rec descend (dir : Eio.Fs.dir_ty Eio.Path.t) = function
-      | [] -> fn Eio.Path.(dir / leaf)
-      | name :: rest ->
-          let next = Eio.Path.(dir / name) in
-          let before = Eio.Path.stat ~follow:false next in
-          if before.kind <> `Directory then
-            Fmt.kstr At.unsafe_parent "%S has a non-directory parent" path;
-          Eio.Path.with_open_dir next (fun held ->
-              let after = Eio.Path.stat ~follow:false held in
-              if
-                not
-                  (Int64.equal before.dev after.dev
-                  && Int64.equal before.ino after.ino
-                  && after.kind = `Directory)
-              then
-                Fmt.kstr At.unsafe_parent "%S changed while opening its parent"
-                  path;
-              descend (held :> Eio.Fs.dir_ty Eio.Path.t) rest)
-    in
-    match parents with
-    | [] ->
-        Eio.Path.with_open_dir
-          Eio.Path.(of_dir root / ".")
-          (fun held -> descend (held :> Eio.Fs.dir_ty Eio.Path.t) [])
-    | _ -> descend (Eio.Path.of_dir root) parents
-
   let portable root = function
     | Mkdir { path; perm } ->
-        with_parent Eio.Path.(root / path) (Eio.Path.mkdir ~perm);
+        Eio_fs.Nofollow.with_parent
+          Eio.Path.(root / path)
+          (Eio.Path.mkdir ~perm);
         Done
     | Create { path; perm; contents } ->
-        with_parent
+        Eio_fs.Nofollow.with_parent
           Eio.Path.(root / path)
           (fun p ->
             Eio.Path.save ~follow:false ~create:(`Exclusive perm) p contents);
         Done
     | Symlink { path; target } ->
-        with_parent Eio.Path.(root / path) (Eio.Path.symlink ~link_to:target);
+        Eio_fs.Nofollow.with_parent
+          Eio.Path.(root / path)
+          (Eio.Path.symlink ~link_to:target);
         Done
     | Unlink { path; dir } ->
-        with_parent
+        Eio_fs.Nofollow.with_parent
           Eio.Path.(root / path)
           (fun p ->
             if dir then Eio.Path.rmdir p
@@ -554,13 +513,16 @@ module Batch = struct
             else Eio.Path.unlink p);
         Done
     | Rename { src; dst } ->
-        with_parent
+        Eio_fs.Nofollow.with_parent
           Eio.Path.(root / src)
-          (fun src -> with_parent Eio.Path.(root / dst) (Eio.Path.rename src));
+          (fun src ->
+            Eio_fs.Nofollow.with_parent
+              Eio.Path.(root / dst)
+              (Eio.Path.rename src));
         Done
     | Link _ -> fail_refused "hard links require a native directory"
     | Lstat path ->
-        with_parent
+        Eio_fs.Nofollow.with_parent
           Eio.Path.(root / path)
           (fun p -> Stat (Eio.Path.stat ~follow:false p))
 

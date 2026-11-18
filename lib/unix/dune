@@ -1,7 +1,7 @@
 (library
  (name eio_fs_unix)
  (public_name eio-fs.unix)
- (private_modules lock at link inline)
+ (private_modules lock at regular inline)
  (foreign_stubs
   (language c)
   (names eio_fs_unix_stubs)

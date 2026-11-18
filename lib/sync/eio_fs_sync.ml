@@ -660,7 +660,11 @@ let link_target path =
   match Eio.Path.kind ~follow:false path with
   | `Not_found -> Ok None
   | `Symbolic_link -> Ok (Some (Eio.Path.read_link path))
-  | _ -> Error (`Invalid "the entry to replace is not a symbolic link")
+  | #Eio.File.Stat.kind as kind ->
+      Error
+        (`Invalid
+           (Fmt.str "%a is a %a, not a symbolic link" Eio.Path.pp path
+              Eio.File.Stat.pp_kind kind))
 
 (* The link is made under a fresh name and removed unless renamed into
    place, so a refusal or a raise leaves only what was there. *)

@@ -73,6 +73,12 @@ val bounded_read :
     ends the file, and what [validate] or [read] raises otherwise is propagated.
 *)
 
+val beneath : string -> (string list * string, string) result
+(** [beneath path] is [Ok (parents, leaf)], [path]'s components before its last
+    and its last, when [path] can name nothing outside the directory it is
+    resolved in: it is [Error why] for a path that is empty, absolute, holds a
+    NUL byte or has an empty, ["."] or [".."] component. *)
+
 val native_name : _ Eio.Path.t -> string
 (** [native_name path] is [Eio.Path.native path], and the rendering
     {!Eio.Path.pp} gives [path] where that is [None], as for an in-memory path:
