@@ -2,7 +2,8 @@
 # Prints, as "key: value" lines, where generate.sh records: the eio_posix of
 # the switch, the Mac it runs on with the filesystem of $TMPDIR, and a
 # container of the image generate.sh pins, run as generate.sh runs one, on a
-# tmpfs, as an ordinary user with a supplementary group.
+# tmpfs, as an ordinary user with a supplementary group, and, kept from the
+# provenance before, where the Windows columns were recorded.
 set -euo pipefail
 dir="$(dirname "$0")"
 image="$(sed -n 's/^image="\(.*\)"$/\1/p' "$dir/generate.sh")"
@@ -33,3 +34,6 @@ docker run --rm --network none --user opam --group-add 4242 \
   echo "linux.filesystem: $(awk -v m=/work "\$2 == m { print \$3 }" /proc/mounts), $c"
   echo "linux.mount: $(awk -v m=/work "\$2 == m { print \$4 }" /proc/mounts)"
   echo "linux.user: uid $(id -u), groups $(id -G)"'
+
+bash "$dir/carry.sh" "${DUNE_SOURCEROOT:?run through dune}/test/interop/kernel/traces/provenance" \
+  windows "CYGWIN|MINGW|MSYS" "eio_windows: |windows[.:]"

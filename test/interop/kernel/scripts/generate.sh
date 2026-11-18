@@ -2,7 +2,8 @@
 # Records the outcomes through eio_posix as a user: macOS natively, on the
 # default case-insensitive APFS, so this runs on a Mac, and Linux in Docker,
 # on a tmpfs, in the image pinned below. Both run the eio_posix of the opam
-# switch dune builds in. probe.sh prints where they ran.
+# switch dune builds in. probe.sh prints where they ran. The columns
+# Windows recorded, generate-windows.sh, are kept from the trace before.
 #   generate.sh OUT_DIR RECORD_EXE
 set -euo pipefail
 [ "$(uname -s)" = Darwin ] || {
@@ -25,7 +26,7 @@ image="ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65
 work="$(mktemp -d "${TMPDIR:-/tmp}/fs-traces.XXXXXX")"
 trap 'chmod -R u+rwx "$work"; rm -rf "$work"' EXIT
 mkdir "$work/macos" "$work/out"
-(cd "$work/macos" && "$record" >"$work/out/macos.csv")
+(cd "$work/macos" && "$record" macos >"$work/out/macos.csv")
 
 # Only the recorder is built, from the interpreter and its own directory.
 docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:exec,mode=1777 \
@@ -41,6 +42,7 @@ docker run --rm --name fs-apfs-rec --user opam --group-add 4242 --tmpfs /work:ex
     opam install -y eio_posix.$eio fmt cstruct optint >/dev/null
     opam exec -- dune build ./scripts/record.exe
     mkdir /work/linux && cd /work/linux
-    ~/rec/_build/default/scripts/record.exe >/out/linux.csv"
+    ~/rec/_build/default/scripts/record.exe linux >/out/linux.csv"
 
-"$record" merge "$work/out/linux.csv" "$work/out/macos.csv" >"$out/fs.csv"
+"$record" merge "$src/test/interop/kernel/traces/fs.csv" \
+  "$work/out/linux.csv" "$work/out/macos.csv" >"$out/fs.csv"

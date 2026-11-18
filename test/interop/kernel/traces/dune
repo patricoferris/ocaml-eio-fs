@@ -2,7 +2,9 @@
  (alias regen)
  (mode promote)
  (enabled_if
-  (= %{env:REGEN=0} 1))
+  (and
+   (= %{env:REGEN=0} 1)
+   (= %{os_type} Unix)))
  (targets fs.csv provenance)
  (deps
   ../scripts/record.exe
@@ -24,5 +26,38 @@
    --
    bash
    ../scripts/generate.sh
+   .
+   ../scripts/record.exe)))
+
+(rule
+ (alias regen)
+ (mode promote)
+ (enabled_if
+  (and
+   (= %{env:REGEN=0} 1)
+   (= %{os_type} Win32)))
+ (targets fs.csv provenance)
+ (deps
+  ../scripts/record.exe
+  (source_tree ../scripts)
+  ../../../../lib/kernel/eio_fs_kernel.ml
+  ../../../../lib/kernel/eio_fs_kernel.mli
+  ../../../provenance/write.sh)
+ (action
+  (run
+   bash
+   ../../../provenance/write.sh
+   test/interop/kernel
+   scripts/probe-windows.sh
+   scripts/generate-windows.sh
+   scripts/basic-user.sh
+   scripts/record.ml
+   scripts/backend.windows.ml
+   ../../../lib/kernel/eio_fs_kernel.ml
+   --
+   %{targets}
+   --
+   bash
+   ../scripts/generate-windows.sh
    .
    ../scripts/record.exe)))
