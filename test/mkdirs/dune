@@ -1,9 +1,10 @@
 (test
  (name test)
+ (package eio-fs)
  (libraries
   eio
   eio_main
-  eio_fs
+  eio-fs
   eio-fs.chaos
   eio-fs.sync
   eio-fs.unix

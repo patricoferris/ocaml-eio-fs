@@ -1,11 +1,12 @@
 (test
  (name test)
+ (package eio-fs)
  (libraries
   provenance
   eio
   eio.mock
   eio_posix
-  eio_fs_mem
+  eio-fs.mem
   eio-fs.chaos
   unix
   fmt

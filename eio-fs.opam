@@ -28,7 +28,7 @@ depends: [
   "fmt"
   "cstruct" {>= "6.2.0"}
   "optint"
-  "mtime"
+  "mtime" {>= "2.0.0"}
   "eio-chaos" {>= "0.1.0" & < "0.2.0"}
   "uucp"
   "uunf"
@@ -59,9 +59,9 @@ build: [
 dev-repo: "git+https://github.com/samoht/ocaml-eio-fs.git"
 x-maintenance-intent: ["(latest)"]
 available: os != "win32"
-# eio-chaos is not on opam yet: drop this pin once it is released.
-# eio-net, which the tests use, is not on opam yet: drop its pin once it is.
+# eio-chaos is not on opam yet: drop its pin once it is released.
+# eio-net, which the tests use, is not on opam yet: drop its pin once it is released.
 pin-depends: [
-  ["eio-chaos.0.1.0" "git+https://github.com/samoht/ocaml-eio-chaos.git#b6b7c5cbb2e9c82e487a33eef553f3506211ae5d"]
+  ["eio-chaos.0.1.0" "git+https://github.com/samoht/ocaml-eio-chaos.git#a6bf5c6ca70aa9abe6b0c5ed6d2205b79cf33b8b"]
   ["eio-net.0.1.0" "git+https://github.com/samoht/ocaml-eio-net.git#db392a72758537f9ab8a8417b7d7e01a0e207372"]
 ]

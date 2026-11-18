@@ -2,8 +2,6 @@
 
 (using mdx 0.4)
 
-(cram enable)
-
 (name eio-fs)
 
 (generate_opam_files true)
@@ -34,7 +32,7 @@ macOS does.")
   fmt
   (cstruct (>= 6.2.0))
   optint
-  mtime
+  (mtime (>= 2.0.0))
   (eio-chaos (and (>= 0.1.0) (< 0.2.0)))
   uucp
   uunf

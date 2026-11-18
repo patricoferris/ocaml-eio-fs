@@ -3,4 +3,5 @@
 
 (test
  (name test)
+ (package eio-fs)
  (libraries alcotest))

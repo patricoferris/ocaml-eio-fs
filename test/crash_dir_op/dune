@@ -1,3 +1,4 @@
 (test
  (name test)
+ (package eio-fs)
  (libraries eio eio-fs.chaos chaos_helpers alcotest cstruct optint))

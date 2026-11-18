@@ -1,1 +1,1 @@
-let () = Alcotest.run "extents" [ Test_extents.suite ]
+let () = Alcotest.run "eio-fs.extents" [ Test_extents.suite ]

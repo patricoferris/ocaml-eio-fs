@@ -97,9 +97,9 @@ jobs:
 
   # merlint is not on opam yet and its dependencies come from a private
   # overlay, so this job reports without blocking until merlint is released.
-  # The overlay's packages build against its own hermetic and eio-fs, not the
-  # ones installed here, so merlint gets a switch of its own and reads the
-  # .cmt files built in this one.
+  # The overlay's packages build against their own hermetic, not the one
+  # installed here, so merlint gets a switch of its own and reads the .cmt
+  # files built in this one.
   merlint:
     name: Lint (merlint)
     runs-on: ubuntu-latest

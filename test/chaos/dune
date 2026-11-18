@@ -1,5 +1,6 @@
 (test
  (name test)
+ (package eio-fs)
  (libraries
   eio
   eio.mock
@@ -7,7 +8,7 @@
   eio-chaos
   eio-net.chaos
   unix
-  eio_fs_mem
+  eio-fs.mem
   eio-fs.chaos
   eio-fs.sync
   eio-fs.unix

@@ -254,7 +254,7 @@ let test_provenance () =
     ~script:"scripts/generate.sh"
 
 let () =
-  Alcotest.run "os"
+  Alcotest.run "eio-fs.os"
     [
       ( "trace",
         [ Alcotest.test_case "names its provenance" `Quick test_provenance ] );

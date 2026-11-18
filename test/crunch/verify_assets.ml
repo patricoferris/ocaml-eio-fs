@@ -16,5 +16,5 @@ let test_load () =
     "root listing" [ "hello.txt"; "sub" ] (Eio.Path.read_dir fs)
 
 let () =
-  Alcotest.run "eio-fs-crunch"
+  Alcotest.run "eio-fs.crunch"
     [ ("assets", [ Alcotest.test_case "load" `Quick test_load ]) ]

@@ -7,5 +7,6 @@
 
 (test
  (name verify_assets)
+ (package eio-fs)
  (modules verify_assets assets)
- (libraries eio_fs eio eio.mock alcotest))
+ (libraries eio-fs eio eio.mock alcotest))
