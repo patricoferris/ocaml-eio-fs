@@ -353,7 +353,7 @@ let test_barrier_is_used () =
   issued "publish_generation" ~files:1 ~dirs:3 (fun () ->
       Eio_fs.Sync.publish_generation ~barrier (fs / "g") (fun dir ->
           Eio.Path.save ~create:(`Exclusive 0o644) (dir / "f") "x"));
-  issued "publish_link" ~files:0 ~dirs:2 (fun () ->
+  issued "publish_link" ~files:0 ~dirs:1 (fun () ->
       match
         Eio_fs.Sync.publish_link ~barrier ~expected:None ~target:"target"
           (fs / "k")
@@ -1084,6 +1084,23 @@ module Links = struct
       (Eio.Path.read_link (root / "portal"));
     Alcotest.(check (list string))
       "no native staging remains" [ "portal" ] (Eio.Path.read_dir root)
+
+  (* A new link is made in place, where nothing stood: one already holding
+     the target is the publication done, and anything else stays. *)
+  let test_create () =
+    fixture @@ fun fs ->
+    ignore (Result.get_ok (publish fs None "/selected"));
+    Alcotest.(check (list string))
+      "made in place, nothing staged" [ "portal" ] (Eio.Path.read_dir fs);
+    (match publish fs None "/selected" with
+    | Ok () -> ()
+    | Error _ -> Alcotest.fail "the link already made was refused");
+    (match publish fs None "/other" with
+    | Error (`Changed (Some "/selected")) -> ()
+    | _ -> Alcotest.fail "a link to another target was replaced");
+    Alcotest.(check string)
+      "the first link stays" "/selected"
+      (Eio.Path.read_link (fs / "portal"))
 end
 
 let link_suite =
@@ -1103,4 +1120,5 @@ let link_suite =
         Links.test_crash;
       Alcotest.test_case "empty and NUL targets refuse" `Quick
         Links.test_unwritable_target;
+      Alcotest.test_case "a new link is made in place" `Quick Links.test_create;
     ] )
