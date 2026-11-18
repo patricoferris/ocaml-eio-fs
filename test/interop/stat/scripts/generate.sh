@@ -13,6 +13,8 @@ switch="${OPAM_SWITCH_PREFIX:?run in an opam switch}"
 pkg=("$switch"/.opam-switch/packages/eio_posix.*)
 [ -d "${pkg[0]}" ] || { echo "eio_posix is not installed in $switch" >&2; exit 1; }
 eio="${pkg[0]##*/eio_posix.}"
+# A switch that pins Eio to a source: Linux pins the same one.
+pin="$(sed -n 's/^ *src: "\(.*\)"$/\1/p' "$switch/.opam-switch/overlay/eio_posix/opam" 2>/dev/null || true)"
 image="ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/stat-traces.XXXXXX")"
@@ -27,6 +29,7 @@ docker run --rm --name fs-stat-rec --privileged --user opam \
     echo '(lang dune 3.0)' >~/rec/dune-project
     cd ~/rec
     opam update -y >/dev/null
+    if [ -n '$pin' ]; then opam pin add -yn eio.$eio '$pin' >/dev/null; opam pin add -yn eio_posix.$eio '$pin' >/dev/null; fi
     opam install -y eio_posix.$eio fmt cstruct optint >/dev/null
     opam exec -- dune build ./scripts/record.exe
     ./_build/default/scripts/record.exe tmpfs=/work/tmpfs ext4=/work/ext4 \\
