@@ -363,25 +363,28 @@ val publish_link :
   target:string ->
   _ Eio.Path.t ->
   (unit, [ `Changed of string option | `Invalid of string ]) result
-(** [publish_link ~barrier ~expected ~target path] replaces the entry at [path]
-    with a symbolic link holding exactly [target]. The entry must hold what
-    [expected] says, read without following it: [None] is no entry, [Some raw] a
-    symbolic link whose target is the bytes [raw]. Anything else is
-    [`Changed actual], and an entry that is not a symbolic link is [`Invalid];
-    neither is replaced. A link that already holds [target] is left as it is.
+(** [publish_link ~barrier ~expected ~target path] makes the entry at [path] a
+    symbolic link holding exactly [target]. The entry must hold what [expected]
+    says, read without following it: [None] is no entry, [Some raw] a symbolic
+    link whose target is the bytes [raw]. Anything else is [`Changed actual],
+    and an entry that is not a symbolic link is [`Invalid]; neither is replaced.
+    With [expected] [None], a link that already holds [target] is left as it is;
+    with [Some raw], only when [raw] is [target].
 
-    The link is made under a fresh sibling name ({!fresh_name}), the entry at
-    [path] is read again, and the link is renamed over it; rename(2) keeps
-    [path] naming the old entry or the new link throughout. Targets are raw
-    bytes, written and compared as given and never resolved or normalised; an
-    empty target or one holding a NUL byte is [`Invalid].
+    Where no entry is expected, the link is made at [path] by symlink(2), which
+    refuses a name taken meanwhile. Otherwise it is made under a fresh sibling
+    name ({!fresh_name}), the entry at [path] is read again, and the link is
+    renamed over it; rename(2) keeps [path] naming the old entry or the new link
+    throughout. Targets are raw bytes, written and compared as given and never
+    resolved or normalised; an empty target or one holding a NUL byte is
+    [`Invalid].
 
     The parent directory is synced with [barrier] (defaults to
-    {!Barrier.portable}) before the rename and after it, so after a crash [path]
-    holds the old entry or the new link. A barrier that fails after the rename
-    raises, the new link visible with uncertain durability; a later call with
-    the same [target] issues the barrier again. {!Barrier.none} keeps only the
-    atomicity.
+    {!Barrier.portable}) after the link is made, and before a rename too, so
+    after a crash [path] holds the old entry or the new link. A barrier that
+    fails after the link is visible raises, with uncertain durability; a later
+    call with the same [target] that expects it issues the barrier again.
+    {!Barrier.none} keeps only the atomicity.
 
     One writer replaces a given [path] at a time: a caller with several wraps
     each call in {!Lock.use}, and a writer outside it can still race between the

@@ -694,15 +694,35 @@ let stage_link ~barrier ~expected ~target path =
               Barrier.sync_parent barrier path);
           Ok ())
 
+(* Where nothing stands, symlink(2) is itself the exclusive create: a name
+   taken meanwhile refuses it, and is read as any entry found there. *)
+let link_in_place ~barrier ~target path =
+  let found () =
+    match link_target path with
+    | Error e -> Error e
+    | Ok (Some actual) when String.equal actual target ->
+        Barrier.sync_parent barrier path;
+        Ok ()
+    | Ok actual -> Error (`Changed actual)
+  in
+  match Eio.Path.symlink ~link_to:target path with
+  | () ->
+      Barrier.sync_parent barrier path;
+      Ok ()
+  | exception Eio.Io (Eio.Fs.E (Already_exists _), _) -> found ()
+
 let publish_link ?(barrier = Barrier.portable) ~expected ~target path =
   if target = "" || String.contains target '\000' then
     Error (`Invalid "a symbolic link's target is empty or holds a NUL byte")
   else
-    match link_target path with
-    | Error e -> Error e
-    | Ok actual when not (Option.equal String.equal actual expected) ->
-        Error (`Changed actual)
-    | Ok (Some actual) when String.equal actual target ->
-        Barrier.sync_parent barrier path;
-        Ok ()
-    | Ok _ -> stage_link ~barrier ~expected ~target path
+    match expected with
+    | None -> link_in_place ~barrier ~target path
+    | Some _ -> (
+        match link_target path with
+        | Error e -> Error e
+        | Ok actual when not (Option.equal String.equal actual expected) ->
+            Error (`Changed actual)
+        | Ok (Some actual) when String.equal actual target ->
+            Barrier.sync_parent barrier path;
+            Ok ()
+        | Ok _ -> stage_link ~barrier ~expected ~target path)
