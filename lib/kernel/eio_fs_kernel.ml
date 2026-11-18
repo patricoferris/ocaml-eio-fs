@@ -1,5 +1,7 @@
-(* Each operation is a line of words. A word [{s}n] is [s] repeated [n]
-   times; [-] is the empty string. *)
+(* Each operation is a line of words. A word [p{s}n] is [p] followed by [s]
+   repeated [n] times; [-] is the empty string; [\NNN] is the byte of
+   decimal code [NNN], a space included; [@p] is [p] under the scenario's
+   absolute path. *)
 
 type ids = { gid : int; other_gid : int }
 
@@ -259,29 +261,144 @@ let scenarios =
     ("chgrp", [ "write f x"; "chgrp f"; "group f"; "chmod f 2755"; "mode f" ]);
     ( "mkdir modes",
       [ "mkdir d 7777"; "mode d"; "write f x"; "chmod f 7777"; "mode f" ] );
+    (* Windows' traps. Reserved names, trailing dots and spaces. *)
+    ( "reserved names",
+      [
+        "write NUL x";
+        "write CON y";
+        "write com1.txt z";
+        "mkdir aux";
+        "ls .";
+        "read NUL";
+      ] );
+    ("trailing dot", [ "write a. x"; "stat a"; "read a."; "ls ." ]);
+    ("trailing space", [ "write a\\032 x"; "stat a"; "read a\\032"; "ls ." ]);
+    ("dots name", [ "write ... x"; "read ..."; "ls ." ]);
+    ("link to dots", [ "write ... x"; "symlink ... l"; "read l"; "ls ." ]);
+    (* What an open handle keeps from being moved or removed. *)
+    ( "held file rename",
+      [ "write f x"; "hold f"; "rename f g"; "read g"; "ls ." ] );
+    ( "delete pending",
+      [
+        "write f x";
+        "hold f";
+        "unlink f";
+        "ls .";
+        "write f y";
+        "close f";
+        "write f z";
+        "read f";
+        "ls .";
+      ] );
+    ( "held file replaced",
+      [ "write f x"; "write g y"; "hold f"; "rename g f"; "read f"; "ls ." ] );
+    ( "held file dir rename",
+      [ "mkdir d"; "write d/f x"; "hold d/f"; "rename d e"; "ls ." ] );
+    ( "held file dir rmdir",
+      [ "mkdir d"; "write d/f x"; "hold d/f"; "unlink d/f"; "rmdir d"; "ls ." ]
+    );
+    ("held dir rename", [ "mkdir d"; "holddir d"; "rename d e"; "ls ." ]);
+    ("held dir rmdir", [ "mkdir d"; "holddir d"; "rmdir d"; "ls ." ]);
+    (* [..] and links, in a directory opened as a sandbox. *)
+    ( "link dot-dot",
+      [
+        "mkdir d";
+        "mkdir d/e";
+        "write x 1";
+        "write d/x 2";
+        "symlink d/e l";
+        "read l/../x";
+      ] );
+    ( "dot-dot re-enter",
+      [
+        "mkdir d";
+        "write d/f x";
+        "stat d/../d/f";
+        "cd d";
+        "stat f";
+        "stat ../d/f";
+        "ls ..";
+      ] );
+    ( "absolute link",
+      [ "write f x"; "symlink @f l"; "read l"; "lstat l"; "read @f" ] );
+    ( "absolute link in sandbox",
+      [ "mkdir d"; "write d/f x"; "symlink @d/f d/l"; "cd d"; "read l" ] );
+    ( "absolute link out of sandbox",
+      [ "write f x"; "mkdir d"; "symlink @f d/l"; "cd d"; "read l"; "stat l" ]
+    );
+    ( "link out of sandbox",
+      [ "write f x"; "mkdir d"; "symlink ../f d/l"; "cd d"; "read l"; "stat l" ]
+    );
+    (* A link to a directory, which Windows makes a directory. *)
+    ( "rmdir dir link",
+      [ "mkdir d"; "write d/f x"; "symlink d l"; "rmdir l"; "ls ."; "ls d" ] );
+    ("unlink dir link", [ "mkdir d"; "symlink d l"; "unlink l"; "ls ." ]);
+    ( "link before dir",
+      [ "symlink t l"; "mkdir t"; "write t/f x"; "stat l"; "ls l"; "read l/f" ]
+    );
+    ("link before file", [ "symlink t l"; "write t x"; "read l"; "stat l" ]);
+    (* Renames over what exists, as eio#934 makes them on Windows. *)
+    ( "rename onto file",
+      [ "write a x"; "write b y"; "rename a b"; "read b"; "ls ." ] );
+    ("rename onto empty dir", [ "mkdir d"; "mkdir e"; "rename d e"; "ls ." ]);
+    ( "rename file onto empty dir",
+      [ "write f x"; "mkdir e"; "rename f e"; "ls ." ] );
+    ( "rename onto non-empty dir",
+      [ "mkdir d"; "mkdir e"; "write e/f x"; "rename d e"; "ls ."; "ls e" ] );
+    ("rename dir onto file", [ "mkdir d"; "write f x"; "rename d f"; "ls ." ]);
+    (* What eio#932 fixed: kinds, and a read that must not create. *)
+    ( "stat kinds",
+      [
+        "write f x";
+        "mkdir d";
+        "symlink f l";
+        "symlink d m";
+        "lstat l";
+        "lstat m";
+        "stat l";
+        "stat m";
+        "stat d";
+        "open n r";
+        "ls .";
+      ] );
+    (* eio#819: mkdirs under a parent that exists. *)
+    ("mkdirs", [ "mkdir d"; "mkdirs d/e"; "mkdirs x/y"; "ls d"; "ls x" ]);
   ]
 
-let expand word =
-  if word = "-" then ""
-  else
-    match String.index_opt word '{' with
-    | Some 0 -> (
-        match String.index_opt word '}' with
-        | Some j ->
-            let s = String.sub word 1 (j - 1) in
-            let n =
-              int_of_string
-                (String.sub word (j + 1) (String.length word - j - 1))
-            in
-            String.concat "" (List.init n (fun _ -> s))
-        | None -> word)
-    | _ -> word
+let repeat word =
+  match (String.index_opt word '{', String.index_opt word '}') with
+  | Some i, Some j when i < j ->
+      let s = String.sub word (i + 1) (j - i - 1) in
+      let n =
+        int_of_string (String.sub word (j + 1) (String.length word - j - 1))
+      in
+      String.sub word 0 i ^ String.concat "" (List.init n (fun _ -> s))
+  | _ -> word
 
-let words op = List.map expand (String.split_on_char ' ' op)
+exception Bad_op of string
+
+let absolute ?root word =
+  if String.length word = 0 || word.[0] <> '@' then word
+  else
+    match root with
+    | Some root ->
+        String.concat Filename.dir_sep
+          (root
+          :: String.split_on_char '/'
+               (String.sub word 1 (String.length word - 1)))
+    | None -> raise (Bad_op word)
+
+let unescape word =
+  if String.contains word '\\' then Scanf.unescaped word else word
+
+let expand ?root word =
+  if word = "-" then "" else absolute ?root (unescape (repeat word))
+
+let words ?root op = List.map (expand ?root) (String.split_on_char ' ' op)
 let key ops = String.concat ";" (List.map String.escaped ops)
 
 (* An error, by its errno: by its Eio class, else by the strerror text both
-   backends print. *)
+   POSIX backends print, or by the Win32 error eio_windows prints. *)
 let errnos =
   [
     ("not a directory", "ENOTDIR");
@@ -292,6 +409,10 @@ let errnos =
     ("name too long", "ENAMETOOLONG");
     ("illegal byte sequence", "EILSEQ");
     ("not supported", "ENOTSUP");
+    (* Windows' messages, by the Win32 error that names them. *)
+    ("volume label syntax is incorrect", "ERROR_INVALID_NAME");
+    ("the directory name is invalid", "ERROR_DIRECTORY");
+    ("reparse point buffer is invalid", "ERROR_INVALID_REPARSE_DATA");
   ]
 
 let contains ~sub s =
@@ -354,12 +475,12 @@ let chain dir n =
     Eio.Path.symlink ~link_to:target Eio.Path.(dir / Fmt.str "l%d" i)
   done
 
-exception Bad_op of string
-
-let op ids dir line =
+let op ?root ~sw ids ~base ~held line =
+  let hold p close = held := (p, close) :: !held in
   let ( / ) = Eio.Path.( / ) in
+  let dir = !base in
   let ok () = "ok" in
-  match words line with
+  match words ?root line with
   | [ "write"; p; data ] ->
       Eio.Path.save ~create:(`Or_truncate 0o644) (dir / p) data;
       ok ()
@@ -424,12 +545,35 @@ let op ids dir line =
   | [ "chain"; n ] ->
       chain dir (int_of_string n);
       ok ()
+  | [ "hold"; p ] ->
+      let f = Eio.Path.open_in ~sw (dir / p) in
+      hold p (fun () -> Eio.Resource.close f);
+      ok ()
+  | [ "holddir"; p ] ->
+      let d = Eio.Path.open_dir ~sw (dir / p) in
+      hold p (fun () -> Eio.Resource.close (fst d));
+      ok ()
+  | [ "close"; p ] -> (
+      match List.assoc_opt p !held with
+      | None -> raise (Bad_op line)
+      | Some close ->
+          held := List.remove_assoc p !held;
+          close ();
+          ok ())
+  | [ "mkdirs"; p ] ->
+      Eio.Path.mkdirs ~perm:0o755 (dir / p);
+      ok ()
+  | [ "cd"; p ] ->
+      base := (Eio.Path.open_dir ~sw (dir / p) :> Eio.Fs.dir_ty Eio.Path.t);
+      ok ()
   | _ -> raise (Bad_op line)
 
-let run ids dir ops =
+let run ?root ids dir ops =
+  Eio.Switch.run @@ fun sw ->
+  let base = ref (dir :> Eio.Fs.dir_ty Eio.Path.t) and held = ref [] in
   List.map
     (fun line ->
-      try op ids dir line with
+      try op ?root ~sw ids ~base ~held line with
       | (Bad_op _ | Eio.Cancel.Cancelled _) as e -> raise e
       | exn -> errno exn)
     ops
