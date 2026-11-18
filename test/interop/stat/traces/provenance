@@ -1,22 +1,19 @@
 # Where the traces beside this file come from. write.sh rewrites it on
 # REGEN=1; test/provenance checks it.
-#
-# linux.csv predates write.sh: the generate.sh of d02e55d recorded it, in
-# Docker, and wrote what it measured as the "# key: value" lines linux.csv
-# starts with, which name the Linux, the image, the user and the filesystems.
-# They give the date and the last commit to the scripts below; HEAD at the
-# recording, and the uid and uname of the host that ran Docker, are not
-# recorded. Its "script digest" is the MD5 of record.ml and stat_workload.ml
-# joined, as the input lines pin them. generate.sh is pinned as this commit
-# leaves it, measuring nothing since probe.sh does, so that a change to any
-# input from now on asks for a regeneration.
 generator: test/interop/stat/scripts/generate.sh
 regenerate: REGEN=1 dune build @test/interop/stat/regen-traces
-revision: unknown; the last commit to the scripts was d02e55d9b51f1a7cbca61fcc11301961ebf7c42e
-recorded: 2026-11-16
-uid: unknown
-host: unknown
-input: scripts/generate.sh b08d505559428ca5e87d709ac417a7f1
+revision: a6a35ed5b6be9458e993c6763dc969071a97a4cf
+recorded: 2026-11-18T13:47:59Z
+uid: 501
+host: Darwin 27.3.0 arm64
+eio_posix: 1.7
+docker: 29.8.2
+linux.image: ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460
+linux: Linux 7.2.12-orbstack-00394-gbecdd6130068 #1 SMP PREEMPT Thu Oct 22 22:17:17 UTC 2026 aarch64
+linux.user: uid 1000, groups 1000
+linux.tmpfs: tmpfs, rw,nosuid,nodev,relatime
+linux.ext4: ext4, rw,relatime, mke2fs 1.47.2 (1-Jan-2025), 4096-byte blocks
+input: scripts/generate.sh 2a112ff7717ff398d851b6ae1ca006de
 input: scripts/record.ml 1a5f8a86ed2e0660fd2797a02241c769
 input: workload/stat_workload.ml e175af4d9bd19769540cac130575b0af
-trace: traces/linux.csv 9b65e18ed9850078f34837cff0708f4d
+trace: traces/linux.csv bc8d195bf0382e1354a16342f120fe70
