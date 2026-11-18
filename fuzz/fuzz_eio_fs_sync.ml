@@ -9,7 +9,7 @@ let rec last n l = if List.length l <= n then l else last n (List.tl l)
 
 let test_append before lines =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let p = env#fs / "log" in
   if before <> "" then Eio.Path.save ~create:(`Exclusive 0o644) p before;
   Eio_fs_sync.append_lines ~barrier:Eio_fs_sync.Barrier.none p lines;

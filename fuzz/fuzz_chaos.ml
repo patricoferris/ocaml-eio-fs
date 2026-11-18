@@ -42,7 +42,7 @@ let drawn ~seed ~probability =
    in-memory filesystem: the outcome, and the bytes that reached the store. *)
 let run_workload ~seed ~probability ~nblocks ~block ~read_only ~via_subtree =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let fs = Chaos.wrap (drawn ~seed ~probability) env#fs in
   let perm = if read_only then 0o444 else 0o644 in
   let rel = if via_subtree then "stage/f" else "f" in
@@ -104,7 +104,7 @@ module Crash = Chaos.Private.Crash
 let post_crash_image ~policy ~nblocks ~block ~sync_after ~read_only ~via_subtree
     ~trunc_reopen =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let ctl = Crash.v ~policy () in
   let fs = Crash.wrap ctl env#fs in
   let perm = if read_only then 0o444 else 0o644 in
@@ -782,7 +782,7 @@ let apply_op fs ctl (m : Model.t) b0 b1 b2 b3 =
    recovered tree. *)
 let run_tape ?outside ~policy tape =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let ctl = Crash.v ?outside ~policy () in
   let fs = Crash.wrap ctl env#fs in
   let m = Model.v () in
@@ -859,7 +859,7 @@ let test_publish_is_atomic old_body new_body =
   let cap s = if String.length s > 2048 then String.sub s 0 2048 else s in
   let old_body = cap old_body and new_body = cap new_body in
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
   let fs = Crash.wrap ctl env#fs in
@@ -888,7 +888,7 @@ let test_failed_save_preserves_old old_body new_body =
   let cap s = if String.length s > 1024 then String.sub s 0 1024 else s in
   let old_body = cap old_body and new_body = cap new_body in
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   (* Write the original through a clean view, then fault the replacement. *)
   publish_string Eio.Path.(env#fs / "f") old_body;
   let refuse (op : Chaos.Op.t) : Chaos.Fault.t option =

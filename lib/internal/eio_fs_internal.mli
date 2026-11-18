@@ -32,7 +32,7 @@ type (_, _, _) Eio.Resource.pi +=
         [ `Close | Eio.Fs.dir_ty ] Eio.Resource.t,
         [> `Rebase ] )
       Eio.Resource.pi
-        (** The same directory wrapper over [f base], which [Eio_fs.Fs.as_user]
+        (** The same directory wrapper over [f base], which [Eio_fs_mem.as_user]
             builds a wrapper as another user with. *)
 
 val base_dir : _ Eio.Resource.t -> Eio.Fs.dir_ty Eio.Resource.t option

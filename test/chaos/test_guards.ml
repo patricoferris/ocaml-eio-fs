@@ -924,7 +924,7 @@ let test_stamp () =
   Eio_mock.Backend.run @@ fun () ->
   let module C = Eio_fs_chaos.Private.Crash in
   let ctl = C.v () in
-  let fs = C.wrap ctl (Eio_fs.Fs.v ()) in
+  let fs = C.wrap ctl (Eio_fs_mem.v ()) in
   let moved f =
     let s = C.stamp ctl in
     f ();

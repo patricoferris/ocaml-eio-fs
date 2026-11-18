@@ -20,7 +20,7 @@ let manual () =
 let with_fs fn =
   Eio_mock.Backend.run @@ fun () ->
   let t, clock = manual () in
-  fn t (Eio_fs.Fs.v ~clock ())
+  fn t (Eio_fs_mem.v ~clock ())
 
 let stat p = Eio.Path.stat ~follow:false p
 let trace = "stat/traces/linux.csv"
@@ -116,7 +116,7 @@ let test_relatime_day () =
 (* Without a clock, time stands at 0. *)
 let test_no_clock () =
   Eio_mock.Backend.run @@ fun () ->
-  let root = Eio_fs.Fs.v () in
+  let root = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (root / "f") "x";
   Eio.Path.chmod ~follow:false ~perm:0o600 (root / "f");
   let s = stat (root / "f") in
@@ -184,7 +184,7 @@ let test_crash_times () =
   Alcotest.(check (list (float 0.))) "the root, after" [ 1.; 1. ] (times disk)
 
 (* Absolute symbolic links, in memory and through eio_posix: the root
-   [Eio_fs.Fs.v] returns is [Eio.Stdenv.fs], which follows one from the
+   [Eio_fs_mem.v] returns is [Eio.Stdenv.fs], which follows one from the
    root, and a directory opened from it is confined, refusing to follow one
    with [Permission_denied] in every operation that would. *)
 
@@ -260,7 +260,7 @@ let test_as_eio_posix () =
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / top))
   @@ fun () ->
   let posix = answers fs top in
-  let mem = answers (Eio_fs.Fs.v ()) top in
+  let mem = answers (Eio_fs_mem.v ()) top in
   let check what (p, m) = Alcotest.(check (list string)) what p m in
   check "Eio.Stdenv.fs and the root" (fst posix, fst mem);
   check "an opened directory" (snd posix, snd mem);
@@ -317,7 +317,7 @@ let test_shutdown_as_eio_posix () =
   Alcotest.(check string) "eio_posix" "no shutdown" (outcome (fs / top));
   Alcotest.(check string)
     "the in-memory backend" "no shutdown"
-    (outcome (Eio_fs.Fs.v () / "."))
+    (outcome (Eio_fs_mem.v () / "."))
 
 let suite =
   ( "memfs",

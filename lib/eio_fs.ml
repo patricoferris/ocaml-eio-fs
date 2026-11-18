@@ -16,15 +16,6 @@
  *)
 open! Hermetic
 
-type user = Low_level.User.t = {
-  uid : int64;
-  gid : int64;
-  groups : int64 list;
-  umask : int;
-}
-
-let root = Low_level.User.root
-
 module Nofollow = struct
   type error = [ `Invalid of string | `Too_large ]
 
@@ -294,8 +285,6 @@ module Tree = struct
           (node depth path)
 end
 
-module Fs = Memfs
-
 module Crunch = struct
   type entry =
     | Dir of { path : string; perm : int }
@@ -338,7 +327,7 @@ module Crunch = struct
 
   let load ?clock ?os entries =
     let t = Low_level.v ?clock ?os () in
-    let fs = Fs.fs t in
+    let fs = Memfs.fs t in
     let mem path = (fs, path) in
     List.iter
       (function
@@ -386,26 +375,3 @@ module Crunch = struct
      (** [load ~clock ~os ()] is the root of a new in-memory filesystem holding\n\
     \    {!entries}, as {!Eio_fs.Crunch.load} makes it. *)\n"
 end
-
-type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
-
-(* Root owns the tree and makes the current directory, which it gives to
-   [user]. *)
-let run ?clock ?(cwd = "/") ?(user = root) ?os fn =
-  if not (Eio_fs_path.is_abs cwd) then
-    Fmt.invalid_arg "Eio_fs.run: cwd is %S, must be an absolute path" cwd;
-  let t = Low_level.v ?clock ~cwd ?os () in
-  let admin = (Eio.Path.of_dir (Fs.fs t) :> Eio.Fs.dir_ty Eio.Path.t) in
-  Eio.Path.mkdirs ~exists_ok:true ~perm:0o755 Eio.Path.(admin / cwd);
-  if not (Int64.equal user.uid 0L) then
-    Eio.Path.chown ~follow:true ~uid:user.uid ~gid:user.gid
-      Eio.Path.(admin / cwd);
-  let fs = (Eio.Path.of_dir (Fs.fs ~user t) :> Eio.Fs.dir_ty Eio.Path.t) in
-  let cwd = (Eio.Path.of_dir (Fs.cwd ~user t) :> Eio.Fs.dir_ty Eio.Path.t) in
-  (* Resolve the current directory now: it then follows its directory. *)
-  ignore (Eio.Path.stat ~follow:true cwd : Eio.File.Stat.t);
-  fn
-    object
-      method fs = fs
-      method cwd = cwd
-    end

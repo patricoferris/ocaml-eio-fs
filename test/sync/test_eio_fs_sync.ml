@@ -28,7 +28,7 @@ let _ :
    nothing to sync), so the portable entry points work unchanged over it. *)
 let test_registered_backend () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Path.sync_dir env#fs;
   Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy_string "one" f);
@@ -92,7 +92,7 @@ let test_unissuable_barrier_raises () =
 (* A failed write cleans its temporary up and the failure propagates. *)
 let test_failed_save_cleans_temporary () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   (match
      Eio_fs_sync.publish ~max_bytes:1L
        (env#fs / "missing-dir" / "f")
@@ -109,7 +109,7 @@ let test_failed_save_cleans_temporary () =
    churn. The temporary is consumed by the rename. *)
 let test_publish_with_remote_tmp () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Path.mkdir ~perm:0o755 (env#fs / "tmp");
   Eio.Path.mkdir ~perm:0o755 (env#fs / "live");
   Eio_fs_sync.publish ~max_bytes:7L
@@ -125,7 +125,7 @@ let test_publish_with_remote_tmp () =
 
 let test_publish_with_stream () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let result =
     Eio_fs_sync.publish ~max_bytes:7L ~tmp:(env#fs / "stream.tmp")
       (env#fs / "stream") (fun file ->
@@ -143,7 +143,7 @@ let test_publish_with_stream () =
 
 let test_publish_with_failure_preserves_target () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (env#fs / "live") "old";
   (match
      Eio_fs_sync.publish ~max_bytes:7L ~tmp:(env#fs / "live.tmp")
@@ -162,7 +162,7 @@ let test_publish_with_failure_preserves_target () =
 
 let test_publish_rejects_target_as_temporary () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let live = env#fs / "live" in
   Eio.Path.save ~create:(`Or_truncate 0o644) live "old";
   (match
@@ -178,7 +178,7 @@ let test_publish_rejects_target_as_temporary () =
    and exclusive creation makes the absent-target case recoverable. *)
 let test_publish_rejects_aliased_target () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Path.with_subtree env#fs @@ fun left ->
   Eio.Path.with_subtree env#fs @@ fun right ->
   (match
@@ -193,7 +193,7 @@ let test_publish_rejects_aliased_target () =
 
 let test_publish_does_not_remove_unowned_temporary () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let tmp = env#fs / "foreign.tmp" in
   Eio.Path.save ~create:(`Or_truncate 0o644) tmp "foreign";
   (match
@@ -207,7 +207,7 @@ let test_publish_does_not_remove_unowned_temporary () =
 
 let test_publish_enforces_byte_limit () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let live = env#fs / "live" in
   Eio.Path.save ~create:(`Or_truncate 0o644) live "old";
   (match
@@ -228,7 +228,7 @@ let test_publish_enforces_byte_limit () =
    under [Barrier.none] loses its rename. *)
 let test_publish_durability_flag () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
   let fs = Crash.wrap ctl env#fs in
@@ -294,7 +294,7 @@ let counting_file ~register base =
 
 let with_in_memory_file fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Switch.run @@ fun sw ->
   fn (Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (env#fs / "f"))
 
@@ -326,7 +326,7 @@ let test_sync_file_without_a_registration_syncs_the_file () =
    model would have recorded none and the bytes would be gone. *)
 let test_sync_file_reaches_the_crash_model () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
   let fs = Crash.wrap ctl env#fs in
@@ -348,7 +348,7 @@ let test_sync_file_reaches_the_crash_model () =
    an existing name is never overwritten, including a dangling symlink. *)
 let test_exclusive_publication () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let path = env#fs / "state" in
   let publish path text =
     Eio_fs_sync.publish ~max_bytes:3L ~exclusive:Eio_fs_sync.Rename.capability
@@ -372,7 +372,7 @@ let test_exclusive_publication () =
 
 let test_exclusive_publication_survives_crash () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
@@ -388,7 +388,7 @@ let test_exclusive_publication_survives_crash () =
    second save, and an empty string is a file of no bytes. *)
 let test_save () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let p = env#fs / "state.json" in
   Eio_fs_sync.save p "{\"a\":1}";
   Alcotest.(check string) "saved" "{\"a\":1}" (Eio.Path.load p);
@@ -401,7 +401,7 @@ let test_save () =
    them under Barrier.none. *)
 let test_barrier_is_used () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let files = ref 0 and dirs = ref 0 in
   let module Counting = Eio_fs_sync.Barrier.Make (struct
     type t = unit
@@ -446,7 +446,7 @@ let test_barrier_is_used () =
 
 let with_mem f =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> f (env#fs / "log.jsonl")
+  Eio_fs_mem.run @@ fun env -> f (env#fs / "log.jsonl")
 
 let test_append_creates () =
   with_mem @@ fun p ->
@@ -551,7 +551,7 @@ let test_append_discards_a_torn_tail_posix () =
    again, or the file it was told is durable is lost at a crash. *)
 let test_append_retries_a_failed_parent_barrier () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let dir_syncs = ref 0 in
   let schedule (op : Eio_fs_chaos.Op.t) : Eio_fs_chaos.Fault.t option =
     if op.kind = `Sync && op.path <> "log.jsonl" then incr dir_syncs;
@@ -572,7 +572,7 @@ let test_append_retries_a_failed_parent_barrier () =
    created by an append whose directory barrier failed survives a cut. *)
 let test_append_nothing_retries_the_barriers () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let module Chaos = Eio_fs_chaos in
   let module Crash = Chaos.Private.Crash in
   let ctl = Crash.v () in
@@ -645,7 +645,7 @@ let test_sparse_cost size =
 
 let test_sparse_bounds_before_io () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let operations = ref [] in
   let schedule op =
     operations := op :: !operations;
@@ -683,7 +683,7 @@ let test_sparse_bounds_before_io () =
 
 let test_sparse_exclusive () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let fs = env#fs in
   Eio.Path.save ~create:(`Exclusive 0o600) (fs / "image") "foreign bytes";
   Eio.Path.symlink ~link_to:"missing" (fs / "link");
@@ -709,7 +709,7 @@ let test_sparse_exclusive () =
 
 let test_sparse_write_failure () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Path.save ~create:(`Exclusive 0o600) (env#fs / "image") "foreign bytes";
   let schedule (op : Eio_fs_chaos.Op.t) : Eio_fs_chaos.Fault.t option =
     if op.kind = `Write && String.equal op.path "draft" && op.nth = 1 then
@@ -733,7 +733,7 @@ let test_sparse_write_failure () =
 
 let test_sparse_durable_and_empty () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
@@ -754,7 +754,7 @@ let test_sparse_durable_and_empty () =
 
 let test_sparse_cancellation () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   Eio.Path.save ~create:(`Exclusive 0o600) (env#fs / "image") "foreign bytes";
   let ready, start = Eio.Promise.create () in
   let blocked, hold = Eio.Promise.create () in
@@ -791,7 +791,7 @@ let test_error_backtrace generation () =
   Fun.protect ~finally:(fun () -> Printexc.record_backtrace previous)
   @@ fun () ->
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   match
     if generation then
       Eio_fs_sync.publish_generation ~barrier:Eio_fs_sync.Barrier.none
@@ -812,7 +812,7 @@ let test_error_backtrace generation () =
    each save drives the major collector, which counts its bytes. *)
 let test_small_copy_buffer () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let sizes = ref [] in
   let module Src = struct
     type t = { mutable left : string }
@@ -880,7 +880,7 @@ let publish_long_name fs unit =
 
 let test_long_name_in_memory os unit () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run ~os @@ fun env -> publish_long_name env#fs unit
+  Eio_fs_mem.run ~os @@ fun env -> publish_long_name env#fs unit
 
 let test_long_name_on_disk () =
   Eio_main.run @@ fun env ->
@@ -896,13 +896,15 @@ let test_long_name_on_disk () =
    100-byte directories. *)
 let test_long_directories () =
   Eio_mock.Backend.run @@ fun () ->
-  let root = Eio_fs.Fs.v () in
+  let root = Eio_fs_mem.v () in
   let d1 = String.make 100 'a' and d2 = String.make 100 'b' in
   Eio.Path.mkdir ~perm:0o755 (root / d1);
   Eio.Path.mkdir ~perm:0o755 (root / d1 / d2);
   Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (root / d1 / d2);
-  let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 } in
-  let dir = Eio_fs.Fs.as_user alice root / d1 / d2 in
+  let alice =
+    { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+  in
+  let dir = Eio_fs_mem.as_user alice root / d1 / d2 in
   let target = d1 ^ "/" ^ d2 ^ "/state" in
   Eio_fs_sync.save (dir / "state") "saved";
   Alcotest.(check string) "a saved file" "saved" (Eio.Path.load (dir / "state"));
@@ -1015,7 +1017,7 @@ let suite =
 module Links = struct
   let fixture test =
     Eio_mock.Backend.run @@ fun () ->
-    Eio_fs.run @@ fun env -> test env#fs
+    Eio_fs_mem.run @@ fun env -> test env#fs
 
   let publish fs ?(barrier = Eio_fs_sync.Barrier.none) expected target =
     Eio_fs_sync.publish_link ~barrier ~expected ~target (fs / "portal")

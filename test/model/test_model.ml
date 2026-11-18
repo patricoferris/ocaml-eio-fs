@@ -14,7 +14,9 @@ let i63 = Optint.Int63.of_int
 (* ---------- users ---------- *)
 type who = Root | Alice
 
-let alice_user = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+let alice_user =
+  { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+
 let uid_of = function Root -> 0 | Alice -> 1000
 let gid_of = function Root -> 0 | Alice -> 1000
 
@@ -644,7 +646,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
   @@ fun () ->
   let admin =
     match env with
-    | None -> (Eio_fs.Fs.v () :> Eio.Fs.dir_ty Eio.Path.t)
+    | None -> (Eio_fs_mem.v () :> Eio.Fs.dir_ty Eio.Path.t)
     | Some (root, sub) ->
         Eio.Path.mkdir ~perm:0o755 (root // sub);
         root // sub
@@ -668,7 +670,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
     m.committed <- (m.root, snd m.committed)
   end;
   let as_alice =
-    (Eio_fs.Fs.as_user alice_user admin :> Eio.Fs.dir_ty Eio.Path.t)
+    (Eio_fs_mem.as_user alice_user admin :> Eio.Fs.dir_ty Eio.Path.t)
   in
   (* As a user, the crash model wraps that user's view of the tree. *)
   let dir, alice_dir =
@@ -849,7 +851,7 @@ let run_workload ?env ?(alice = false) ~mode ~seed ~len () =
   | Some ctl -> (
       let live = render_real admin in
       (* Read the image as root: a user may not read all of it. *)
-      let pc = Eio_fs.Fs.as_user Eio_fs.root (Crash.post_crash ctl) in
+      let pc = Eio_fs_mem.as_user Eio_fs_mem.root (Crash.post_crash ctl) in
       let got = render_real pc in
       (* Invariants on the image, by inode. *)
       let image = Eio_fs_chaos.Private.Internal.crash_image ctl in

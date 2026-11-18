@@ -60,7 +60,7 @@ let publish fs tree =
    generation, which the next publication reclaims after its switch. *)
 let with_old fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
   publish fs [ ("a", "earlier") ];
@@ -69,7 +69,7 @@ let with_old fn =
 
 let with_empty fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn env#fs
+  Eio_fs_mem.run @@ fun env -> fn env#fs
 
 (* Cut the power before the [n]th operation of the publication of
    [new_tree] over [setup]'s base that may change the disk, for every [n]

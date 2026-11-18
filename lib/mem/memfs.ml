@@ -227,7 +227,7 @@ let as_user user ((d, path) : _ Eio.Path.t) =
         | Some rebase -> rebase go
         | None ->
             Fmt.invalid_arg
-              "Eio_fs.Fs.as_user: path is %a, not a directory of an in-memory \
+              "Eio_fs_mem.as_user: path is %a, not a directory of an in-memory \
                filesystem"
               Eio.Path.pp (d, path))
   in

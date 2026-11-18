@@ -789,7 +789,7 @@ let test_sparse_map_does_not_block_eio () =
    [sync_file] runs over it too. *)
 let test_sync_dir_in_memory_no_op () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> Eio_fs_unix.sync_dir env#fs
+  Eio_fs_mem.run @@ fun env -> Eio_fs_unix.sync_dir env#fs
 
 let test_path_usage_counts_allocated_tree_without_following_links () =
   with_real_dir @@ fun dir ->

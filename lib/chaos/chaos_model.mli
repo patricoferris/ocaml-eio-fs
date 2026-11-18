@@ -41,7 +41,7 @@ val wrap : sched -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
     over: a wrapper over a host directory is no native working directory for a
     child process, and its files hand out no host descriptor, except to
     [eio-fs.unix], which takes a lock on the descriptor beneath. A rename from
-    an in-memory directory of {!Eio_fs.Fs} into a wrapper over the same tree is
+    an in-memory directory of {!Eio_fs_mem} into a wrapper over the same tree is
     the in-memory rename, outside [sched]; one from a host directory of another
     backend into a wrapper is refused by that backend, which finds no directory
     of its own there. *)
@@ -269,13 +269,13 @@ module Crash : sig
       from the post-crash image; under {!Kept} it stays.
 
       The model reads and rebuilds the tree with root's rights, whatever user
-      [base] runs as: on an in-memory directory of {!Eio_fs.Fs} it does so
-      through the same directory as {!Eio_fs.root}. A host directory gives the
-      model only the rights of the process, which must be able to read and write
-      every entry of the tree, as its owner or root can.
+      [base] runs as: on an in-memory directory of {!Eio_fs_mem} it does so
+      through the same directory as {!Eio_fs_mem.root}. A host directory gives
+      the model only the rights of the process, which must be able to read and
+      write every entry of the tree, as its owner or root can.
 
       A controller has one wrapper, and its operations run as the user of
-      [base]. {!Eio_fs.Fs.as_user} runs them as another user.
+      [base]. {!Eio_fs_mem.as_user} runs them as another user.
 
       @raise Invalid_argument
         if [t] is already wrapped, or if the tree under [base] holds an entry

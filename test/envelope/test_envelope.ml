@@ -27,7 +27,7 @@ let pp_policy ppf = function
         Fmt.(list ~sep:comma int)
         (IS.elements m)
 
-let eio_user (u : user) : Eio_fs.user =
+let eio_user (u : user) : Eio_fs_mem.user =
   {
     uid = Int64.of_int u.uid;
     gid = Int64.of_int u.gid;
@@ -120,7 +120,7 @@ let is_meta (u : Crash.unsynced) =
 (* Run [ops] under [policy]. [survive] receives the unsynced list mapping. *)
 let run_eio ?(probe = []) ~user ~init ~ops ~policy () =
   Eio_mock.Backend.run @@ fun () ->
-  let base = Eio_fs.Fs.v ~user:(eio_user user) () in
+  let base = Eio_fs_mem.v ~user:(eio_user user) () in
   setup base init;
   let pol, bs =
     match policy with

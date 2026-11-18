@@ -8,7 +8,7 @@ module P = Eio.Path
 module I63 = Optint.Int63
 module IM = Map.Make (Int64)
 
-let user = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+let user = { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 
 type who = Root | User
 
@@ -244,7 +244,7 @@ let exec ~sw ~w ~wu ~dry hs i op =
    the index of the op about to run. *)
 let exec_all ~sched ~dry ~observe ~at ~init ~policy ops k =
   Eio.Switch.run @@ fun sw ->
-  let base = Eio_fs.Fs.v () in
+  let base = Eio_fs_mem.v () in
   setup base init;
   observe 0 base;
   let t = C.v ~policy ~block_size:2 () in
@@ -262,7 +262,7 @@ let exec_all ~sched ~dry ~observe ~at ~init ~policy ops k =
         | _ -> false)
       ops
   in
-  let inner = if has_user then Eio_fs.Fs.as_user user base else base in
+  let inner = if has_user then Eio_fs_mem.as_user user base else base in
   let w = C.wrap t (Ch.wrap sched inner) in
   let wu = w in
   let hs = { fh = None; dh = None; dfh = None } in

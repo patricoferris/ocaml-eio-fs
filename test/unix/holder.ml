@@ -16,7 +16,7 @@ let with_real_dir fn = with_real_dir_env (fun _env dir -> fn dir)
 
 let with_in_memory_fs fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn env#fs
+  Eio_fs_mem.run @@ fun env -> fn env#fs
 
 let mentions ~needle haystack =
   let n = String.length needle and h = String.length haystack in

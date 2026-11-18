@@ -196,7 +196,7 @@ let observe post name =
 
 let run ?(block_size = 4096) ~policy ~crash_at t =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let raw = env#fs in
   Eio.Switch.run (fun sw ->
       let fds = Hashtbl.create 7 in

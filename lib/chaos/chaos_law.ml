@@ -206,7 +206,7 @@ let base_dir =
 let rebase =
   dir_handler "Eio_fs_internal.Rebase" Synthesized
     "The same wrapper, under the same schedule, over another base: \
-     Eio_fs.Fs.as_user runs it as another user."
+     Eio_fs_mem.as_user runs it as another user."
 
 let exclusive =
   dir_handler "Eio_fs_sync.Rename.Exclusive" (Intercepted `Change)

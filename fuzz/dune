@@ -12,7 +12,7 @@
  (libraries
   eio
   eio.mock
-  eio_fs
+  eio_fs_mem
   eio-fs.chaos
   eio-fs.sync
   alcobar

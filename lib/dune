@@ -2,13 +2,5 @@
  (name eio_fs)
  (public_name eio-fs)
  (flags
-  (:standard -open Eio_fs_mem))
- (libraries
-  hermetic
-  eio
-  eio-fs.path
-  eio_fs_internal
-  eio_fs_mem
-  fmt
-  cstruct
-  optint))
+  (:standard -open Eio_fs_mem_core))
+ (libraries hermetic eio eio_fs_internal eio_fs_mem_core fmt cstruct optint))

@@ -1,9 +1,9 @@
 let ( / ) = Eio.Path.( / )
 
-(* [Eio_fs.run] installs no scheduler, so drive it under the mock backend. *)
+(* [Eio_fs_mem.run] installs no scheduler, so drive it under the mock backend. *)
 let with_fs fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn env#fs
+  Eio_fs_mem.run @@ fun env -> fn env#fs
 
 let write fs name contents =
   Eio.Path.save ~create:(`Or_truncate 0o644) (fs / name) contents
@@ -18,8 +18,8 @@ let test_write_read () =
    when both were made before the write. *)
 let test_v_roots_share_no_file () =
   Eio_mock.Backend.run @@ fun () ->
-  let first = Eio_fs.Fs.v () in
-  let second = Eio_fs.Fs.v () in
+  let first = Eio_fs_mem.v () in
+  let second = Eio_fs_mem.v () in
   write first "first.txt" "one";
   Alcotest.(check bool)
     "the second root does not see the first root's file" true
@@ -29,7 +29,7 @@ let test_v_roots_share_no_file () =
    first file of each, never share both, whatever their names and bytes. *)
 let test_v_roots_are_distinct_files () =
   Eio_mock.Backend.run @@ fun () ->
-  let first = Eio_fs.Fs.v () and second = Eio_fs.Fs.v () in
+  let first = Eio_fs_mem.v () and second = Eio_fs_mem.v () in
   let distinct what a b =
     let a = Eio.Path.stat ~follow:false a
     and b = Eio.Path.stat ~follow:false b in
@@ -45,7 +45,7 @@ let test_v_roots_are_distinct_files () =
 (* [same_file] follows links and never matches a path that names nothing. *)
 let test_same_file () =
   Eio_mock.Backend.run @@ fun () ->
-  let fs = Eio_fs.Fs.v () in
+  let fs = Eio_fs_mem.v () in
   write fs "file" "same bytes";
   write fs "copy" "same bytes";
   Eio.Path.symlink ~link_to:"file" (fs / "alias");
@@ -63,7 +63,7 @@ let test_same_file () =
     ];
   Alcotest.(check bool)
     "two roots" false
-    (Eio_fs.Tree.same_file fs (Eio_fs.Fs.v ()));
+    (Eio_fs.Tree.same_file fs (Eio_fs_mem.v ()));
   let failing =
     Eio_fs_chaos.wrap
       (fun op -> if op.kind = `Stat then Some (Fail `Eio) else None)
@@ -173,18 +173,18 @@ let test_unshare () =
 (* [Fs.v ()] is the root of an empty filesystem whatever another root holds. *)
 let test_v_is_empty () =
   Eio_mock.Backend.run @@ fun () ->
-  write (Eio_fs.Fs.v ()) "earlier.txt" "stale";
+  write (Eio_fs_mem.v ()) "earlier.txt" "stale";
   Alcotest.(check (list string))
     "a fresh root has no entry" []
-    (Eio.Path.read_dir (Eio_fs.Fs.v ()))
+    (Eio.Path.read_dir (Eio_fs_mem.v ()))
 
 (* rename(2) fails with EXDEV when its two paths are on different file systems
    (POSIX.1-2017, rename, ERRORS), and two [Fs.v ()] roots are two: the entry
    stays where it was and the target gains nothing. *)
 let test_rename_across_roots_is_refused () =
   Eio_mock.Backend.run @@ fun () ->
-  let first = Eio_fs.Fs.v () in
-  let second = Eio_fs.Fs.v () in
+  let first = Eio_fs_mem.v () in
+  let second = Eio_fs_mem.v () in
   write first "moved.txt" "one";
   (match Eio.Path.rename (first / "moved.txt") (second / "moved.txt") with
   | () -> Alcotest.fail "a rename moved an entry between two filesystems"
@@ -369,10 +369,10 @@ let test_sync_noop () =
 module Crunch = struct
   let ( / ) = Eio.Path.( / )
 
-  (* [Eio_fs.run] installs no scheduler, so drive it under the mock backend. *)
+  (* [Eio_fs_mem.run] installs no scheduler, so drive it under the mock backend. *)
   let with_fs fn =
     Eio_mock.Backend.run @@ fun () ->
-    Eio_fs.run @@ fun env -> fn env#fs
+    Eio_fs_mem.run @@ fun env -> fn env#fs
 
   let write ?(perm = 0o644) fs name contents =
     Eio.Path.save ~create:(`Or_truncate perm) (fs / name) contents
@@ -657,7 +657,7 @@ let expect_closed what fn =
 
 let test_root_close_invalidates_aliases () =
   Eio_mock.Backend.run @@ fun () ->
-  let root = Eio_fs.Fs.v () in
+  let root = Eio_fs_mem.v () in
   Eio.Path.mkdir ~perm:0o700 (root / "child");
   write (root / "child") "payload" "the child keeps its bytes";
   Eio.Switch.run @@ fun sw ->
@@ -714,7 +714,7 @@ let test_load_filter () =
   write src "tree/keep/a" "kept";
   write src "tree/skip/b" "skipped";
   let filter (_, path) = Filename.basename path <> "skip" in
-  let dst = Eio_fs.Fs.load ~filter (src / "tree") in
+  let dst = Eio_fs_mem.load ~filter (src / "tree") in
   Alcotest.(check string)
     "a kept file is copied" "kept"
     (Eio.Path.load (dst / "tree/keep/a"));
@@ -732,7 +732,7 @@ let test_load_filter_refuses_the_root () =
     asked := path :: !asked;
     false
   in
-  let dst = Eio_fs.Fs.load ~filter (src / "tree") in
+  let dst = Eio_fs_mem.load ~filter (src / "tree") in
   Alcotest.(check (list string)) "only the root asked" [ "tree" ] !asked;
   Alcotest.(check (list string)) "nothing copied" [] (Eio.Path.read_dir dst)
 
@@ -741,7 +741,7 @@ let test_load_filter_refuses_the_root () =
 let test_load_refuses_a_file () =
   with_fs @@ fun src ->
   write src "file" "bytes";
-  match Eio_fs.Fs.load (src / "file") with
+  match Eio_fs_mem.load (src / "file") with
   | _ -> Alcotest.fail "loaded a regular file"
   | exception Eio.Io (Eio.Exn.X _, _) -> ()
 
@@ -775,7 +775,7 @@ let test_load_reads_what_it_statted () =
       Eio.Path.symlink ~link_to:"/secret" (src / "/tree/f")
     end
   in
-  match Eio_fs.Fs.load (on_stat swap (src / "/tree")) with
+  match Eio_fs_mem.load (on_stat swap (src / "/tree")) with
   | exception Eio.Io _ -> ()
   | dst ->
       Alcotest.(check bool)
@@ -787,7 +787,7 @@ let test_load_reads_what_it_statted () =
 (* The current directory [run] is given exists, and is absolute. *)
 let test_run_makes_its_cwd () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run ~cwd:"/work/dir" @@ fun env ->
+  Eio_fs_mem.run ~cwd:"/work/dir" @@ fun env ->
   Eio.Path.save ~create:(`Exclusive 0o644) (env#cwd / "f") "here";
   Alcotest.(check string)
     "under the cwd" "here"
@@ -795,7 +795,7 @@ let test_run_makes_its_cwd () =
 
 let test_run_refuses_a_relative_cwd () =
   Eio_mock.Backend.run @@ fun () ->
-  match Eio_fs.run ~cwd:"work" (fun _ -> ()) with
+  match Eio_fs_mem.run ~cwd:"work" (fun _ -> ()) with
   | () -> Alcotest.fail "accepted a relative cwd"
   | exception Invalid_argument _ -> ()
 

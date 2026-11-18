@@ -15,7 +15,7 @@
     {!wrap} for errors, {!Power} for a power cut by hand, {!ack} for a file the
     program has promised to keep.
 
-    {!run}, {!device} and {!Power.v} take [?os], as {!Eio_fs.Fs.v} does:
+    {!run}, {!device} and {!Power.v} take [?os], as {!Eio_fs_mem.v} does:
     [`Linux], the default, or [`Macos]. It picks the filesystem's answers and
     what a power cut keeps of each kind of sync. The choice comes from the
     argument, never from the host, so a test checks the same thing on every
@@ -33,8 +33,8 @@ type env = Eio_chaos.env
     - [fs] is the root of a fresh in-memory filesystem, and [cwd] the same
       directory, confined to itself as eio_posix confines a process's (an
       absolute path or link and a [".."] above it are refused with
-      [Permission_denied]). Both run as {!Eio_fs.root}; {!Eio_fs.Fs.as_user}
-      runs them as another user.
+      [Permission_denied]). Both run as {!Eio_fs_mem.root};
+      {!Eio_fs_mem.as_user} runs them as another user.
     - [clock] and [mono_clock] start at [0.], and a sleep takes no time
       ({{!runs}runs}).
     - [secure_random] draws bytes from a fixed seed, and the default [Random]
@@ -145,7 +145,7 @@ val disk : unit -> Eio_chaos.part
 
 val device :
   ?os:[< `Linux | `Macos ] ->
-  ?user:Eio_fs.user ->
+  ?user:Eio_fs_mem.user ->
   ?under:Eio_chaos.part list ->
   ?budget:int ->
   ?seed:int ->
@@ -158,7 +158,7 @@ val device :
     [sw] ends with the scenario, so what [dir] opens under it is closed there.
 
     {[
-    let () = Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs.Fs.v ())
+    let () = Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ())
     ]}
 
     Each scenario runs in an event loop of its own, as a run of {!run} does,
@@ -197,11 +197,11 @@ val device :
     - [{s}n] is [s] repeated [n] times.
 
     The answers were recorded as a user other than root, with the umask [0o022]
-    and a supplementary group. [user] is the {!Eio_fs.type-user} [dir]'s
+    and a supplementary group. [user] is the {!Eio_fs_mem.type-user} [dir]'s
     operations run as: with it, every scenario runs, and a scenario that changes
     a file's group changes it to the first of [user]'s supplementary groups.
     Without it, the scenarios that need a user other than root, or a
-    supplementary group, are left out. {!Eio_fs.Fs.v} passes for the [os] it is
+    supplementary group, are left out. {!Eio_fs_mem.v} passes for the [os] it is
     given.
 
     Where Eio defines an answer the kernel cannot give, as for a path Eio
@@ -277,7 +277,7 @@ module Op : sig
     kind : kind;
     path : string;
         (** The path the operation names, as given to the wrapper: ["/f"] for a
-            file [f] at the root of {!Eio_fs.Fs.v}. A file operation names the
+            file [f] at the root of {!Eio_fs_mem.v}. A file operation names the
             path the file was opened by. *)
     nth : int;
         (** The operation's place among those of its kind on its path, from [1].

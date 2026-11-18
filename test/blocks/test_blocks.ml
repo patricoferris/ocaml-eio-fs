@@ -56,7 +56,7 @@ let letters wl =
 (* Run [wl] from [init]; the crash image of the file. *)
 let run ~init ~injection ~policy wl =
   Eio.Switch.run @@ fun sw ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") init;
   (* The failing syncs, by rank among the syncs through the handle. *)
   let failing =

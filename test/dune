@@ -7,6 +7,7 @@
   eio_main
   eio_posix
   eio_fs
+  eio_fs_mem
   eio-fs.chaos
   eio-fs.sync
   eio_fs_internal

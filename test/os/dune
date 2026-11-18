@@ -5,7 +5,7 @@
   eio
   eio.mock
   eio_posix
-  eio_fs
+  eio_fs_mem
   eio-fs.chaos
   unix
   fmt

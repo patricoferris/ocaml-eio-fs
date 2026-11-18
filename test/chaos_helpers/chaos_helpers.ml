@@ -9,7 +9,7 @@ let at ?(nth = 1) kind path fault (op : Eio_fs_chaos.Op.t) =
 
 let with_chaos f fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let raw = env#fs in
   let chaos = Eio_fs_chaos.wrap f raw in
   fn ~raw ~chaos
@@ -23,7 +23,7 @@ let contents file =
 
 let with_crash ctl fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let raw = env#fs in
   let fs = Crash.wrap ctl raw in
   fn ~raw ~fs

@@ -2,7 +2,7 @@
  (name eio_fs_chaos)
  (public_name eio-fs.chaos)
  (flags
-  (:standard -open Eio_fs_mem))
+  (:standard -open Eio_fs_mem_core))
  (private_modules
   chaos_plan
   chaos_blocks
@@ -16,11 +16,11 @@
   eio
   eio.utils
   eio-chaos
-  eio-fs
+  eio-fs.mem
   eio-fs.path
   eio-fs.sync
   eio_fs_internal
-  eio_fs_mem
+  eio_fs_mem_core
   eio_fs_kernel
   fmt
   cstruct
@@ -42,4 +42,4 @@
  (package eio-fs)
  (files eio_fs_chaos.mli)
  (preludes prelude.txt)
- (libraries eio-fs eio-fs.chaos eio-chaos eio eio_main))
+ (libraries eio-fs.mem eio-fs.chaos eio-chaos eio eio_main))

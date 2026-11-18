@@ -271,7 +271,7 @@ let native fn =
 
 let memory fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn env#fs
+  Eio_fs_mem.run @@ fun env -> fn env#fs
 
 let require what b = Alcotest.(check bool) what true b
 

@@ -11,17 +11,17 @@ type os = [ `Linux | `Macos ]
 let os_name : os -> string = function `Linux -> "Linux" | `Macos -> "macOS"
 
 let user =
-  { Eio_fs.uid = 1000L; gid = 1000L; groups = [ 4242L ]; umask = 0o022 }
+  { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = [ 4242L ]; umask = 0o022 }
 
 let memfs (os : os) () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os ~user (fun ~sw:_ _ -> Eio_fs.Fs.v ~os ~user ())
+  Chaos.device ~os ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~os ~user ())
 
 (* Without [~user], the scenarios that need one are left out, and root
    passes the others. *)
 let memfs_root (os : os) () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os (fun ~sw:_ _ -> Eio_fs.Fs.v ~os ())
+  Chaos.device ~os (fun ~sw:_ _ -> Eio_fs_mem.v ~os ())
 
 (* A device built on another capability takes it from the env: here a
    wrapper over the env's own filesystem. *)
@@ -55,7 +55,7 @@ let test_stat_fault () =
   let report =
     failure @@ fun () ->
     Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
-        Chaos.wrap no_stat_of_a (Eio_fs.Fs.v ~os:`Macos ~user ()))
+        Chaos.wrap no_stat_of_a (Eio_fs_mem.v ~os:`Macos ~user ()))
   in
   Alcotest.(check string)
     "report"
@@ -84,7 +84,7 @@ let test_one_line () =
   let report =
     failure @@ fun () ->
     Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
-        Chaos.wrap odd (Eio_fs.Fs.v ~os:`Macos ~user ()))
+        Chaos.wrap odd (Eio_fs_mem.v ~os:`Macos ~user ()))
   in
   Alcotest.(check int)
     "lines" 3
@@ -102,7 +102,7 @@ let test_eio_posix_too () =
               && List.length (String.split_on_char '/' op.path) > 2
             then Some (Fail `Eio)
             else None)
-          (Eio_fs.Fs.v ~user ()))
+          (Eio_fs_mem.v ~user ()))
   in
   let differs = Chaos.Private.eio_posix_differs `Linux in
   List.iter
@@ -121,7 +121,7 @@ let test_eio_posix_too () =
 let test_stat_fault_linux () =
   Eio_mock.Backend.run @@ fun () ->
   Chaos.device ~os:`Linux ~user (fun ~sw:_ _ ->
-      Chaos.wrap no_stat_of_a (Eio_fs.Fs.v ~user ()))
+      Chaos.wrap no_stat_of_a (Eio_fs_mem.v ~user ()))
 
 (* Under [`Linux] the filesystem keeps [a] and [A] apart, as macOS does
    not. *)
@@ -130,7 +130,7 @@ let test_wrong_os () =
   let report =
     failure @@ fun () ->
     Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
-        Eio_fs.Fs.v ~os:`Linux ~user ())
+        Eio_fs_mem.v ~os:`Linux ~user ())
   in
   Alcotest.(check bool)
     "names the first scenario" true
@@ -141,7 +141,7 @@ let test_left_out () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos (fun ~sw:_ _ -> Eio_fs.Fs.v ~os:`Linux ())
+    Chaos.device ~os:`Macos (fun ~sw:_ _ -> Eio_fs_mem.v ~os:`Linux ())
   in
   let last = List.hd (List.rev (String.split_on_char '\n' report)) in
   Alcotest.(check bool)
@@ -155,8 +155,8 @@ let invalid name f =
 
 let test_refused () =
   Eio_mock.Backend.run @@ fun () ->
-  let fs ~sw:_ _ = Eio_fs.Fs.v ~user () in
-  invalid "root" (fun () -> Chaos.device ~user:Eio_fs.root fs);
+  let fs ~sw:_ _ = Eio_fs_mem.v ~user () in
+  invalid "root" (fun () -> Chaos.device ~user:Eio_fs_mem.root fs);
   invalid "umask" (fun () -> Chaos.device ~user:{ user with umask = 0o077 } fs);
   invalid "no supplementary group" (fun () ->
       Chaos.device ~user:{ user with groups = [ 1000L ] } fs)
@@ -178,7 +178,7 @@ let host_user () =
   | other :: _ when Unix.getuid () <> 0 ->
       Some
         {
-          Eio_fs.uid = Int64.of_int (Unix.getuid ());
+          Eio_fs_mem.uid = Int64.of_int (Unix.getuid ());
           gid = Int64.of_int gid;
           groups = [ Int64.of_int other ];
           umask = 0o022;

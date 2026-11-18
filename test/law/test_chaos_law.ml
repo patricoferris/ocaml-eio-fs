@@ -59,7 +59,7 @@ let handlers root =
 
 let both_handlers () =
   Eio_mock.Backend.run @@ fun () ->
-  let base = Eio_fs.Fs.v () in
+  let base = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (base / "f") "x";
   Eio.Path.mkdir ~perm:0o755 (base / "d");
   let wrapped = Chaos.wrap (fun _ -> None) base in
@@ -559,7 +559,7 @@ let rec exec side ~sw step =
       match side.dirs.(d) with
       | None -> "no directory"
       | Some dir ->
-          let user = Eio_fs.Fs.as_user Eio_fs.root (dir, at d p) in
+          let user = Eio_fs_mem.as_user Eio_fs_mem.root (dir, at d p) in
           Fmt.str "%a" pp_stat (Eio.Path.stat ~follow:false user))
   | Close_dir d -> (
       match side.dirs.(d) with
@@ -815,7 +815,7 @@ let still_open = function
 let record_run ?(fault = fun _ -> None) ?(crash = false) ~wrapped
     ?(cancels = []) program =
   Eio_mock.Backend.run @@ fun () ->
-  let base = Eio_fs.Fs.v () in
+  let base = Eio_fs_mem.v () in
   let side =
     {
       dirs = Array.make slots None;

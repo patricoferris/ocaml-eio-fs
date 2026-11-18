@@ -81,7 +81,7 @@ let toctou ?(bug = true) () =
    key. *)
 let toctou_swapped ?(bug = true) () =
   Eio_mock.Backend.run @@ fun () ->
-  let fs = Eio_fs.Fs.v () in
+  let fs = Eio_fs_mem.v () in
   toctou_setup
     object
       method fs = (fs :> Eio.Fs.dir_ty P.t)

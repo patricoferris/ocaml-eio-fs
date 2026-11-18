@@ -23,7 +23,7 @@ let at_most what ~bound got =
 let test_crash_appends () =
   Eio_mock.Backend.run @@ fun () ->
   let ctl = Crash.v ~policy:(Crash.Reorder_unsynced 1) () in
-  let fs = Crash.wrap ctl (Eio_fs.Fs.v ()) in
+  let fs = Crash.wrap ctl (Eio_fs_mem.v ()) in
   let line = String.make 100 'x' in
   let before = Eio_fs_chaos.Private.Internal.replay_copied () in
   Eio.Switch.run (fun sw ->
@@ -48,7 +48,7 @@ let test_crash_appends () =
 let test_crash_syncs_beside_pending_writes () =
   Eio_mock.Backend.run @@ fun () ->
   let ctl = Crash.v () in
-  let fs = Crash.wrap ctl (Eio_fs.Fs.v ()) in
+  let fs = Crash.wrap ctl (Eio_fs_mem.v ()) in
   Eio.Switch.run @@ fun sw ->
   let dirty = Eio.Path.open_out ~sw ~create:(`Exclusive 0o644) (fs / "dirty") in
   let hot = Eio.Path.open_out ~sw ~create:(`Exclusive 0o644) (fs / "hot") in
@@ -70,7 +70,7 @@ let test_crash_syncs_beside_pending_writes () =
 let test_crash_many_files () =
   Eio_mock.Backend.run @@ fun () ->
   let ctl = Crash.v ~policy:(Crash.Reorder_unsynced 1) () in
-  let fs = Crash.wrap ctl (Eio_fs.Fs.v ()) in
+  let fs = Crash.wrap ctl (Eio_fs_mem.v ()) in
   let w =
     words (fun () ->
         for d = 0 to 99 do
@@ -97,7 +97,7 @@ let test_crash_many_files () =
    allocated words in proportion to it on every round. *)
 let test_crash_barriers_beside_a_pinned_entry () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.mkdir ~perm:0o755 (raw / "D");
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl raw in
@@ -121,7 +121,7 @@ let test_crash_barriers_beside_a_pinned_entry () =
    rebuilt the durable image from the snapshot replayed the whole journal. *)
 let test_crash_alternating_barriers () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.mkdir ~perm:0o755 (raw / "D");
   Eio.Path.mkdir ~perm:0o755 (raw / "X");
   let ctl = Crash.v () in
@@ -169,14 +169,14 @@ let near_linear ?sync what fs =
 
 let test_disjoint_writes () =
   Eio_mock.Backend.run @@ fun () ->
-  near_linear "disjoint writes" (fun () -> Eio_fs.Fs.v ())
+  near_linear "disjoint writes" (fun () -> Eio_fs_mem.v ())
 
 (* The same writes through the crash model, each synced: a sync adds what
    its writes covered to the ranges the disk holds. *)
 let test_crash_disjoint_writes () =
   Eio_mock.Backend.run @@ fun () ->
   near_linear ~sync:true "crash: disjoint synced writes" (fun () ->
-      Crash.wrap (Crash.v ()) (Eio_fs.Fs.v ()))
+      Crash.wrap (Crash.v ()) (Eio_fs_mem.v ()))
 
 let suite =
   ( "scaling",

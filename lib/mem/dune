@@ -1,6 +1,13 @@
 (library
  (name eio_fs_mem)
+ (public_name eio-fs.mem)
+ (modules eio_fs_mem)
+ (libraries hermetic eio eio-fs.path eio_fs_mem_core fmt))
+
+(library
+ (name eio_fs_mem_core)
  (package eio-fs)
+ (modules extents low_level memfs)
  (libraries
   hermetic
   eio

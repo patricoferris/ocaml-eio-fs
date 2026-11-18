@@ -1,4 +1,4 @@
-(** The in-memory filesystem's directories, behind [Eio_fs.Fs]. *)
+(** The in-memory filesystem's directories, behind [Eio_fs_mem]. *)
 
 val fs :
   ?user:Low_level.User.t ->

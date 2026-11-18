@@ -107,7 +107,7 @@ let test_crash_pointer_without_data () =
 (* Same seed reproduces the same post-crash image. *)
 let reorder_image seed =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let ctl = Crash.v ~policy:(Crash.Reorder_unsynced seed) () in
   let fs = Crash.wrap ctl env#fs in
   Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (fs / "img") (fun file ->
@@ -147,7 +147,7 @@ let test_crash_determinism () =
    [Survive] every journal entry's, here a mkdir recorded before the open. *)
 let preexisting_file_synced_after_wrap ~policy ~pending_entry () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let raw = env#fs in
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "journal") "first";
   let ctl = Crash.v ~policy () in
@@ -1019,7 +1019,7 @@ let test_crash_rename_revert_real () =
 let test_crash_write_through_a_symlink () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let raw = env#fs in
   write_new (raw / "real") "old";
   Eio.Path.symlink ~link_to:"real" (raw / "link");
@@ -1135,7 +1135,7 @@ let test_crash_sync_retry_after_failure () =
 let test_crash_sync_failure_beneath () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let fs =
     Crash.wrap ctl (Chaos.wrap (at ~nth:2 `Sync "f" (Fail `Eio)) env#fs)
   in
@@ -1399,7 +1399,7 @@ let test_crash_public_controller_keeps_a_childs_entry () =
 let test_crash_snapshot_reads_a_file_being_rewritten () =
   let ctl = Crash.v () in
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let raw = env#fs in
   Eio.Path.save ~create:(`Or_truncate 0o644) (raw / "img") "AAAAAAAA";
   let armed = ref true in

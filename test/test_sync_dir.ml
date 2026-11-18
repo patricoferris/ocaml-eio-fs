@@ -11,7 +11,7 @@ type barrier = No_barrier | By_name | Through_subtree
 let cut_after barrier =
   Eio_mock.Backend.run @@ fun () ->
   let t = Crash.v Lose_unsynced in
-  let fs = Crash.wrap t (Eio_fs.Fs.v ()) in
+  let fs = Crash.wrap t (Eio_fs_mem.v ()) in
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.sync_dir fs;
   Eio.Path.mkdir ~perm:0o755 (fs / "b");

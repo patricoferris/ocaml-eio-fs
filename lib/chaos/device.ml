@@ -111,7 +111,7 @@ let needs_user =
     "chgrp";
   ]
 
-let ids (user : Eio_fs.user) =
+let ids (user : Eio_fs_mem.user) =
   if Int64.equal user.uid 0L then
     Fmt.invalid_arg
       "%s: the user is root, who needs no permission bit; the answers are a \

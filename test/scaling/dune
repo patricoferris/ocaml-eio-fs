@@ -1,12 +1,12 @@
 (test
  (name test)
  (modules test test_scaling)
- (libraries eio eio.mock eio_fs eio-fs.chaos alcotest cstruct fmt optint))
+ (libraries eio eio.mock eio_fs_mem eio-fs.chaos alcotest cstruct fmt optint))
 
 (executable
  (name by_hand)
  (modules by_hand)
- (libraries eio eio.mock eio_fs fmt))
+ (libraries eio eio.mock eio_fs_mem fmt))
 
 (rule
  (alias scaling)

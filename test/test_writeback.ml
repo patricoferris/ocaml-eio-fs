@@ -105,15 +105,15 @@ let test_crash_create_through_a_dangling_link () =
 (* The model over a user's view reads and rebuilds the tree as root: the
    user cannot read root's files, and may lock themselves out of a
    directory. *)
-let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+let alice = { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 
 let test_crash_over_a_user_view () =
   Eio_mock.Backend.run @@ fun () ->
-  let root = Eio_fs.Fs.v () in
+  let root = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o600) (root / "shadow") "s";
   Eio.Path.mkdir ~perm:0o755 (root / "home");
   Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (root / "home");
-  let a = Eio_fs.Fs.as_user alice root in
+  let a = Eio_fs_mem.as_user alice root in
   ignore (Crash.wrap (Crash.v ()) a);
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl (a / "home") in
@@ -134,7 +134,7 @@ let test_crash_over_a_user_view () =
    through the wrapper with no barrier, come back as they were. *)
 let test_crash_restores_owners () =
   Eio_mock.Backend.run @@ fun () ->
-  let root = Eio_fs.Fs.v () in
+  let root = Eio_fs_mem.v () in
   write_new ~sync:true (root / "f") "x";
   Eio.Path.chown ~follow:true ~uid:1000L ~gid:1000L (root / "f");
   Eio.Path.mkdir ~perm:0o700 (root / "d");
@@ -154,7 +154,7 @@ let test_crash_restores_owners () =
   List.iter
     (fun p -> Alcotest.(check (pair int64 int64)) p (1000L, 1000L) (owner p))
     [ "f"; "d"; "l" ];
-  Eio.Path.save ~create:`Never (Eio_fs.Fs.as_user alice post / "f") "y"
+  Eio.Path.save ~create:`Never (Eio_fs_mem.as_user alice post / "f") "y"
 
 (* A barrier deferred on a directory belongs to that directory: once it is
    removed or renamed, a new directory of the same name does not inherit it. *)
@@ -256,7 +256,7 @@ let test_crash_synced_mode_follows_the_file () =
    the file's. *)
 let test_crash_inode_identity () =
   let setup () =
-    let root = Eio_fs.Fs.v () in
+    let root = Eio_fs_mem.v () in
     Eio.Path.mkdir ~perm:0o755 (root / "u");
     Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (root / "u");
     root
@@ -268,7 +268,7 @@ let test_crash_inode_identity () =
     Eio.Path.save ~create:(`Exclusive 0o644) (root / "u/mine") "alice";
     Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (root / "u/mine");
     let ctl = Crash.v () in
-    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice root) in
+    let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice root) in
     Eio.Path.rename (fs / "u/mine") (fs / "u/passwd");
     Eio.Path.with_open_out ~create:`Never (fs / "u/passwd") ignore;
     let post = Crash.post_crash ctl in
@@ -279,7 +279,7 @@ let test_crash_inode_identity () =
     let root = setup () in
     Eio.Path.mkdir ~perm:0o755 (root / "u/d");
     let ctl = Crash.v () in
-    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice root) in
+    let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice root) in
     Eio.Path.rename (fs / "u/d") (fs / "u/x");
     Eio.Path.mkdir ~perm:0o755 (fs / "u/d");
     write_new ~sync:true (fs / "u/d/planted") "evil";
@@ -289,7 +289,7 @@ let test_crash_inode_identity () =
       "root's directory is untouched" []
       (Eio.Path.read_dir (post / "u/d")) );
   Eio_mock.Backend.run @@ fun () ->
-  let root = Eio_fs.Fs.v () in
+  let root = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (root / "f") "x";
   Eio.Path.save ~create:(`Exclusive 0o644) (root / "g") "y";
   let ctl = Crash.v () in
@@ -314,7 +314,7 @@ let test_crash_entries_whole () =
   let run setup ops =
     let ctl = Crash.v () in
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     setup raw;
     let fs = Crash.wrap ctl raw in
     ops fs;
@@ -381,7 +381,7 @@ let test_crash_entries_whole () =
    setuid and setgid, which the mode then sets back. *)
 let test_crash_keeps_privilege_bits () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "suid") "x";
   Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (raw / "suid");
   Eio.Path.chmod ~follow:false ~perm:0o6755 (raw / "suid");
@@ -399,12 +399,12 @@ let test_crash_keeps_privilege_bits () =
 (* A user's write clears setuid; the sync after it makes that mode durable. *)
 let test_crash_sync_records_the_mode () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "suid") "x";
   Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (raw / "suid");
   Eio.Path.chmod ~follow:false ~perm:0o4755 (raw / "suid");
   let ctl = Crash.v () in
-  let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice raw) in
+  let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice raw) in
   Eio.Path.with_open_out ~create:`Never (fs / "suid") (fun f ->
       Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "y" ];
       Eio.File.sync f);
@@ -422,7 +422,7 @@ let test_crash_truncation_follows_writeback () =
   let seen = Hashtbl.create 8 in
   for seed = 0 to 199 do
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "dgjutfwss";
     let ctl = Crash.v ~policy:(Reorder_unsynced seed) () in
     let fs = Crash.wrap ctl raw in
@@ -438,7 +438,7 @@ let test_crash_truncation_follows_writeback () =
    on another name. *)
 let test_crash_sync_commits_the_mode_alone () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "x") "x";
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "y") "y";
   let ctl = Crash.v ~policy:Drop_unsynced () in
@@ -456,7 +456,7 @@ let test_crash_sync_commits_the_mode_alone () =
    the handle commits the directory it opened, not the one at that name. *)
 let test_crash_dir_handle_barrier_by_inode () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   List.iter (fun d -> Eio.Path.mkdir ~perm:0o755 (raw / d)) [ "a"; "b"; "a/d" ];
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl raw in
@@ -482,7 +482,7 @@ let test_crash_dir_handle_barrier_by_inode () =
 let test_crash_deferred_barrier_whole () =
   for cut = 0 to 6 do
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     let keep (u : Crash.unsynced) = u.kind = Data || u.seq <= cut in
     let ctl = Crash.v ~policy:(Survive keep) () in
     let fs = Crash.wrap ctl raw in
@@ -503,7 +503,7 @@ let test_crash_deferred_barrier_whole () =
    directory into itself. *)
 let test_crash_move_needs_ancestor_moves () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   List.iter (fun d -> Eio.Path.mkdir ~perm:0o755 (raw / d)) [ "a"; "b"; "a/m" ];
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "a/m/f") "0";
   let ctl = Crash.v () in
@@ -533,7 +533,7 @@ let test_crash_move_needs_ancestor_moves () =
 let test_crash_new_dir_needs_parent_barrier () =
   let run ~parent =
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     let ctl = Crash.v () in
     let fs = Crash.wrap ctl raw in
     Eio.Path.mkdir ~perm:0o755 (fs / "d");
@@ -552,7 +552,7 @@ let test_crash_new_dir_needs_parent_barrier () =
 let test_crash_preexisting_found_by_inode () =
   let run ~dir policy =
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.mkdir ~perm:0o755 (raw / "d");
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "d/f") "OLD";
     let ctl = Crash.v ~policy () in
@@ -585,7 +585,7 @@ let test_crash_preexisting_found_by_inode () =
    directory it replaces, so the file is not lost with it. *)
 let test_crash_rename_over_filled_dir () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   List.iter (fun d -> Eio.Path.mkdir ~perm:0o755 (raw / d)) [ "a"; "b" ];
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "b/g") "G";
   let ctl = Crash.v () in
@@ -602,7 +602,7 @@ let test_crash_rename_over_filled_dir () =
    one's. *)
 let test_crash_subtree_barrier_by_inode () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.mkdir ~perm:0o755 (raw / "a");
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "a/old") "O";
   let ctl = Crash.v () in
@@ -626,7 +626,7 @@ let test_crash_hole_lands_zeroed () =
   let seen = Hashtbl.create 8 in
   for seed = 0 to 199 do
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "ABCDEFGHIJ";
     let ctl = Crash.v ~policy:(Reorder_unsynced seed) ~block_size:1 () in
     let fs = Crash.wrap ctl raw in
@@ -644,12 +644,12 @@ let test_crash_hole_lands_zeroed () =
 let test_crash_sync_commits_cleared_mode () =
   let run ~commit =
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "g") "KLM";
     Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (raw / "g");
     Eio.Path.chmod ~follow:false ~perm:0o2775 (raw / "g");
     let ctl = Crash.v () in
-    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice raw) in
+    let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice raw) in
     Eio.Path.with_open_out ~create:`Never (fs / "g") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "x" ]);
     if commit then
@@ -665,7 +665,7 @@ let test_crash_sync_commits_cleared_mode () =
    predicate says. *)
 let test_crash_attrs_wait_for_their_node () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   let keep (u : Crash.unsynced) = u.kind = Mkdir in
   let ctl = Crash.v ~policy:(Survive keep) () in
   let fs = Crash.wrap ctl raw in
@@ -740,13 +740,13 @@ let test_crash_lost_page_kept_or_evicted () =
 let test_crash_clear_journaled_at_write () =
   let run ~barrier policy =
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "X";
     Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (raw / "f");
     Eio.Path.chmod ~follow:false ~perm:0o4755 (raw / "f");
     Eio.Path.chmod ~follow:false ~perm:0o777 raw;
     let ctl = Crash.v ~policy () in
-    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice raw) in
+    let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice raw) in
     Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
         Eio.File.pwrite_all f ~file_offset:(i63 0) [ Cstruct.of_string "Y" ]);
     if barrier then begin
@@ -807,7 +807,7 @@ let test_crash_kept_truncation_length_only () =
    between two wrappers: it is refused. *)
 let test_crash_wrap_once () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   let ctl = Crash.v () in
   ignore (Crash.wrap ctl raw);
   match Crash.wrap ctl raw with
@@ -910,7 +910,7 @@ let test_crash_stacked_wrappers_relay_failure () =
   let run ~ro =
     let ctl = Crash.v ~policy:Drop_unsynced () in
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "pqr";
     let mid = Chaos.wrap (fun _ -> None) (Crash.wrap ctl raw) in
     let rule = at `Sync "/f" (Fail `Eio) in
@@ -1078,7 +1078,7 @@ let images_over_old steps =
     let ctl = Crash.v ~policy:(Choose draw) ~block_size:512 () in
     let image =
       Eio_mock.Backend.run @@ fun () ->
-      Eio_fs.run @@ fun env ->
+      Eio_fs_mem.run @@ fun env ->
       write_new (env#fs / "old") (String.make 512 'o');
       let fs = Crash.wrap ctl env#fs in
       steps ctl fs;
@@ -1137,7 +1137,7 @@ let test_crash_hole_past_a_closed_directory () =
   let image draw =
     let ctl = Crash.v ~policy:(Choose draw) ~block_size:512 () in
     Eio_mock.Backend.run @@ fun () ->
-    let root = Eio_fs.Fs.v () in
+    let root = Eio_fs_mem.v () in
     Eio.Path.mkdirs ~perm:0o755 (root / "home/a/b");
     Eio.Path.with_open_out ~create:(`Exclusive 0o644) (root / "home/a/b/f")
       (fun f ->
@@ -1146,7 +1146,7 @@ let test_crash_hole_past_a_closed_directory () =
     List.iter
       (fun p -> Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (root / p))
       [ "home"; "home/a"; "home/a/b"; "home/a/b/f" ];
-    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice root / "home") in
+    let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice root / "home") in
     Eio.Switch.run (fun sw ->
         let b = Eio.Path.open_dir ~sw (fs / "a/b") in
         Eio.Path.chmod ~follow:false ~perm:0o600 (fs / "a");
@@ -1298,11 +1298,11 @@ let test_crash_evicted_before_sync () =
 let test_crash_length_after_clear () =
   let run op policy =
     Eio_mock.Backend.run @@ fun () ->
-    let raw = Eio_fs.Fs.v () in
+    let raw = Eio_fs_mem.v () in
     Eio.Path.save ~create:(`Exclusive 0o644) (raw / "f") "WW";
     Eio.Path.chmod ~follow:false ~perm:0o4777 (raw / "f");
     let ctl = Crash.v ~policy ~block_size:2 () in
-    let fs = Crash.wrap ctl (Eio_fs.Fs.as_user alice raw) in
+    let fs = Crash.wrap ctl (Eio_fs_mem.as_user alice raw) in
     Eio.Path.with_open_out ~create:`Never (fs / "f") (fun f ->
         match op with
         | `Grow ->
@@ -1340,14 +1340,14 @@ let test_crash_length_after_clear () =
    rebuilds the tree with root's rights. *)
 let test_crash_over_chaos_over_user () =
   Eio_mock.Backend.run @@ fun () ->
-  let raw = Eio_fs.Fs.v () in
+  let raw = Eio_fs_mem.v () in
   Eio.Path.mkdir ~perm:0o755 (raw / "d");
   Eio.Path.save ~create:(`Exclusive 0o644) (raw / "d" / "f") "x";
   Eio.Path.mkdir ~perm:0o755 (raw / "u");
   Eio.Path.chown ~follow:false ~uid:1000L ~gid:1000L (raw / "u");
   let ctl = Crash.v () in
   let fs =
-    Crash.wrap ctl (Chaos.wrap (fun _ -> None) (Eio_fs.Fs.as_user alice raw))
+    Crash.wrap ctl (Chaos.wrap (fun _ -> None) (Eio_fs_mem.as_user alice raw))
   in
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "u" / "g") "y";
   let post = Crash.post_crash ctl in

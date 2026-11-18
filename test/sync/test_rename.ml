@@ -43,7 +43,7 @@ let test_fallback_receives_paths_and_propagates_refusal () =
 
 let test_registered_operation_precedes_fallback () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let source = Eio.Path.(env#fs / "source") in
   let target = Eio.Path.(env#fs / "target") in
   Eio.Path.save ~create:(`Exclusive 0o600) source "payload";

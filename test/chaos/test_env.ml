@@ -30,7 +30,7 @@ let crash () =
       | exception Eio.Io _ -> ())
     ~recover:(fun ~acked:_ env -> confined env)
 
-let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+let alice = { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 
 (* Root's [etc], and a [home] anyone may write. *)
 let setup_dirs env =
@@ -42,7 +42,7 @@ let setup_dirs env =
 let denied env =
   List.iter
     (fun d ->
-      let d = Eio_fs.Fs.as_user alice d in
+      let d = Eio_fs_mem.as_user alice d in
       match P.save ~create:(`Or_truncate 0o644) P.(d / "etc/conf") "x" with
       | () -> failwith "alice saved etc/conf"
       | exception Eio.Io _ -> ())
@@ -54,7 +54,7 @@ let check_as_user () = Eio_fs_chaos.run ~setup:setup_dirs denied
    fail fails under one. *)
 let check_as_user_faults () =
   Eio_fs_chaos.run ~setup:setup_dirs (fun env ->
-      let fs = Eio_fs.Fs.as_user alice env#fs in
+      let fs = Eio_fs_mem.as_user alice env#fs in
       try P.save ~create:(`Or_truncate 0o644) P.(fs / "home/f") "x"
       with Eio.Io _ -> failwith "save failed")
 
@@ -62,12 +62,12 @@ let crash_as_user () =
   Eio_fs_chaos.Private.check_cuts ~setup:setup_dirs
     (fun ~ack env ->
       denied env;
-      let fs = Eio_fs.Fs.as_user alice env#fs in
+      let fs = Eio_fs_mem.as_user alice env#fs in
       match Eio_fs_sync.save P.(fs / "home/f") "v" with
       | () -> ack ()
       | exception Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
-      let fs = Eio_fs.Fs.as_user alice env#fs in
+      let fs = Eio_fs_mem.as_user alice env#fs in
       match (P.load P.(fs / "home/f"), acked) with
       | "v", _ -> ()
       | exception Eio.Io _ when acked = [] -> ()

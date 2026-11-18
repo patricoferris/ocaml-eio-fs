@@ -26,7 +26,7 @@ and subtree name q = List.map (fun s -> name ^ "/" ^ s) (tree q)
    tree a cut by [policy] leaves. *)
 let cut ?os ?(setup = ignore) policy run =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   setup env#fs;
   let t = Crash.v ?os policy in
   let fs = Crash.wrap t env#fs in
@@ -153,7 +153,7 @@ let renamed_before_drain () =
    directory: each change names the file as it was named when it was made. *)
 let named_when_made () =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let t = Model.v ~policy:Drop_unsynced () in
   let fs = Model.wrap t env#fs in
   P.mkdir ~perm:0o755 P.(fs / "d");

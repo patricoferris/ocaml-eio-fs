@@ -58,12 +58,12 @@ files = ["lib/chaos/chaos_model.ml"]
 exclude = ["E015"]
 
 # The in-memory core is a private library of eio-fs: these tests reach it
-# through Eio_fs.Fs, its public face.
+# through Eio_fs_mem, its public face.
 [[rules]]
 files = ["test/test_low_level.ml", "test/test_memfs.ml"]
 exclude = ["E606"]
 
-# The fuzzer compiles a copy of the private Extents: it links no eio_fs_mem.
+# The fuzzer compiles a copy of the private Extents: it links no eio_fs_mem_core.
 [[rules]]
 files = ["fuzz/fuzz_extents.ml"]
 exclude = ["E710"]

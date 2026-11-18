@@ -76,7 +76,7 @@ let big ?bug () =
    fails, and the retry's first write moves three bytes. *)
 let retry_pinned ?bug () =
   Eio_mock.Backend.run @@ fun () ->
-  let fs = Eio_fs.Fs.v () in
+  let fs = Eio_fs_mem.v () in
   let faults (op : Eio_fs_chaos.Op.t) : Eio_fs_chaos.Fault.t option =
     match (op.kind, op.nth) with
     | `Write, 1 -> Some (Fail `Eio)

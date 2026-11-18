@@ -9,7 +9,7 @@ val needs_user : string list
 
 val check :
   ?os:[< `Linux | `Macos ] ->
-  ?user:Eio_fs.user ->
+  ?user:Eio_fs_mem.user ->
   run:((Eio_chaos.env -> string list) -> (string list, string) result) ->
   (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
   unit
@@ -22,7 +22,7 @@ val eio_posix_differs : [< `Linux | `Macos ] -> string list
 
 val program :
   ?os:[< `Linux | `Macos ] ->
-  ?user:Eio_fs.user ->
+  ?user:Eio_fs_mem.user ->
   (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
   Eio_chaos.env ->
   unit

@@ -61,7 +61,7 @@ module Error = struct
 
   (* A caller's mistake, as eio_posix reports it. *)
   let badf () =
-    invalid_arg "Eio_fs.Fs: the descriptor is closed, so it takes no operation"
+    invalid_arg "Eio_fs_mem: the descriptor is closed, so it takes no operation"
 
   let err ctx =
     let exn = Eio.Exn.create (Eio.Exn.X (Eio_fs ctx)) in

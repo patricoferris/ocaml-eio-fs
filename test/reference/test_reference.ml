@@ -5,14 +5,15 @@
 open Reference
 module Crash = Eio_fs_chaos.Private.Crash
 
-let alice = { Eio_fs.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
+let alice = { Eio_fs_mem.uid = 1000L; gid = 1000L; groups = []; umask = 0o022 }
 let setup = [ Mkdir "a"; Mkdir "b"; Creat ("a/f", '0') ]
 
 let fresh ~as_alice =
-  let admin = (Eio_fs.Fs.v () :> Eio.Fs.dir_ty Eio.Path.t) in
+  let admin = (Eio_fs_mem.v () :> Eio.Fs.dir_ty Eio.Path.t) in
   Eio.Path.chmod ~follow:true ~perm:0o777 admin;
   let base =
-    if as_alice then (Eio_fs.Fs.as_user alice admin :> Eio.Fs.dir_ty Eio.Path.t)
+    if as_alice then
+      (Eio_fs_mem.as_user alice admin :> Eio.Fs.dir_ty Eio.Path.t)
     else admin
   in
   List.iter (exec base) setup;
@@ -73,7 +74,7 @@ let crash ?block_size ~as_alice ops k policy =
     ops;
   let pending = Crash.unsynced ctl in
   Crash.crash ctl;
-  let post = Eio_fs.Fs.as_user Eio_fs.root (Crash.post_crash ctl) in
+  let post = Eio_fs_mem.as_user Eio_fs_mem.root (Crash.post_crash ctl) in
   let image =
     List.map
       (fun (path, ino, kind) ->

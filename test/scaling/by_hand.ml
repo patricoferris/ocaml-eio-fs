@@ -8,7 +8,7 @@ let ( / ) = Eio.Path.( / )
 
 let () =
   Eio_mock.Backend.run @@ fun () ->
-  let fs = Eio_fs.Fs.v () in
+  let fs = Eio_fs_mem.v () in
   let t0 = Sys.time () in
   for i = 1 to 80_000 do
     Eio.Path.save ~create:(`Exclusive 0o644) (fs / string_of_int i) "x"

@@ -79,7 +79,7 @@ let test_b_read_back () =
 let cut_after_sync_fault fault =
   let module Chaos = Eio_fs_chaos in
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env ->
+  Eio_fs_mem.run @@ fun env ->
   let t = Chaos.Power.v Lose_unsynced in
   let hook (op : Chaos.Op.t) =
     if op.kind = `Sync && op.nth = 2 && Filename.basename op.path = "log" then

@@ -19,7 +19,7 @@ let with_real_dir fn =
 
 let with_in_memory_fs fn =
   Eio_mock.Backend.run @@ fun () ->
-  Eio_fs.run @@ fun env -> fn env#fs
+  Eio_fs_mem.run @@ fun env -> fn env#fs
 
 let regular_file (stat : Eio.File.Stat.t) =
   match stat.kind with

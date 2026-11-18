@@ -20,12 +20,12 @@ opam install eio-fs
 
 ## An in-memory filesystem
 
-`Eio_fs.Fs.v ()` is the root of a new, empty filesystem. Two calls share no
+`Eio_fs_mem.v ()` is the root of a new, empty filesystem. Two calls share no
 file.
 
 ```ocaml
 # Eio_main.run @@ fun _env ->
-  let fs = Eio_fs.Fs.v () in
+  let fs = Eio_fs_mem.v () in
   Eio.Path.save ~create:(`Exclusive 0o644) Eio.Path.(fs / "hello") "world";
   Eio.Path.load Eio.Path.(fs / "hello");;
 - : string = "world"
@@ -162,7 +162,7 @@ that makes a fresh, empty directory from the same simulated `env` and runs
 short scenarios in it, each recorded on a real Linux and a real macOS kernel.
 
 ```ocaml
-# Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs.Fs.v ());;
+# Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ());;
 - : unit = ()
 ```
 
@@ -186,7 +186,7 @@ volume, where `a` and `A` are the same name.
 The permission scenarios run only with `~user`, as root passes every
 permission check. `~user` says which user the directory's operations run as;
 it does not change that user. The in-memory filesystem needs
-`Eio_fs.Fs.v ~user` to match.
+`Eio_fs_mem.v ~user` to match.
 
 A filesystem built over other devices, such as a remote filesystem over a
 network, is checked over faulty ones with `~under`:
@@ -257,8 +257,11 @@ across power cuts, or about on-disk layout.
 
 ## Libraries
 
-- `eio-fs` has the in-memory filesystem. Its `eio-fs-crunch` binary embeds a
-  directory tree in an executable.
+- `eio-fs.mem` has `Eio_fs_mem`, the in-memory filesystem.
+  [`eio_fs_mem.mli`](lib/mem/eio_fs_mem.mli) says how closely it follows
+  each kernel.
+- `eio-fs` has `Eio_fs.Crunch`, which loads into an in-memory filesystem a
+  directory tree its `eio-fs-crunch` binary embeds in an executable.
   - `Eio_fs.Tree` walks, measures, copies and formats a tree on any Eio
     backend.
   - `Eio_fs.Nofollow` reads a file, bounded, refusing a symbolic link at the
@@ -276,12 +279,12 @@ across power cuts, or about on-disk layout.
 ## Limitations
 
 - A file's bytes live in memory, and a file holds at most 4 GiB
-  ([`Eio_fs.Fs`](lib/eio_fs.mli)).
+  ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
 - The filesystem answers as Linux does, or as macOS does with ``~os:`Macos``.
   Code that runs on both needs a test under each.
 - eio_posix differs from the kernel on a few paths, such as one that ends in
   `..`, and the in-memory filesystem follows the kernel
-  ([`Eio_fs.Fs`](lib/eio_fs.mli)).
+  ([`Eio_fs_mem`](lib/mem/eio_fs_mem.mli)).
 - A power cut leaves what ext4 with `data=writeback` may leave, a weaker
   model than ext4's default, `data=ordered`, which writes a file's data
   before the metadata that names it. Under ``~os:`Macos`` only the syncs
