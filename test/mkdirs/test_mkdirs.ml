@@ -183,10 +183,10 @@ let test_posix_symbolic_link () =
   Eio.Path.mkdir ~perm:0o700 root;
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree root) @@ fun () ->
   let parent, _ = Option.get (Eio.Path.split root) in
-  Eio_fs_unix.sync_dir parent;
+  Eio.Path.sync_dir parent;
   Eio.Path.mkdir ~perm:0o700 (root / "target");
   Eio.Path.symlink ~link_to:"target" (root / "link");
-  Eio_fs_unix.sync_dir root;
+  Eio.Path.sync_dir root;
   Eio.Path.with_open_dir root @@ fun anchor ->
   let syncs = ref 0 in
   let module Chaos = Eio_fs_chaos in

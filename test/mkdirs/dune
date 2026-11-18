@@ -1,11 +1,4 @@
 (test
  (name test)
  (package eio-fs)
- (libraries
-  eio
-  eio_main
-  eio-fs
-  eio-fs.chaos
-  eio-fs.unix
-  chaos_helpers
-  alcotest))
+ (libraries eio eio_main eio-fs eio-fs.chaos chaos_helpers alcotest))
