@@ -38,7 +38,7 @@ type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 (* Root owns the tree and makes the current directory, which it gives to
    [user]. *)
 let run ?os ?(user = root) ?clock ?(cwd = "/") fn =
-  if not (Eio_fs_path.is_abs cwd) then
+  if not (String.starts_with ~prefix:"/" cwd) then
     Fmt.invalid_arg "Eio_fs_mem.run: cwd is %S, must be an absolute path" cwd;
   let t = Low_level.v ?clock ~cwd ?os () in
   let admin = (Eio.Path.of_dir (Memfs.fs t) :> Eio.Fs.dir_ty Eio.Path.t) in

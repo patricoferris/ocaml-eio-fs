@@ -144,7 +144,7 @@ end = struct
     let flags = Low_level.Open_flags.(o_rdonly + o_directory) in
     let fd = Low_level.openat ~sw ~mode:0 (fd t) path flags in
     let label = Eio_fs_internal.last_component path in
-    let full_path = Eio_fs_path.append t.dir_path path in
+    let full_path = Eio_utils.Posix_path.join t.dir_path path in
     let d =
       v ~label ~path:full_path
         { at = Low_level.Dir.Dir_fd fd; user = t.fd.user }

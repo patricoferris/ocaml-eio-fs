@@ -538,7 +538,7 @@ let rec snapshot_at (Base_dir ((module B), bv) as owner) path =
         B.read_dir bv path
         |> List.fold_left
              (fun m name ->
-               let child = Eio_fs_path.append path name in
+               let child = Eio_utils.Posix_path.join path name in
                match snapshot_at owner child with
                | tree -> Paths.add name tree m
                | exception e when is_gone e -> m)
@@ -625,7 +625,7 @@ and restore_node ~stamp (Base_dir ((module B), bv) as owner) path tree =
       B.mkdir bv ~perm:(perm lor 0o700) path;
       Paths.iter
         (fun name child ->
-          restore_at ~stamp owner (Eio_fs_path.append path name) child)
+          restore_at ~stamp owner (Eio_utils.Posix_path.join path name) child)
         entries;
       restore_owner owner path ~uid ~gid;
       B.chmod bv ~follow:false ~perm path
@@ -639,10 +639,10 @@ and refill ~stamp (Base_dir ((module B), bv) as owner) path
   B.read_dir bv path
   |> List.iter (fun name ->
       if not (Paths.mem name entries) then
-        Wrapper.remove_at owner (Eio_fs_path.append path name));
+        Wrapper.remove_at owner (Eio_utils.Posix_path.join path name));
   Paths.iter
     (fun name child ->
-      restore_at ~stamp owner (Eio_fs_path.append path name) child)
+      restore_at ~stamp owner (Eio_utils.Posix_path.join path name) child)
     entries
 
 let restore_root ~stamp (Base_dir ((module B), bv) as owner) path = function
@@ -730,13 +730,15 @@ let resolve_at ?(follow_last = true) ?(spell = fun ~dir:_ name -> name) ~root
         | None -> go hops abs (name :: rev) rest
         | Some target ->
             let segs = String.split_on_char '/' target in
-            if Eio_fs_path.is_abs target then go (hops - 1) true [] (segs @ rest)
+            if String.starts_with ~prefix:"/" target then
+              go (hops - 1) true [] (segs @ rest)
             else go (hops - 1) abs rev (segs @ rest))
   in
   let root = path_segments root in
   match tree_path ~root path with
   | None -> path
-  | Some rest -> go 40 (Eio_fs_path.is_abs path) (List.rev root) rest
+  | Some rest ->
+      go 40 (String.starts_with ~prefix:"/" path) (List.rev root) rest
 
 let rec tree_find tree segs =
   match (tree, segs) with
@@ -963,7 +965,7 @@ let parent_path p =
   let segs = path_segments p in
   let up = match List.rev segs with [] -> [] | _ :: up -> List.rev up in
   let s = String.concat "/" up in
-  if Eio_fs_path.is_abs p then "/" ^ s else s
+  if String.starts_with ~prefix:"/" p then "/" ^ s else s
 
 let ino_at (Base_dir ((module B), bv)) p =
   match B.stat bv ~follow:false p with
@@ -1122,7 +1124,9 @@ let adopt ctl paths =
       let root = path_segments root_path in
       let touched = touched ~committed:true ctl in
       let (Base_dir ((module B), bv)) = owner in
-      let at segs = Eio_fs_path.append root_path (String.concat "/" segs) in
+      let at segs =
+        Eio_utils.Posix_path.join root_path (String.concat "/" segs)
+      in
       List.iter
         (fun path ->
           match tree_path ~root path with
@@ -1737,7 +1741,7 @@ let with_outside ctl ~owner ~root_path tree =
 (* Each tracked file is rewritten where the image holds it, which a rename
    may have made another name than the one it was met at. *)
 let rewrite_files verdict ~owner ~root_path ~tree ~locs ~rewrites =
-  let rel_of key = Eio_fs_path.append root_path key in
+  let rel_of key = Eio_utils.Posix_path.join root_path key in
   let proot = Option.get verdict.ctl.root_box in
   Paths.iter
     (fun key ls ->
@@ -1857,7 +1861,7 @@ let cut ctl =
    root down. *)
 let rename_ancestors owner ~root dst =
   let segs = path_segments (parent_path dst) in
-  let lead = if Eio_fs_path.is_abs dst then "/" else "" in
+  let lead = if String.starts_with ~prefix:"/" dst then "/" else "" in
   List.init
     (List.length segs + 1 - List.length root)
     (fun i -> List.length root + i)
@@ -2516,7 +2520,7 @@ let perm_of = function
 
 (* Compose a path opened through a subtree with the subtree's own path from
    the wrap root. *)
-let at prefix path = Eio_fs_path.append prefix path
+let at prefix path = Eio_utils.Posix_path.join prefix path
 
 (* One key per file, whatever spelling [path] is. *)
 let file_key (Base_dir ((module B), bv)) path =

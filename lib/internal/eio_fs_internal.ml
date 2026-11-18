@@ -74,8 +74,27 @@ let bounded_read ~max_bytes ~validate ~stat ~read =
             Ok (Cstruct.sub !buffer 0 length)
           end)
 
+let without_trailing_slashes path =
+  let rec last_non_slash i =
+    if i <= 0 || path.[i] <> '/' then i else last_non_slash (i - 1)
+  in
+  let last = last_non_slash (String.length path - 1) in
+  if last < 0 then path else String.sub path 0 (last + 1)
+
+let basename path =
+  let path = without_trailing_slashes path in
+  if String.equal path "/" then ""
+  else
+    let name =
+      match String.rindex_opt path '/' with
+      | None -> path
+      | Some index ->
+          String.sub path (index + 1) (String.length path - index - 1)
+    in
+    match name with "." | ".." -> "" | name -> name
+
 let last_component path =
-  match Eio_fs_path.basename path with
+  match basename path with
   | "" -> if String.equal path "" then "." else path
   | base -> base
 

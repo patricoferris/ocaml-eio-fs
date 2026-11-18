@@ -355,7 +355,7 @@ let rec remove_at (Base_dir ((module B), bv) as owner) path =
         | names ->
             List.iter
               (fun name ->
-                let child = Eio_fs_path.append path name in
+                let child = Eio_utils.Posix_path.join path name in
                 remove_at owner child)
               names;
             clear ()

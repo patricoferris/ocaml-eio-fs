@@ -597,12 +597,14 @@ module Filesystem = struct
     | None, _ -> { w with dirs = [ parent_dir w.tree (here w) ] }
 
   let names path =
-    List.filter (fun name -> not (String.equal name "")) (Eio_fs_path.segs path)
+    List.filter
+      (fun name -> not (String.equal name ""))
+      (String.split_on_char '/' path)
 
   (* Where [path] starts: the root for an absolute path, which a confined walk
      refuses, and the directory [w] is in otherwise. *)
   let enter w path =
-    if not (Eio_fs_path.is_abs path) then w
+    if not (String.starts_with ~prefix:"/" path) then w
     else
       match w.base with
       | Some _ -> Error.absolute_path ()
@@ -742,7 +744,7 @@ module Filesystem = struct
       { at_root with dirs = [ r ] }
     in
     match dir_fd.Dir.at with
-    | Dir.Fs _ when Eio_fs_path.is_abs path -> at_root
+    | Dir.Fs _ when String.starts_with ~prefix:"/" path -> at_root
     | Dir.Fs _ -> cwd ()
     | Dir.Cwd _ ->
         let w = cwd () in

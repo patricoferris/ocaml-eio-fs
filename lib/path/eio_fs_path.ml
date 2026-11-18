@@ -44,31 +44,6 @@ let normalize p =
   in
   if directory && not (String.equal path "/") then path ^ "/" else path
 
-let append base path =
-  if is_abs path then path
-  else
-    let len = String.length base in
-    if len = 0 || base.[len - 1] = '/' then base ^ path else base ^ "/" ^ path
-
-let without_trailing_slashes path =
-  let rec last_non_slash i =
-    if i <= 0 || path.[i] <> '/' then i else last_non_slash (i - 1)
-  in
-  let last = last_non_slash (String.length path - 1) in
-  if last < 0 then path else String.sub path 0 (last + 1)
-
-let basename path =
-  let path = without_trailing_slashes path in
-  if String.equal path "/" then ""
-  else
-    let name =
-      match String.rindex_opt path '/' with
-      | None -> path
-      | Some index ->
-          String.sub path (index + 1) (String.length path - index - 1)
-    in
-    match name with "." | ".." -> "" | name -> name
-
 type refusal = Not_a_path | Relative | Root | Not_canonical
 
 let traversal segment = String.equal segment "." || String.equal segment ".."

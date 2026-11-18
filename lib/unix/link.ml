@@ -12,7 +12,7 @@ let err_refused path reason =
           path reason))
 
 let components path =
-  if Eio_fs_path.is_abs path then Error "expected a relative path"
+  if String.starts_with ~prefix:"/" path then Error "expected a relative path"
   else
     match Eio_fs_path.canonical ("/" ^ path) with
     | Ok parts -> Ok parts

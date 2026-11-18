@@ -36,7 +36,7 @@ let contents (stat : Eio.File.Stat.t) path =
   Eio.Flow.read_all file
 
 let scan ?filter ~at root =
-  let at = if Eio_fs_path.is_abs at then at else "/" ^ at in
+  let at = if String.starts_with ~prefix:"/" at then at else "/" ^ at in
   (match Eio.Path.kind ~follow:true root with
   | `Directory -> ()
   | _ -> Low_level.Error.err ("scan: not a directory: " ^ snd root));
