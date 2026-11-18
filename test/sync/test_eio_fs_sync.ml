@@ -611,7 +611,7 @@ let test_sparse_cost size =
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree dir) @@ fun () ->
   let writes = ref [] in
   let schedule (op : Eio_fs_chaos.Op.t) =
-    if op.kind = `Write then writes := (op.file_offset, op.length) :: !writes;
+    if op.kind = `Write then writes := (op.offset, op.length) :: !writes;
     None
   in
   (* The wrapper closes what it wraps: an opened directory, which the switch

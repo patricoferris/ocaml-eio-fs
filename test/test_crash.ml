@@ -766,7 +766,7 @@ let test_crash_streaming_write_offsets () =
 let test_streaming_write_offsets () =
   let offsets = ref [] in
   let hook (op : Op.t) =
-    if op.kind = `Write then offsets := op.file_offset :: !offsets;
+    if op.kind = `Write then offsets := op.offset :: !offsets;
     None
   in
   with_chaos hook @@ fun ~raw ~chaos ->

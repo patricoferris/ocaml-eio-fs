@@ -63,7 +63,7 @@ let test_read_error positional () =
       Alcotest.(check int)
         "requested read offset"
         (if positional then 1 else 0)
-        op.Op.file_offset;
+        op.Op.offset;
       Alcotest.(check int) "requested read length" 3 op.Op.length
   | _ -> Alcotest.fail "expected exactly one observed read");
   Alcotest.(check int) "next read reaches unchanged data" 3 (read ());
@@ -72,7 +72,7 @@ let test_read_error positional () =
       Alcotest.(check int)
         "failed read preserves scheduled cursor"
         (if positional then 1 else 0)
-        next.Op.file_offset
+        next.Op.offset
   | _ -> Alcotest.fail "expected exactly two observed reads");
   Alcotest.(check string)
     "failed read preserves streaming cursor"
@@ -229,7 +229,7 @@ let test_directory_error entries () =
   | [ op ] ->
       Alcotest.(check string) "directory path" "tree" op.Op.path;
       Alcotest.(check bool) "directory operation" true (op.kind = `Read_dir);
-      Alcotest.(check int) "no byte offset" 0 op.file_offset;
+      Alcotest.(check int) "no byte offset" 0 op.offset;
       Alcotest.(check int) "no byte length" 0 op.length
   | _ -> Alcotest.fail "expected exactly one directory opportunity");
   Alcotest.(check (list string))
