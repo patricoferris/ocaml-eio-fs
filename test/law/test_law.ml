@@ -747,7 +747,7 @@ let rec entry_of side step =
   | Unlink _ -> op Dir "unlink"
   | Rmdir _ -> op Dir "rmdir"
   | Rename _ -> op Dir "rename"
-  | Exclusive_rename _ -> op Dir_handler "Eio_fs_sync.Rename.Exclusive"
+  | Exclusive_rename _ -> op Dir_handler "Eio_fs.Sync.Rename.Exclusive"
   | Read_link _ -> op Dir "read_link"
   | Symlink _ -> op Dir "symlink"
   | Chmod _ -> op Dir "chmod"
@@ -757,9 +757,9 @@ let rec entry_of side step =
   | Split _ -> op Dir "split"
   | Join _ -> op Dir "join"
   | Sync_dir _ -> op Dir "sync_dir"
-  | Dir_barrier _ -> op Dir_handler "Eio_fs_sync.Dir_sync"
-  | Process_local _ -> op Dir_handler "Eio_fs_sync.Process_local"
-  | Modeless _ -> op Dir_handler "Eio_fs_sync.Modeless"
+  | Dir_barrier _ -> op Dir_handler "Eio_fs.Sync.Dir_sync"
+  | Process_local _ -> op Dir_handler "Eio_fs.Sync.Process_local"
+  | Modeless _ -> op Dir_handler "Eio_fs.Sync.Modeless"
   | Admin_stat _ -> op Dir_handler "Eio_fs_internal.Admin"
   | As_user_stat _ -> op Dir_handler "Eio_fs_internal.Rebase"
   | Close_dir _ -> op Dir_handler "close"
@@ -774,7 +774,7 @@ let rec entry_of side step =
   | Fsync f -> write f "sync"
   | Truncate (f, _) -> write f "truncate"
   | Copy f -> write f "copy"
-  | File_sync _ -> op File_handler "Eio_fs_sync.File_sync"
+  | File_sync _ -> op File_handler "Eio_fs.Sync.File_sync"
   | Shutdown _ -> op File_handler "Eio.Flow.Pi.Shutdown"
   | Cancel s -> entry_of side s
   | Scope _ -> None
@@ -1162,7 +1162,7 @@ let test_released_under_faults () =
     lifecycle
 
 let suite =
-  ( "chaos_law",
+  ( "law",
     [
       Alcotest.test_case "every binding has an entry" `Quick test_bindings;
       Alcotest.test_case "each handle after each lifecycle edge" `Quick

@@ -424,7 +424,7 @@ val acked : env -> string list
 
     {b macOS.} Under [~os:`Macos] the disk is APFS's, on a drive with a cache:
 
-    - {!Eio.File.sync} and the portable barriers of {!Eio_fs_sync} are fsync(2),
+    - {!Eio.File.sync} and the portable barriers of [Eio_fs.Sync] are fsync(2),
       which stops in that cache: alone, they make nothing durable;
     - the barriers of [eio-fs.unix] ([Eio_fs_unix.sync_file],
       [Eio_fs_unix.sync_dir], [Eio_fs_unix.barrier]) are [F_FULLFSYNC]: each

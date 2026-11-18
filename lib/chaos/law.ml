@@ -209,20 +209,20 @@ let rebase =
      Eio_fs_mem.as_user runs it as another user."
 
 let exclusive =
-  dir_handler "Eio_fs_sync.Rename.Exclusive" (Intercepted `Change)
+  dir_handler "Eio_fs.Sync.Rename.Exclusive" (Intercepted `Change)
     "A fault refuses the rename before the base makes it."
 
 let process_local =
-  dir_handler "Eio_fs_sync.Process_local" Forwarded
+  dir_handler "Eio_fs.Sync.Process_local" Forwarded
     "The wrapper adds no opener, so who can open the files is the base's to \
      say."
 
 let modeless =
-  dir_handler "Eio_fs_sync.Modeless" Forwarded
+  dir_handler "Eio_fs.Sync.Modeless" Forwarded
     "Whether modes are kept is the base's to say."
 
 let dir_sync =
-  dir_handler "Eio_fs_sync.Dir_sync" (Intercepted `Sync)
+  dir_handler "Eio_fs.Sync.Dir_sync" (Intercepted `Sync)
     "A fault refuses the barrier before the base's barrier runs."
 
 let dir_other =
@@ -237,7 +237,7 @@ let base_file =
      descriptor a lock is taken on from it."
 
 let file_sync =
-  file_handler "Eio_fs_sync.File_sync" (Intercepted `Sync)
+  file_handler "Eio_fs.Sync.File_sync" (Intercepted `Sync)
     "A fault refuses the barrier and tells the base it failed, before the \
      base's barrier runs; a file opened for reading answers it too, as fsync \
      does."

@@ -118,7 +118,7 @@ let test_len_upto durable changes bs k j seed =
 let block_size = range ~min:1 8
 
 let suite =
-  ( "chaos_blocks",
+  ( "blocks",
     [
       test_case "every change kept is the live file"
         [ bytes; list change; block_size ]

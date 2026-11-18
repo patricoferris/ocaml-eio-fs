@@ -3,7 +3,7 @@
 # nothing. Its outcomes record whatever an operation raises, cancellation
 # included, to compare the wrapper with the bare filesystem.
 [[rules]]
-files = ["test/law/test_chaos_law.ml"]
+files = ["test/law/test_law.ml"]
 exclude = ["E100", "E105"]
 
 # The interpreter writes whatever an operation raises, but a cancellation, as

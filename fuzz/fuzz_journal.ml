@@ -302,7 +302,7 @@ let test_invariants a b =
     ops
 
 let suite =
-  ( "chaos_journal",
+  ( "journal",
     [
       test_case
         "the journal's indexes, commits, lost and kept places hold their \
