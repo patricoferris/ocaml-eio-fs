@@ -8,8 +8,8 @@ module P = Eio.Path
 let checkpoint ~size_after () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
-      Eio_fs_sync.save P.(env#fs / "log") "";
-      Eio_fs_sync.save P.(env#fs / "ckpt") "0")
+      Eio_fs.Sync.save P.(env#fs / "log") "";
+      Eio_fs.Sync.save P.(env#fs / "ckpt") "0")
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -25,7 +25,7 @@ let checkpoint ~size_after () =
             let before = size () in
             Eio.File.sync log;
             let n = if size_after then size () else before in
-            Eio_fs_sync.save P.(env#fs / "ckpt") (string_of_int n);
+            Eio_fs.Sync.save P.(env#fs / "ckpt") (string_of_int n);
             ack n)
       with Eio.Io _ -> ())
     ~recover:(fun ~acked:_ env ->
@@ -45,7 +45,7 @@ let compaction ~merge () =
           live := !live @ [ "b" ])
         (fun () ->
           let seen = !live in
-          (try Eio_fs_sync.save P.(env#fs / "merged") (String.concat "" seen)
+          (try Eio_fs.Sync.save P.(env#fs / "merged") (String.concat "" seen)
            with Eio.Io _ -> ());
           live :=
             if merge then
@@ -60,8 +60,8 @@ let compaction ~merge () =
 let overlap ?os ?(before = false) ?(after = ignore) ~sync ~change ~held () =
   Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env ->
-      Eio_fs_sync.save ~perm:0o600 P.(env#fs / "f") "data";
-      Eio_fs_sync.save P.(env#fs / "g") "")
+      Eio_fs.Sync.save ~perm:0o600 P.(env#fs / "f") "data";
+      Eio_fs.Sync.save P.(env#fs / "g") "")
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -86,7 +86,7 @@ let fsync ~sw env =
 
 (* fsync(2) through a handle open for reading only. *)
 let fsync_ro ~sw env =
-  Eio_fs_sync.Barrier.(sync_file portable) (P.open_in ~sw P.(env#fs / "f"))
+  Eio_fs.Sync.Barrier.(sync_file portable) (P.open_in ~sw P.(env#fs / "f"))
 
 let dirsync ~sw:_ env = Eio.Path.sync_dir env#fs
 
@@ -114,7 +114,7 @@ let touched env =
    loses the append does not keep. *)
 let times () =
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "log") "a")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "log") "a")
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->

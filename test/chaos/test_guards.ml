@@ -325,7 +325,7 @@ let test_reads_nothing () =
 let test_nothing_acked () =
   Eio_fs_chaos.Private.check_cuts
     (fun ~ack:_ env ->
-      try Eio_fs_sync.save P.(env#fs / "f") "x" with Eio.Io _ -> ())
+      try Eio_fs.Sync.save P.(env#fs / "f") "x" with Eio.Io _ -> ())
     ~recover:(fun ~acked:_ env ->
       match P.load P.(env#fs / "f") with
       | "x" | (exception Eio.Io _) -> ()
@@ -348,7 +348,7 @@ let test_setup_directory () =
    correct recover that accepts an empty directory. *)
 let lenient_log ?(sync = true) () =
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "log") "")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "log") "")
     (fun ~ack env ->
       try
         P.with_open_out ~append:true ~create:`Never P.(env#fs / "log")
@@ -774,7 +774,7 @@ let test_heap_stays_flat () =
   Eio_fs_chaos.Private.check_faults (fun env ->
       Heap.sample heap;
       for i = 1 to 30 do
-        try Eio_fs_sync.save P.(env#fs / "k") (string_of_int i)
+        try Eio_fs.Sync.save P.(env#fs / "k") (string_of_int i)
         with Eio.Io _ -> ()
       done);
   Heap.check heap 1_000_000
@@ -869,7 +869,7 @@ let recover_syncs dirs =
       incr runs;
       for i = 1 to 3 do
         try
-          Eio_fs_sync.save P.(env#fs / "d1" / Fmt.str "f%d" i) "x";
+          Eio_fs.Sync.save P.(env#fs / "d1" / Fmt.str "f%d" i) "x";
           Eio.Path.sync_dir P.(env#fs / "d1");
           ack i
         with Eio.Io _ -> ()
@@ -891,7 +891,7 @@ let test_idle_syncs_are_no_cut () =
 let reopens n =
   let runs = ref 0 in
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "log") "")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "log") "")
     (fun ~ack env ->
       incr runs;
       for i = 1 to 3 do
@@ -901,7 +901,7 @@ let reopens n =
               P.(env#fs / "log")
               ignore
           done;
-          Eio_fs_sync.append_lines P.(env#fs / "log") [ string_of_int i ];
+          Eio_fs.Sync.append_lines P.(env#fs / "log") [ string_of_int i ];
           ack i
         with Eio.Io _ -> ()
       done)
@@ -952,7 +952,7 @@ let test_syncs_count_in_the_floor () =
           incr runs;
           for i = 1 to 50 do
             try
-              Eio_fs_sync.save P.(env#fs / Fmt.str "f%d" i) "x";
+              Eio_fs.Sync.save P.(env#fs / Fmt.str "f%d" i) "x";
               Eio.Path.sync_dir env#fs;
               ack i
             with Eio.Io _ -> ()
@@ -1078,7 +1078,7 @@ let test_crash_heap_stays_flat () =
       Heap.sample heap;
       for i = 1 to n do
         try
-          Eio_fs_sync.save P.(env#fs / Fmt.str "f%d" i) "x";
+          Eio_fs.Sync.save P.(env#fs / Fmt.str "f%d" i) "x";
           ack i
         with Eio.Io _ -> ()
       done)
@@ -1183,8 +1183,8 @@ let test_one_numbering () =
     Expect.report (fun () ->
         Eio_fs_chaos.Private.check_cuts
           ~setup:(fun env ->
-            Eio_fs_sync.save P.(env#fs / "old") "o";
-            Eio_fs_sync.save P.(env#fs / "x") "x")
+            Eio_fs.Sync.save P.(env#fs / "old") "o";
+            Eio_fs.Sync.save P.(env#fs / "x") "x")
           (fun ~ack env ->
             try
               P.save ~create:(`Exclusive 0o644) P.(env#fs / "a") "data";
@@ -1204,7 +1204,7 @@ let test_one_numbering () =
     Expect.report (fun () ->
         Eio_fs_chaos.Private.check_cuts
           ~setup:(fun env ->
-            Eio_fs_sync.save P.(env#fs / "f") (String.make 9000 'A'))
+            Eio_fs.Sync.save P.(env#fs / "f") (String.make 9000 'A'))
           (fun ~ack env ->
             try
               P.with_open_out ~create:`Never P.(env#fs / "f") @@ fun f ->

@@ -10,7 +10,6 @@
   eio-fs
   eio-fs.mem
   eio-fs.chaos
-  eio-fs.sync
   eio_fs_internal
   chaos_helpers
   unix

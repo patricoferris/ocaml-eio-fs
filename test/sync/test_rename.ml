@@ -1,4 +1,4 @@
-module R = Eio_fs_sync.Rename
+module R = Eio_fs.Sync.Rename
 
 exception Refused
 
@@ -23,7 +23,7 @@ let test_unregistered_directory_is_refused () =
       Alcotest.(check string)
         "missing operation named"
         (Fmt.str
-           "Eio_fs_sync.Rename.exclusive: source is %a, in a directory with no \
+           "Eio_fs.Sync.Rename.exclusive: source is %a, in a directory with no \
             exclusive rename, pass a backend such as \
             Eio_fs_unix.exclusive_rename"
            Eio.Path.pp

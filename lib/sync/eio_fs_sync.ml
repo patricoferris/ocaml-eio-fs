@@ -36,7 +36,7 @@ let sync_any_file (Eio.Resource.T (v, ops) as file) =
   | None, Some (module W) -> W.sync v
   | None, None ->
       invalid_arg
-        "Eio_fs_sync.Barrier.sync_file: file has a backend with no sync, and \
+        "Eio_fs.Sync.Barrier.sync_file: file has a backend with no sync, and \
          registers no File_sync barrier"
 
 let can_sync (Eio.Resource.T (_, ops) as file) =
@@ -140,14 +140,14 @@ let () =
   Printexc.register_printer (function
     | Limit_exceeded { max_bytes; attempted } ->
         Fmt.kstr Option.some
-          "Eio_fs_sync.Limit_exceeded: the write reaches %Ld bytes, past \
+          "Eio_fs.Sync.Limit_exceeded: the write reaches %Ld bytes, past \
            max_bytes %Ld"
           attempted max_bytes
     | _ -> None)
 
 let check_max_bytes fn max_bytes =
   if Int64.compare max_bytes 0L < 0 then
-    Fmt.invalid_arg "Eio_fs_sync.%s: max_bytes is %Ld, must not be negative" fn
+    Fmt.invalid_arg "Eio_fs.Sync.%s: max_bytes is %Ld, must not be negative" fn
       max_bytes
 
 module Bounded_sink = struct
@@ -254,7 +254,7 @@ let prepare_tmp ~fn ~perm tmp path file =
   (match Eio.Path.stat ~follow:false path with
   | target_stat when same_file tmp_stat target_stat ->
       Fmt.invalid_arg
-        "Eio_fs_sync.%s: tmp is %a, the same file as the path to publish" fn
+        "Eio_fs.Sync.%s: tmp is %a, the same file as the path to publish" fn
         Eio.Path.pp tmp
   | _ -> ()
   | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ());
@@ -272,7 +272,7 @@ let produce ~fn ~barrier ~perm ~requested_tmp ((dir, target) as path) write =
     in
     let tmp_resource, tmp_path = tmp in
     if tmp_resource == dir && String.equal tmp_path target then
-      Fmt.invalid_arg "Eio_fs_sync.%s: tmp is %a, the path to publish" fn
+      Fmt.invalid_arg "Eio_fs.Sync.%s: tmp is %a, the path to publish" fn
         Eio.Path.pp tmp;
     let owned = ref false in
     let cleanup () =
@@ -335,12 +335,12 @@ let publish_sparse ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
   check_max_bytes "publish_sparse" max_bytes;
   if Int64.compare size_bytes 0L < 0 then
     Fmt.invalid_arg
-      "Eio_fs_sync.publish_sparse: size_bytes is %Ld, must not be negative"
+      "Eio_fs.Sync.publish_sparse: size_bytes is %Ld, must not be negative"
       size_bytes;
   if Int64.compare size_bytes (Optint.Int63.to_int64 Optint.Int63.max_int) > 0
   then
     Fmt.invalid_arg
-      "Eio_fs_sync.publish_sparse: size_bytes is %Ld, past the largest file \
+      "Eio_fs.Sync.publish_sparse: size_bytes is %Ld, past the largest file \
        offset"
       size_bytes;
   if Int64.compare size_bytes max_bytes > 0 then
@@ -351,7 +351,7 @@ let publish_sparse ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
         let length = Int64.of_int (Cstruct.length data) in
         if Int64.compare offset previous < 0 then
           Fmt.invalid_arg
-            "Eio_fs_sync.publish_sparse: spans has an extent at %Ld, before \
+            "Eio_fs.Sync.publish_sparse: spans has an extent at %Ld, before \
              the end %Ld of the one before it"
             offset previous;
         if
@@ -359,7 +359,7 @@ let publish_sparse ?(barrier = Barrier.portable) ?(perm = 0o644) ?exclusive
           || Int64.compare length (Int64.sub size_bytes offset) > 0
         then
           Fmt.invalid_arg
-            "Eio_fs_sync.publish_sparse: spans has a %Ld-byte extent at %Ld, \
+            "Eio_fs.Sync.publish_sparse: spans has a %Ld-byte extent at %Ld, \
              past size_bytes %Ld"
             length offset size_bytes;
         validate (Int64.add offset length) rest
@@ -427,7 +427,7 @@ let append_lines ?(barrier = Barrier.portable) ?(perm = 0o644)
     (fun l ->
       if String.contains l '\n' then
         Fmt.invalid_arg
-          "Eio_fs_sync.append_lines: lines holds %S, a line with an LF in it" l)
+          "Eio_fs.Sync.append_lines: lines holds %S, a line with an LF in it" l)
     lines;
   let torn = ends_torn path in
   let discard =
@@ -580,7 +580,7 @@ let reclaim path =
           reclaim_entry Eio.Path.(parent / name))
   | None ->
       Fmt.invalid_arg
-        "Eio_fs_sync.publish_generation: generation is %a, which has no parent"
+        "Eio_fs.Sync.publish_generation: generation is %a, which has no parent"
         Eio.Path.pp path
 
 let discard p =
@@ -612,7 +612,7 @@ let publish_generation ?(barrier = Barrier.portable) ?(perm = 0o755) path
     | Some split -> split
     | None ->
         Fmt.invalid_arg
-          "Eio_fs_sync.publish_generation: path is %a, the root of its \
+          "Eio_fs.Sync.publish_generation: path is %a, the root of its \
            capability, which has no parent"
           Eio.Path.pp path
   in
@@ -675,7 +675,7 @@ let stage_link ~barrier ~expected ~target path =
     | Some pair -> pair
     | None ->
         Fmt.invalid_arg
-          "Eio_fs_sync.publish_link: path is %a, the root of its capability, \
+          "Eio_fs.Sync.publish_link: path is %a, the root of its capability, \
            which has no parent"
           Eio.Path.pp path
   in

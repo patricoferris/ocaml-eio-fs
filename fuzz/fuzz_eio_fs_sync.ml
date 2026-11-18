@@ -12,7 +12,7 @@ let test_append before lines =
   Eio_fs_mem.run @@ fun env ->
   let p = env#fs / "log" in
   if before <> "" then Eio.Path.save ~create:(`Exclusive 0o644) p before;
-  Eio_fs_sync.append_lines ~barrier:Eio_fs_sync.Barrier.none p lines;
+  Eio_fs.Sync.append_lines ~barrier:Eio_fs.Sync.Barrier.none p lines;
   let after = try Eio.Path.load p with Eio.Io _ -> "" in
   if not (String.starts_with ~prefix:before after) then
     failf "the bytes held before were changed: %S then %S" before after;

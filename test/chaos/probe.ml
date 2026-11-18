@@ -4,11 +4,11 @@ module P = Eio.Path
    holds. With [`In_place], it rewrites the file in place. *)
 let guard_idempotent ?bug () =
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "conf") "v1")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "conf") "v1")
     (fun ~ack env ->
       try
         (match bug with
-        | None -> Eio_fs_sync.save P.(env#fs / "conf") "v1"
+        | None -> Eio_fs.Sync.save P.(env#fs / "conf") "v1"
         | Some `In_place ->
             P.with_open_out ~create:(`Or_truncate 0o644)
               P.(env#fs / "conf")
@@ -29,7 +29,7 @@ let guard_idempotent ?bug () =
 let sector () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
-      Eio_fs_sync.save P.(env#fs / "hdr") (String.make 16 '\000'))
+      Eio_fs.Sync.save P.(env#fs / "hdr") (String.make 16 '\000'))
     (fun ~ack env ->
       try
         Eio.Switch.run @@ fun sw ->
@@ -98,13 +98,13 @@ let toctou_swapped ?(bug = true) () =
    [check] can see it; [Crash.check] never fails a read. *)
 let reinit_crash () =
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "db") "precious")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "db") "precious")
     (fun ~ack:_ env ->
       try
         let v =
           try P.load P.(env#fs / "db")
           with Eio.Io _ ->
-            Eio_fs_sync.save P.(env#fs / "db") "empty";
+            Eio_fs.Sync.save P.(env#fs / "db") "empty";
             "empty"
         in
         ignore v
@@ -114,13 +114,13 @@ let reinit_crash () =
 
 let reinit_check () =
   Eio_fs_chaos.run
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "db") "precious")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "db") "precious")
     (fun env ->
       (try
          ignore
            (try P.load P.(env#fs / "db")
             with Eio.Io _ ->
-              Eio_fs_sync.save P.(env#fs / "db") "empty";
+              Eio_fs.Sync.save P.(env#fs / "db") "empty";
               "empty")
        with Eio.Io _ -> ());
       match P.load P.(env#fs / "db") with
@@ -135,7 +135,7 @@ let mkdir_no_parent_sync () =
     (fun ~ack env ->
       try
         P.mkdir ~perm:0o755 P.(env#fs / "data");
-        Eio_fs_sync.save P.(env#fs / "data" / "f") "x";
+        Eio_fs.Sync.save P.(env#fs / "data" / "f") "x";
         ack ()
       with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
@@ -210,7 +210,7 @@ let log_budget n () =
         with Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> ""
       in
       let recs = parse s in
-      Eio_fs_sync.save
+      Eio_fs.Sync.save
         P.(env#fs / "log")
         (String.concat "" (List.map (fun r -> r ^ "\n") recs));
       if List.length recs < List.length acked then failwith "lost records")
@@ -221,7 +221,7 @@ let log_budget n () =
 let fixed_records () =
   let record i = Fmt.str "rec%04d:%s" i (String.make 56 'x') in
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "hdr") "v1")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "hdr") "v1")
     (fun ~ack env ->
       try
         P.with_open_out ~create:(`Exclusive 0o644)

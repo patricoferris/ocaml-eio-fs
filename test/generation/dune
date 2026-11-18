@@ -8,6 +8,5 @@
   eio-fs
   eio-fs.mem
   eio-fs.chaos
-  eio-fs.sync
   alcotest
   fmt))

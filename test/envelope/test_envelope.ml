@@ -60,7 +60,7 @@ let exec_op ~sw ~ctl ~cw ~handles ~dhandles op =
   | Fsync x -> Eio.Path.with_open_out ~create:`Never (p x) Eio.File.sync
   | Fsync_ro x ->
       Eio.Path.with_open_in (p x) (fun f ->
-          Eio_fs_sync.Barrier.sync_file Eio_fs_sync.Barrier.portable f)
+          Eio_fs.Sync.Barrier.sync_file Eio_fs.Sync.Barrier.portable f)
   | Fsync_dir x -> Eio.Path.sync_dir (p x)
   | Fsync_fail x ->
       let path = snd (cw / x) in

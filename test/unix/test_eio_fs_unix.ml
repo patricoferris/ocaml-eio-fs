@@ -175,7 +175,7 @@ let registered_file ~sw ~register base =
     if register then
       [
         Eio.Resource.H
-          ( Eio_fs_sync.File_sync,
+          ( Eio_fs.Sync.File_sync,
             fun (t : Registered_file.t) ~full:_ -> incr t.calls );
       ]
     else []
@@ -216,7 +216,7 @@ let test_sync_file_takes_the_descriptor_when_nothing_is_registered () =
   Eio.Switch.run @@ fun sw ->
   let base = Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (dir / "f") in
   let file, _ = registered_file ~sw ~register:false base in
-  Eio_fs_sync.sync_file file;
+  Eio_fs.Sync.sync_file file;
   match Eio_fs_unix.sync_file file with
   | () ->
       Alcotest.fail
@@ -925,7 +925,7 @@ let test_exclusive_rename_refuses_existing_names () =
   Eio.Path.save ~create:(`Exclusive 0o600) source "new";
   Eio.Path.save ~create:(`Exclusive 0o600) target "old";
   let rename () =
-    Eio_fs_sync.Rename.exclusive Eio_fs_unix.exclusive_rename source target
+    Eio_fs.Sync.Rename.exclusive Eio_fs_unix.exclusive_rename source target
   in
   (match rename () with
   | () -> Alcotest.fail "exclusive rename replaced a file"
@@ -945,7 +945,7 @@ let test_exclusive_rename_refuses_embedded_nul () =
   List.iter
     (fun (source, target) ->
       (match
-         Eio_fs_sync.Rename.exclusive Eio_fs_unix.exclusive_rename
+         Eio_fs.Sync.Rename.exclusive Eio_fs_unix.exclusive_rename
            (dir / source) (dir / target)
        with
       | () -> Alcotest.fail "an embedded NUL reached the filesystem"
@@ -963,7 +963,7 @@ let test_exclusive_publication_reaches_crash_model () =
   with_real_dir @@ fun dir ->
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl dir in
-  Eio_fs_sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
+  Eio_fs.Sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
     ~max_bytes:7L (fs / "state")
     (Eio.Flow.copy_string "payload");
   Crash.crash ctl;
@@ -976,9 +976,9 @@ let test_exclusive_publication_reaches_crash_model () =
 let test_publication_with_the_platform_barrier () =
   with_real_dir @@ fun dir ->
   let barrier = Eio_fs_unix.barrier in
-  Eio_fs_sync.publish ~barrier ~max_bytes:7L (dir / "state")
+  Eio_fs.Sync.publish ~barrier ~max_bytes:7L (dir / "state")
     (Eio.Flow.copy_string "payload");
-  Eio_fs_sync.publish_generation ~barrier (dir / "tree") (fun d ->
+  Eio_fs.Sync.publish_generation ~barrier (dir / "tree") (fun d ->
       Eio.Path.save ~create:(`Exclusive 0o444) (d / "f") "frozen");
   Alcotest.(check string) "the file" "payload" (Eio.Path.load (dir / "state"));
   Alcotest.(check string)
@@ -990,7 +990,7 @@ let test_concurrent_exclusive_publications_have_one_winner () =
   with_real_dir @@ fun dir ->
   let save text () =
     match
-      Eio_fs_sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
+      Eio_fs.Sync.publish ~perm:0o600 ~exclusive:Eio_fs_unix.exclusive_rename
         ~max_bytes:3L (dir / "winner")
         (Eio.Flow.copy_string text)
     with
@@ -1015,7 +1015,7 @@ let test_exclusive_rename_keeps_open_parent () =
   let parent = Eio.Path.open_dir ~sw (dir / "parent") in
   Eio.Path.rename (dir / "parent") (dir / "moved");
   Eio.Path.symlink ~link_to:"elsewhere" (dir / "parent");
-  Eio_fs_sync.Rename.exclusive Eio_fs_unix.exclusive_rename (parent / "source")
+  Eio_fs.Sync.Rename.exclusive Eio_fs_unix.exclusive_rename (parent / "source")
     (parent / "target");
   Alcotest.(check string)
     "original directory holds the move" "payload"

@@ -63,7 +63,7 @@ let drained () =
 let replay ?os () =
   let record = String.make 512 'R' in
   Eio_fs_chaos.Private.check_cuts ?os
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "old") record)
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "old") record)
     (fun ~ack:_ env ->
       try
         P.unlink P.(env#fs / "old");
@@ -113,8 +113,8 @@ let spellings () =
 let flushed ?os ~more () =
   Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env ->
-      Eio_fs_sync.save P.(env#fs / "v") "";
-      Eio_fs_sync.save P.(env#fs / "g") "")
+      Eio_fs.Sync.save P.(env#fs / "v") "";
+      Eio_fs.Sync.save P.(env#fs / "g") "")
     (fun ~ack env ->
       match
         P.with_open_out ~append:true ~create:`Never
@@ -139,8 +139,8 @@ let flushed ?os ~more () =
 let retried ?os () =
   Eio_fs_chaos.Private.check_cuts ?os
     ~setup:(fun env ->
-      Eio_fs_sync.save P.(env#fs / "v") "";
-      Eio_fs_sync.save P.(env#fs / "g") "")
+      Eio_fs.Sync.save P.(env#fs / "v") "";
+      Eio_fs.Sync.save P.(env#fs / "g") "")
     (fun ~ack env ->
       match
         P.with_open_out ~append:true ~create:`Never

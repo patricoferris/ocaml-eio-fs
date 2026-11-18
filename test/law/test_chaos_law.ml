@@ -455,7 +455,7 @@ let rec exec side ~sw step =
   | Exclusive_rename (d, p, d', p') -> (
       match (side.dirs.(d), side.dirs.(d')) with
       | Some src, Some dst ->
-          Eio_fs_sync.Rename.exclusive Eio_fs_sync.Rename.capability
+          Eio_fs.Sync.Rename.exclusive Eio_fs.Sync.Rename.capability
             (src, at d p)
             (dst, at d' p');
           "ok"
@@ -533,7 +533,7 @@ let rec exec side ~sw step =
       match side.dirs.(d) with
       | None -> "no directory"
       | Some dir -> (
-          match Eio_fs_sync.dir_barrier dir with
+          match Eio_fs.Sync.dir_barrier dir with
           | None -> "no barrier"
           | Some barrier ->
               barrier ~path:(at d p) ~full:false;
@@ -541,11 +541,11 @@ let rec exec side ~sw step =
   | Process_local d -> (
       match side.dirs.(d) with
       | None -> "no directory"
-      | Some dir -> string_of_bool (Eio_fs_sync.is_process_local dir))
+      | Some dir -> string_of_bool (Eio_fs.Sync.is_process_local dir))
   | Modeless d -> (
       match side.dirs.(d) with
       | None -> "no directory"
-      | Some dir -> string_of_bool (Eio_fs_sync.is_modeless dir))
+      | Some dir -> string_of_bool (Eio_fs.Sync.is_modeless dir))
   | Admin_stat (d, p) -> (
       match side.dirs.(d) with
       | None -> "no directory"
@@ -647,7 +647,7 @@ let rec exec side ~sw step =
       match side.files.(f) with
       | None -> "no file"
       | Some (file, _) ->
-          Eio_fs_sync.Barrier.sync_file Eio_fs_sync.Barrier.portable file;
+          Eio_fs.Sync.Barrier.sync_file Eio_fs.Sync.Barrier.portable file;
           "ok")
   | Truncate (f, n) ->
       on_write side f

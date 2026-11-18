@@ -296,7 +296,7 @@ let test_crash_inode_identity () =
   let fs = Crash.wrap ctl root in
   Eio.Path.chmod ~follow:false ~perm:0o600 (fs / "f");
   Eio.Switch.run (fun sw ->
-      Eio_fs_sync.Barrier.(sync_file portable) (Eio.Path.open_in ~sw (fs / "f")));
+      Eio_fs.Sync.Barrier.(sync_file portable) (Eio.Path.open_in ~sw (fs / "f")));
   Eio.Path.chmod ~follow:false ~perm:0o600 (fs / "g");
   Eio.Path.rename (fs / "g") (fs / "h");
   Eio.Path.with_open_out ~create:`Never (fs / "h") Eio.File.sync;
@@ -468,7 +468,7 @@ let test_crash_dir_handle_barrier_by_inode () =
   Eio.Path.sync_dir (fs / "b");
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "b/d/x") "x";
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "a/d/y") "y";
-  (match Eio_fs_sync.file_barrier h with
+  (match Eio_fs.Sync.file_barrier h with
   | Some barrier -> barrier ~full:false
   | None -> Alcotest.fail "no barrier");
   let post = Crash.post_crash ctl in
@@ -921,7 +921,7 @@ let test_crash_stacked_wrappers_relay_failure () =
            Eio.Path.with_open_in
              (Chaos.wrap rule mid / "f")
              (fun g ->
-               match Eio_fs_sync.file_barrier g with
+               match Eio_fs.Sync.file_barrier g with
                | Some b -> (
                    match b ~full:false with
                    | () -> Alcotest.fail "no failure"

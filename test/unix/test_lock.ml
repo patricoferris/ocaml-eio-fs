@@ -1338,7 +1338,7 @@ let test_lock_over_a_wrapped_process_local_backend_serialises_fibers () =
   let lock = wrapped / "lock" in
   Alcotest.(check bool)
     "the wrapper forwards what its base declares about outside openers" true
-    (Eio_fs_sync.is_process_local (fst lock));
+    (Eio_fs.Sync.is_process_local (fst lock));
   Alcotest.(check bool)
     "no name outside this process reaches the lock file" true
     (Option.is_none (Eio.Path.native lock));
@@ -1424,8 +1424,8 @@ let slow_open ((base, path) : Eio.Fs.dir_ty Eio.Path.t) =
                wrapper here does: over the in-memory backend the files it hands
                out are still this process's heap. *)
             Eio.Resource.H
-              ( Eio_fs_sync.Process_local,
-                fun (t : Slow_open.t) -> Eio_fs_sync.is_process_local t.base );
+              ( Eio_fs.Sync.Process_local,
+                fun (t : Slow_open.t) -> Eio_fs.Sync.is_process_local t.base );
           ] )
   in
   ((dir :> Eio.Fs.dir_ty Eio.Resource.t), path)
@@ -1625,7 +1625,7 @@ let test_lock_refuses_a_wrapper_that_hides_a_host_descriptor () =
 
 (* ---- the lock file as a section a backend-free component runs inside ----
 
-   [lock_section] hands the lock over as an [Eio_fs_sync.Lock.t], which is the
+   [lock_section] hands the lock over as an [Eio_fs.Sync.Lock.t], which is the
    argument a component takes when what exclusion its files admit is the
    deployment's to say. What it owes that component is the lock's exclusion
    unchanged, and a refusal in a vocabulary the component can name. *)
@@ -1634,7 +1634,7 @@ let test_section_excludes_fibers_over_the_lock_file () =
   let section = Eio_fs_unix.lock_section ~block:`Fibers (dir / "lock") in
   let inside = ref 0 and most = ref 0 in
   let enter () =
-    Eio_fs_sync.Lock.use section (fun () ->
+    Eio_fs.Sync.Lock.use section (fun () ->
         incr inside;
         most := max !most !inside;
         Eio.Fiber.yield ();
@@ -1647,7 +1647,7 @@ let test_section_excludes_fibers_over_the_lock_file () =
      use. *)
   Alcotest.(check string)
     "and answers at another result type" "answer"
-    (Eio_fs_sync.Lock.use section (fun () -> "answer"))
+    (Eio_fs.Sync.Lock.use section (fun () -> "answer"))
 
 (* A hold another process took is what a component cannot see and cannot name.
    It reaches the component as [Unavailable], carrying the lock file and its
@@ -1660,10 +1660,10 @@ let test_section_refusal_reaches_the_component_as_unavailable () =
   let child, release = holding_process ~sw ~env ~kind:"record" ~lock in
   let section = Eio_fs_unix.lock_section ~block:`Fibers lock in
   let ran = ref false in
-  (match Eio_fs_sync.Lock.use section (fun () -> ran := true) with
+  (match Eio_fs.Sync.Lock.use section (fun () -> ran := true) with
   | () ->
       Alcotest.fail "another process's hold was waited out rather than answered"
-  | exception Eio_fs_sync.Lock.Unavailable what ->
+  | exception Eio_fs.Sync.Lock.Unavailable what ->
       Alcotest.(check bool)
         "the refusal names the lock file" true
         (mentions ~needle:(Eio.Path.native_exn lock) what);
@@ -1680,9 +1680,9 @@ let test_section_refuses_a_name_that_is_not_the_lock_file () =
   with_real_dir @@ fun dir ->
   Eio.Path.mkdir ~perm:0o755 (dir / "lock");
   let section = Eio_fs_unix.lock_section (dir / "lock") in
-  match Eio_fs_sync.Lock.use section (fun () -> ()) with
+  match Eio_fs.Sync.Lock.use section (fun () -> ()) with
   | () -> Alcotest.fail "a directory was locked as a lock file"
-  | exception Eio_fs_sync.Lock.Unavailable what ->
+  | exception Eio_fs.Sync.Lock.Unavailable what ->
       Alcotest.(check bool)
         "the refusal names the lock file" true
         (mentions ~needle:(Eio.Path.native_exn (dir / "lock")) what);
@@ -1698,16 +1698,16 @@ let test_section_lets_the_body_s_own_raise_out () =
   with_real_dir @@ fun dir ->
   let section = Eio_fs_unix.lock_section (dir / "lock") in
   (match
-     Eio_fs_sync.Lock.use section (fun () -> invalid_arg "the body's own")
+     Eio_fs.Sync.Lock.use section (fun () -> invalid_arg "the body's own")
    with
   | () -> Alcotest.fail "the section swallowed a raise"
-  | exception Eio_fs_sync.Lock.Unavailable what ->
+  | exception Eio_fs.Sync.Lock.Unavailable what ->
       Alcotest.failf "the body's raise was reported as a refusal: %s" what
   | exception Invalid_argument m ->
       Alcotest.(check string) "raised as thrown" "the body's own" m);
   Alcotest.(check int)
     "and the section is still there" 7
-    (Eio_fs_sync.Lock.use section (fun () -> 7))
+    (Eio_fs.Sync.Lock.use section (fun () -> 7))
 
 (* A lock file carrying no descriptor over a backend that does not declare
    itself process-local offers no exclusion between processes at all, and
@@ -1720,9 +1720,9 @@ let test_section_refuses_a_wrapper_that_hides_a_host_descriptor () =
   let hidden = hide_descriptors dir in
   let section = Eio_fs_unix.lock_section (hidden / "lock") in
   let ran = ref false in
-  (match Eio_fs_sync.Lock.use section (fun () -> ran := true) with
+  (match Eio_fs.Sync.Lock.use section (fun () -> ran := true) with
   | () -> Alcotest.fail "a lock file with no descriptor was locked"
-  | exception Eio_fs_sync.Lock.Unavailable what ->
+  | exception Eio_fs.Sync.Lock.Unavailable what ->
       Alcotest.(check bool)
         "the refusal names the interface that refused" true
         (mentions ~needle:"Eio_fs_unix.with_lock" what));

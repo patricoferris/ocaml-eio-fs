@@ -1,4 +1,4 @@
-(** Fuzz tests for {!Eio_fs_sync.append_lines}: whatever a file held, torn or
+(** Fuzz tests for {!Eio_fs.Sync.append_lines}: whatever a file held, torn or
     not, the lines appended to it are its last lines, and every byte it held
     before is kept. *)
 

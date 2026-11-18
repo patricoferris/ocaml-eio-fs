@@ -518,7 +518,7 @@ let test_crash_held_subtree_follows_a_rename () =
 let rename_before_data policy =
   let ctl = Crash.v ?policy () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.save (fs / "state") "v1";
+  Eio_fs.Sync.save (fs / "state") "v1";
   Eio.Path.save ~create:(`Exclusive 0o644) (fs / "state.tmp") "v2";
   Eio.Path.rename (fs / "state.tmp") (fs / "state");
   let post = Crash.post_crash ctl in
@@ -533,11 +533,11 @@ let test_crash_default_is_one_state () =
   Alcotest.(check bool) "some seed loses the data" true (List.mem "" seeds)
 
 (* The same seed and workload rebuild the same image, temporaries of
-   [Eio_fs_sync.save] included. *)
+   [Eio_fs.Sync.save] included. *)
 let image_of_seed seed =
   let ctl = Crash.v ~policy:(Reorder_unsynced seed) () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.save ~barrier:Eio_fs_sync.Barrier.none (fs / "state") "v1";
+  Eio_fs.Sync.save ~barrier:Eio_fs.Sync.Barrier.none (fs / "state") "v1";
   let post = Crash.post_crash ctl in
   List.sort String.compare (Eio.Path.read_dir post)
 
@@ -1041,7 +1041,7 @@ let test_crash_sync_through_another_spelling () =
   overwrite (fs / "f") "data";
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_in ~sw (fs / "./f") in
-      Eio_fs_sync.Barrier.(sync_file portable) h);
+      Eio_fs.Sync.Barrier.(sync_file portable) h);
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "durable" "data" (Eio.Path.load (post / "f"))
 
@@ -1068,7 +1068,7 @@ let test_crash_sync_through_a_directory_handle () =
   write_new ~sync:true (fs / "d" / "f") "data";
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_in ~sw (fs / "d") in
-      Eio_fs_sync.Barrier.(sync_file portable) h);
+      Eio_fs.Sync.Barrier.(sync_file portable) h);
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the entry is durable" "data"

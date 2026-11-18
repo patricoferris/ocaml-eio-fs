@@ -25,7 +25,7 @@ let check () = Eio_fs_chaos.run ~setup (fun env -> confined env)
 let crash () =
   Eio_fs_chaos.Private.check_cuts ~setup
     (fun ~ack env ->
-      match Eio_fs_sync.save P.(env#cwd / "f") "v" with
+      match Eio_fs.Sync.save P.(env#cwd / "f") "v" with
       | () -> ack ()
       | exception Eio.Io _ -> ())
     ~recover:(fun ~acked:_ env -> confined env)
@@ -63,7 +63,7 @@ let crash_as_user () =
     (fun ~ack env ->
       denied env;
       let fs = Eio_fs_mem.as_user alice env#fs in
-      match Eio_fs_sync.save P.(fs / "home/f") "v" with
+      match Eio_fs.Sync.save P.(fs / "home/f") "v" with
       | () -> ack ()
       | exception Eio.Io _ -> ())
     ~recover:(fun ~acked env ->

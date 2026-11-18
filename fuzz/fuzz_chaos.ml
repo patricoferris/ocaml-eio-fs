@@ -843,14 +843,14 @@ let test_crash_determinism seed nblocks block sync_after access placement reopen
   in
   check_eq ~pp:image_and_mode ~eq:( = ) a b
 
-(* [Eio_fs_sync.publish] under crash and fault.
+(* [Eio_fs.Sync.publish] under crash and fault.
 
    [publish] is the durability primitive the storage packages here build on.
    After a crash the target holds the old content or the new one, never a
    splice and never a truncated prefix. *)
 
 let publish_string path data =
-  Eio_fs_sync.publish
+  Eio_fs.Sync.publish
     ~max_bytes:(Int64.of_int (String.length data))
     path
     (Eio.Flow.copy_string data)

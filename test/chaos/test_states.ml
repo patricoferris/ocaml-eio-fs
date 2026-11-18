@@ -3,7 +3,7 @@
 module P = Eio.Path
 
 (* A file [keep] setup made, so recover has something to check. *)
-let setup env = Eio_fs_sync.save P.(env#fs / "keep") "k"
+let setup env = Eio_fs.Sync.save P.(env#fs / "keep") "k"
 let keep env = if P.load P.(env#fs / "keep") <> "k" then failwith "keep lost"
 
 (* A new file whose first sector is stale and whose others hold the write:
@@ -29,7 +29,7 @@ let page_end () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
-      Eio_fs_sync.save P.(env#fs / "f") "")
+      Eio_fs.Sync.save P.(env#fs / "f") "")
     (fun ~ack:_ env ->
       try
         P.with_open_out ~create:`Never P.(env#fs / "f") @@ fun f ->
@@ -54,7 +54,7 @@ let old_frame () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
-      Eio_fs_sync.save P.(env#fs / "wal") (frame 'A'))
+      Eio_fs.Sync.save P.(env#fs / "wal") (frame 'A'))
     (fun ~ack env ->
       try
         P.with_open_out ~create:`Never P.(env#fs / "wal") @@ fun f ->
@@ -77,10 +77,10 @@ let freed_by_unlink () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
-      Eio_fs_sync.save
+      Eio_fs.Sync.save
         P.(env#fs / "old")
         (sectors [ 'A'; 'B'; 'C'; 'D'; 'E'; 'F'; 'G'; 'H'; 'I'; 'J' ]);
-      Eio_fs_sync.save P.(env#fs / "new") (String.make 4096 'n'))
+      Eio_fs.Sync.save P.(env#fs / "new") (String.make 4096 'n'))
     (fun ~ack env ->
       try
         P.unlink P.(env#fs / "old");
@@ -103,10 +103,10 @@ let freed_elsewhere () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
-      Eio_fs_sync.save
+      Eio_fs.Sync.save
         P.(env#fs / "old")
         (sectors [ 'A'; 'B'; 'C'; 'D'; 'E'; 'F'; 'G'; 'H'; 'I'; 'J' ]);
-      Eio_fs_sync.save P.(env#fs / "new") (String.make 8192 'n'))
+      Eio_fs.Sync.save P.(env#fs / "new") (String.make 8192 'n'))
     (fun ~ack env ->
       try
         P.unlink P.(env#fs / "old");
@@ -128,10 +128,10 @@ let freed_open () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
-      Eio_fs_sync.save
+      Eio_fs.Sync.save
         P.(env#fs / "old")
         (sectors [ 'A'; 'B'; 'C'; 'D'; 'E'; 'F'; 'G'; 'H'; 'I'; 'J' ]);
-      Eio_fs_sync.save P.(env#fs / "new") (String.make 4096 'n'))
+      Eio_fs.Sync.save P.(env#fs / "new") (String.make 4096 'n'))
     (fun ~ack env ->
       try
         Eio.Switch.run (fun sw ->
@@ -163,7 +163,7 @@ let freed_unsynced () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
       setup env;
-      Eio_fs_sync.save P.(env#fs / "new") (String.make 4096 'n'))
+      Eio_fs.Sync.save P.(env#fs / "new") (String.make 4096 'n'))
     (fun ~ack env ->
       try
         P.save ~create:(`Exclusive 0o644)
@@ -187,7 +187,7 @@ let freed_unsynced () =
    bytes. *)
 let lost_not_freed () =
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") "")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "f") "")
     (fun ~ack:_ env ->
       try
         P.save ~create:(`Exclusive 0o644)
@@ -321,7 +321,7 @@ let stale_first () =
 let mix () =
   let old = String.make 4096 'o' and planted = "onoonoon" in
   Eio_fs_chaos.Private.check_cuts
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") old)
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "f") old)
     (fun ~ack:_ env ->
       try
         P.with_open_out ~create:`Never P.(env#fs / "f") @@ fun f ->
@@ -338,7 +338,7 @@ let mix () =
 let overwrite ?replay ~recover () =
   let old = String.make 32768 'o' in
   Eio_fs_chaos.Private.check_cuts ?replay
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") old)
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "f") old)
     (fun ~ack:_ env ->
       try
         P.with_open_out ~create:`Never P.(env#fs / "f") @@ fun f ->
@@ -384,7 +384,7 @@ let overwrite ~rewrite f =
 
 let reread ~rewrite () =
   Eio_fs_chaos.run
-    ~setup:(fun env -> Eio_fs_sync.save P.(env#fs / "f") "old")
+    ~setup:(fun env -> Eio_fs.Sync.save P.(env#fs / "f") "old")
     (fun env ->
       try
         P.with_open_out ~create:`Never P.(env#fs / "f") (overwrite ~rewrite);
@@ -397,12 +397,12 @@ let reread ~rewrite () =
 let copy ~rewrite () =
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
-      Eio_fs_sync.save P.(env#fs / "f") "old";
-      Eio_fs_sync.save P.(env#fs / "g") "old")
+      Eio_fs.Sync.save P.(env#fs / "f") "old";
+      Eio_fs.Sync.save P.(env#fs / "g") "old")
     (fun ~ack env ->
       try
         P.with_open_out ~create:`Never P.(env#fs / "f") (overwrite ~rewrite);
-        Eio_fs_sync.save P.(env#fs / "g") (P.load P.(env#fs / "f"));
+        Eio_fs.Sync.save P.(env#fs / "g") (P.load P.(env#fs / "f"));
         ack ()
       with Eio.Io _ -> ())
     ~recover:(fun ~acked env ->
@@ -416,8 +416,8 @@ let half_written () =
   let old = String.make 1024 'o' and fresh = String.make 1024 'n' in
   Eio_fs_chaos.Private.check_cuts
     ~setup:(fun env ->
-      Eio_fs_sync.save P.(env#fs / "a") "old";
-      Eio_fs_sync.save P.(env#fs / "b") old)
+      Eio_fs.Sync.save P.(env#fs / "a") "old";
+      Eio_fs.Sync.save P.(env#fs / "b") old)
     (fun ~ack:_ env ->
       try
         List.iter

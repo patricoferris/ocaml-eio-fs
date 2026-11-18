@@ -1,4 +1,4 @@
-(* [Eio_fs_sync.mkdirs ~perm p] creates [p] and its missing parents, and
+(* [Eio_fs.Sync.mkdirs ~perm p] creates [p] and its missing parents, and
    barriers every traversed directory entry, including existing ones, parent first. A
    barrier on the last directory alone is not enough: an entry of a directory
    whose own entry is not durable stays pending with it, so a file published
@@ -16,11 +16,11 @@ let ( / ) = Eio.Path.( / )
    an existing target, which is barriered too. *)
 let _ :
     ?exists_ok:bool ->
-    ?barrier:Eio_fs_sync.Barrier.t ->
+    ?barrier:Eio_fs.Sync.Barrier.t ->
     perm:Eio.File.Unix_perm.t ->
     Eio.Fs.dir_ty Eio.Path.t ->
     unit =
-  Eio_fs_sync.mkdirs
+  Eio_fs.Sync.mkdirs
 
 let pending ctl =
   List.map (fun (u : Crash.unsynced) -> u.path) (Crash.unsynced ctl)
@@ -32,10 +32,10 @@ let is_directory p = Eio.Path.kind ~follow:false p = `Directory
 let test_a_fresh_tree_keeps_what_is_published_in_it () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
+  Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
   Alcotest.(check (list string))
     "every created entry is committed" [] (pending ctl);
-  Eio_fs_sync.save (fs / "a" / "b" / "c" / "record") "data";
+  Eio_fs.Sync.save (fs / "a" / "b" / "c" / "record") "data";
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -49,7 +49,7 @@ let test_without_it_the_tree_is_lost () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
-  Eio_fs_sync.save (fs / "a" / "b" / "c" / "record") "data";
+  Eio_fs.Sync.save (fs / "a" / "b" / "c" / "record") "data";
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check bool) "the tree is gone" false (is_directory (post / "a"))
@@ -60,7 +60,7 @@ let test_an_existing_prefix () =
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdir ~perm:0o755 (fs / "a");
   Eio.Path.sync_dir fs;
-  Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b");
+  Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a" / "b");
   Alcotest.(check (list string)) "the new entry is committed" [] (pending ctl);
   Crash.crash ctl;
   Alcotest.(check bool)
@@ -72,11 +72,11 @@ let test_an_existing_prefix () =
 let test_exists_ok () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a");
-  (match Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a") with
+  Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a");
+  (match Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a") with
   | () -> Alcotest.fail "an existing directory was accepted without exists_ok"
   | exception Eio.Io (Eio.Fs.E (Already_exists _), _) -> ());
-  Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 (fs / "a");
+  Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 (fs / "a");
   Alcotest.(check bool) "it is still a directory" true (is_directory (fs / "a"))
 
 (* A visible prefix can be from a writer whose parent barrier failed. *)
@@ -84,8 +84,8 @@ let test_unsynced_prefix () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
   Eio.Path.mkdirs ~perm:0o755 (fs / "a" / "b");
-  Eio_fs_sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
-  Eio_fs_sync.save (fs / "a" / "b" / "c" / "record") "prefix retained";
+  Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "a" / "b" / "c");
+  Eio_fs.Sync.save (fs / "a" / "b" / "c" / "record") "prefix retained";
   Crash.crash ctl;
   Alcotest.(check string)
     "all existing ancestors survive" "prefix retained"
@@ -104,13 +104,13 @@ let test_barrier_retry () =
     else None
   in
   let faulted = Chaos.wrap schedule fs in
-  (match Eio_fs_sync.mkdirs ~perm:0o700 (faulted / "a") with
+  (match Eio_fs.Sync.mkdirs ~perm:0o700 (faulted / "a") with
   | () -> Alcotest.fail "the directory barrier failure was swallowed"
   | exception Eio.Io _ -> ());
   Alcotest.(check bool)
     "mkdir succeeded before the barrier failed" true (is_directory target);
-  Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 (faulted / "a");
-  Eio_fs_sync.save (faulted / "a" / "record") "retry retained";
+  Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 (faulted / "a");
+  Eio_fs.Sync.save (faulted / "a" / "record") "retry retained";
   Crash.crash ctl;
   Alcotest.(check string)
     "retry establishes the existing entry's durability" "retry retained"
@@ -131,12 +131,12 @@ let test_racing_prefix () =
     None
   in
   let observed = Chaos.wrap schedule fs in
-  Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 (observed / "a" / "b");
+  Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 (observed / "a" / "b");
   Alcotest.(check bool) "the other writer created the entry" true !raced;
   Alcotest.(check int)
     "an existing directory's mode is unchanged" 0o755
     (Eio.Path.stat ~follow:true (fs / "a" / "b")).perm;
-  Eio_fs_sync.save (observed / "a" / "b" / "record") "race retained";
+  Eio_fs.Sync.save (observed / "a" / "b" / "record") "race retained";
   Crash.crash ctl;
   Alcotest.(check string)
     "the competing entry was barriered" "race retained"
@@ -145,10 +145,10 @@ let test_racing_prefix () =
 let test_non_directory () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.save (fs / "file") "original file";
+  Eio_fs.Sync.save (fs / "file") "original file";
   List.iter
     (fun target ->
-      match Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 target with
+      match Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 target with
       | () -> Alcotest.fail "an existing file was accepted as a directory"
       | exception Eio.Io _ -> ())
     [ fs / "file"; fs / "file" / "child" ];
@@ -159,11 +159,11 @@ let test_non_directory () =
 let test_symbolic_link () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.mkdirs ~perm:0o700 (fs / "target");
+  Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "target");
   Eio.Path.symlink ~link_to:"target" (fs / "link");
   List.iter
     (fun path ->
-      match Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 path with
+      match Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 path with
       | () -> Alcotest.fail "a symlink's target durability was assumed"
       | exception Eio.Io _ -> ())
     [ fs / "link"; fs / "link/"; fs / "link//"; fs / "link" / "child" ];
@@ -178,7 +178,7 @@ let test_posix_symbolic_link () =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   let root =
-    fs / Filename.get_temp_dir_name () / Eio_fs_sync.fresh_name "mkdirs"
+    fs / Filename.get_temp_dir_name () / Eio_fs.Sync.fresh_name "mkdirs"
   in
   Eio.Path.mkdir ~perm:0o700 root;
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree root) @@ fun () ->
@@ -198,7 +198,7 @@ let test_posix_symbolic_link () =
   List.iter
     (fun name ->
       match
-        Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 (observed / name)
+        Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 (observed / name)
       with
       | () -> Alcotest.failf "the POSIX symlink %S was followed" name
       | exception Eio.Io _ -> ())
@@ -230,7 +230,7 @@ let test_parent_order () =
       in
       let _, target_path = target in
       let observed = Chaos.wrap schedule fs in
-      Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 (fst observed, target_path);
+      Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 (fst observed, target_path);
       Alcotest.(check (list string))
         "exactly one barrier per traversed entry, parent first"
         (List.rev parents) (List.rev !syncs);
@@ -244,14 +244,14 @@ let test_parent_order () =
 let test_capability_root () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.mkdirs ~exists_ok:true ~perm:0o700 fs;
+  Eio_fs.Sync.mkdirs ~exists_ok:true ~perm:0o700 fs;
   Alcotest.(check bool)
     "the existing capability root is accepted" true (is_directory fs)
 
 let test_borrowed_root () =
   let ctl = Crash.v ~policy:Drop_unsynced () in
   with_crash ctl @@ fun ~raw:_ ~fs ->
-  Eio_fs_sync.mkdirs ~perm:0o700 (fs / "anchor");
+  Eio_fs.Sync.mkdirs ~perm:0o700 (fs / "anchor");
   Eio.Path.with_open_dir (fs / "anchor") (fun anchor ->
       let syncs = ref [] in
       let module Chaos = Eio_fs_chaos in
@@ -260,11 +260,11 @@ let test_borrowed_root () =
         None
       in
       let local = Chaos.wrap schedule anchor in
-      Eio_fs_sync.mkdirs ~perm:0o700 (local / "child" / "leaf");
+      Eio_fs.Sync.mkdirs ~perm:0o700 (local / "child" / "leaf");
       Alcotest.(check (list string))
         "barriers stay below the borrowed root" [ ""; "child" ]
         (List.rev !syncs);
-      Eio_fs_sync.save (local / "child" / "leaf" / "record") "confined");
+      Eio_fs.Sync.save (local / "child" / "leaf" / "record") "confined");
   Crash.crash ctl;
   Alcotest.(check string)
     "the confined record survives" "confined"

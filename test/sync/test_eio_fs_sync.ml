@@ -13,16 +13,16 @@ let contains ~affix s =
 (* A sparse publication takes the bounded publisher's options and its ceiling,
    and its extents as offsets with their bytes. *)
 let _ :
-    ?barrier:Eio_fs_sync.Barrier.t ->
+    ?barrier:Eio_fs.Sync.Barrier.t ->
     ?perm:Eio.File.Unix_perm.t ->
-    ?exclusive:Eio_fs_sync.Rename.t ->
+    ?exclusive:Eio_fs.Sync.Rename.t ->
     ?tmp:'a Eio.Path.t ->
     max_bytes:int64 ->
     size_bytes:int64 ->
     'a Eio.Path.t ->
     (int64 * Cstruct.t) list ->
     unit =
-  Eio_fs_sync.publish_sparse
+  Eio_fs.Sync.publish_sparse
 
 (* The in-memory backend registers its barrier (a no-op: volatile storage has
    nothing to sync), so the portable entry points work unchanged over it. *)
@@ -30,10 +30,10 @@ let test_registered_backend () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->
   Eio.Path.sync_dir env#fs;
-  Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
+  Eio_fs.Sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy_string "one" f);
   Alcotest.(check string) "published" "one" (Eio.Path.load (env#fs / "cfg"));
-  Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
+  Eio_fs.Sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy_string "two" f);
   Alcotest.(check string) "replaced" "two" (Eio.Path.load (env#fs / "cfg"));
   Alcotest.(check bool)
@@ -50,8 +50,8 @@ let test_posix_needs_no_registration () =
   Eio.Path.mkdir ~perm:0o755 (fs / dir);
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
-  Eio_fs_sync.Barrier.(sync_dir portable) (fs / dir);
-  Eio_fs_sync.publish ~max_bytes:1L
+  Eio_fs.Sync.Barrier.(sync_dir portable) (fs / dir);
+  Eio_fs.Sync.publish ~max_bytes:1L
     (fs / dir / "cfg")
     (fun f -> Eio.Flow.copy_string "x" f);
   Alcotest.(check string) "published" "x" (Eio.Path.load (fs / dir / "cfg"))
@@ -73,7 +73,7 @@ let test_publish_honours_perm_under_umask () =
       ignore (Unix.umask previous : int);
       Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
-  Eio_fs_sync.publish ~perm:0o644 ~max_bytes:1L
+  Eio_fs.Sync.publish ~perm:0o644 ~max_bytes:1L
     (fs / dir / "cfg")
     (fun f -> Eio.Flow.copy_string "x" f);
   let stat = Eio.Path.stat ~follow:false (fs / dir / "cfg") in
@@ -84,7 +84,7 @@ let test_unissuable_barrier_raises () =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   match
-    Eio_fs_sync.Barrier.(sync_dir portable) (fs / "/no-such-dir-for-eio-fs-sync")
+    Eio_fs.Sync.Barrier.(sync_dir portable) (fs / "/no-such-dir-for-eio-fs-sync")
   with
   | () -> Alcotest.fail "sync_dir accepted a missing directory"
   | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ()
@@ -94,7 +94,7 @@ let test_failed_save_cleans_temporary () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->
   (match
-     Eio_fs_sync.publish ~max_bytes:1L
+     Eio_fs.Sync.publish ~max_bytes:1L
        (env#fs / "missing-dir" / "f")
        (fun f -> Eio.Flow.copy_string "x" f)
    with
@@ -112,7 +112,7 @@ let test_publish_with_remote_tmp () =
   Eio_fs_mem.run @@ fun env ->
   Eio.Path.mkdir ~perm:0o755 (env#fs / "tmp");
   Eio.Path.mkdir ~perm:0o755 (env#fs / "live");
-  Eio_fs_sync.publish ~max_bytes:7L
+  Eio_fs.Sync.publish ~max_bytes:7L
     ~tmp:(env#fs / "tmp" / "stage-1")
     (env#fs / "live" / "cfg")
     (fun f -> Eio.Flow.copy_string "payload" f);
@@ -127,7 +127,7 @@ let test_publish_with_stream () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->
   let result =
-    Eio_fs_sync.publish ~max_bytes:7L ~tmp:(env#fs / "stream.tmp")
+    Eio_fs.Sync.publish ~max_bytes:7L ~tmp:(env#fs / "stream.tmp")
       (env#fs / "stream") (fun file ->
         Eio.Flow.copy_string "one" file;
         Eio.Flow.copy_string "-two" file;
@@ -146,7 +146,7 @@ let test_publish_with_failure_preserves_target () =
   Eio_fs_mem.run @@ fun env ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (env#fs / "live") "old";
   (match
-     Eio_fs_sync.publish ~max_bytes:7L ~tmp:(env#fs / "live.tmp")
+     Eio_fs.Sync.publish ~max_bytes:7L ~tmp:(env#fs / "live.tmp")
        (env#fs / "live") (fun file ->
          Eio.Flow.copy_string "partial" file;
          raise Exit)
@@ -166,7 +166,7 @@ let test_publish_rejects_target_as_temporary () =
   let live = env#fs / "live" in
   Eio.Path.save ~create:(`Or_truncate 0o644) live "old";
   (match
-     Eio_fs_sync.publish ~max_bytes:3L ~tmp:live live
+     Eio_fs.Sync.publish ~max_bytes:3L ~tmp:live live
        (Eio.Flow.copy_string "new")
    with
   | () -> Alcotest.fail "target accepted as its own temporary"
@@ -182,7 +182,7 @@ let test_publish_rejects_aliased_target () =
   Eio.Path.with_subtree env#fs @@ fun left ->
   Eio.Path.with_subtree env#fs @@ fun right ->
   (match
-     Eio_fs_sync.publish ~max_bytes:3L ~tmp:(left / "same") (right / "same")
+     Eio_fs.Sync.publish ~max_bytes:3L ~tmp:(left / "same") (right / "same")
        (Eio.Flow.copy_string "new")
    with
   | () -> Alcotest.fail "aliased target accepted as its own temporary"
@@ -197,7 +197,7 @@ let test_publish_does_not_remove_unowned_temporary () =
   let tmp = env#fs / "foreign.tmp" in
   Eio.Path.save ~create:(`Or_truncate 0o644) tmp "foreign";
   (match
-     Eio_fs_sync.publish ~max_bytes:3L ~tmp (env#fs / "live")
+     Eio_fs.Sync.publish ~max_bytes:3L ~tmp (env#fs / "live")
        (Eio.Flow.copy_string "new")
    with
   | () -> Alcotest.fail "exclusive publish replaced a foreign temporary"
@@ -211,12 +211,12 @@ let test_publish_enforces_byte_limit () =
   let live = env#fs / "live" in
   Eio.Path.save ~create:(`Or_truncate 0o644) live "old";
   (match
-     Eio_fs_sync.publish ~max_bytes:4L live (fun file ->
+     Eio_fs.Sync.publish ~max_bytes:4L live (fun file ->
          Eio.Flow.copy_string "123" file;
          Eio.Flow.copy_string "45" file)
    with
   | () -> Alcotest.fail "publication exceeded its byte limit"
-  | exception Eio_fs_sync.Limit_exceeded { max_bytes; attempted } ->
+  | exception Eio_fs.Sync.Limit_exceeded { max_bytes; attempted } ->
       Alcotest.(check int64) "limit" 4L max_bytes;
       Alcotest.(check int64) "attempted" 5L attempted);
   Alcotest.(check string) "old target preserved" "old" (Eio.Path.load live);
@@ -232,9 +232,9 @@ let test_publish_durability_flag () =
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v ~policy:Crash.Drop_unsynced () in
   let fs = Crash.wrap ctl env#fs in
-  Eio_fs_sync.publish ~max_bytes:1L ~tmp:(fs / "safe-tmp") (fs / "safe")
+  Eio_fs.Sync.publish ~max_bytes:1L ~tmp:(fs / "safe-tmp") (fs / "safe")
     (fun f -> Eio.Flow.copy_string "s" f);
-  Eio_fs_sync.publish ~barrier:Eio_fs_sync.Barrier.none ~max_bytes:1L
+  Eio_fs.Sync.publish ~barrier:Eio_fs.Sync.Barrier.none ~max_bytes:1L
     ~tmp:(fs / "fast-tmp") (fs / "fast") (fun f -> Eio.Flow.copy_string "f" f);
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -278,7 +278,7 @@ let counting_file ~register base =
     if register then
       [
         Eio.Resource.H
-          ( Eio_fs_sync.File_sync,
+          ( Eio_fs.Sync.File_sync,
             fun (t : Counting_file.t) ~full:_ -> incr t.registered );
       ]
     else []
@@ -301,7 +301,7 @@ let with_in_memory_file fn =
 let test_sync_file_answers_through_the_registration () =
   with_in_memory_file @@ fun base ->
   let file, state = counting_file ~register:true base in
-  Eio_fs_sync.sync_file file;
+  Eio_fs.Sync.sync_file file;
   Alcotest.(check int)
     "the registration answered the barrier" 1
     !(state.Counting_file.registered);
@@ -314,7 +314,7 @@ let test_sync_file_answers_through_the_registration () =
 let test_sync_file_without_a_registration_syncs_the_file () =
   with_in_memory_file @@ fun base ->
   let file, state = counting_file ~register:false base in
-  Eio_fs_sync.sync_file file;
+  Eio_fs.Sync.sync_file file;
   Alcotest.(check int)
     "the file's own sync is the barrier" 1
     !(state.Counting_file.delegated)
@@ -335,7 +335,7 @@ let test_sync_file_reaches_the_crash_model () =
         Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (fs / "image")
       in
       Eio.Flow.copy_string "payload" file;
-      Eio_fs_sync.sync_file file);
+      Eio_fs.Sync.sync_file file);
   (* The name the bytes live under is the metadata journal's business, as
      fsync(2) divides them, so the entry takes the directory barrier. *)
   Eio.Path.sync_dir fs;
@@ -351,7 +351,7 @@ let test_exclusive_publication () =
   Eio_fs_mem.run @@ fun env ->
   let path = env#fs / "state" in
   let publish path text =
-    Eio_fs_sync.publish ~max_bytes:3L ~exclusive:Eio_fs_sync.Rename.capability
+    Eio_fs.Sync.publish ~max_bytes:3L ~exclusive:Eio_fs.Sync.Rename.capability
       path
       (Eio.Flow.copy_string text)
   in
@@ -376,7 +376,7 @@ let test_exclusive_publication_survives_crash () =
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
-  Eio_fs_sync.publish ~max_bytes:7L ~exclusive:Eio_fs_sync.Rename.capability
+  Eio_fs.Sync.publish ~max_bytes:7L ~exclusive:Eio_fs.Sync.Rename.capability
     (fs / "state")
     (Eio.Flow.copy_string "payload");
   Crash.crash ctl;
@@ -390,11 +390,11 @@ let test_save () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->
   let p = env#fs / "state.json" in
-  Eio_fs_sync.save p "{\"a\":1}";
+  Eio_fs.Sync.save p "{\"a\":1}";
   Alcotest.(check string) "saved" "{\"a\":1}" (Eio.Path.load p);
-  Eio_fs_sync.save ~barrier:Eio_fs_sync.Barrier.none p "{}";
+  Eio_fs.Sync.save ~barrier:Eio_fs.Sync.Barrier.none p "{}";
   Alcotest.(check string) "replaced" "{}" (Eio.Path.load p);
-  Eio_fs_sync.save p "";
+  Eio_fs.Sync.save p "";
   Alcotest.(check string) "empty" "" (Eio.Path.load p)
 
 (* Every durable entry point issues the barriers it is given, and none of
@@ -403,16 +403,16 @@ let test_barrier_is_used () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->
   let files = ref 0 and dirs = ref 0 in
-  let module Counting = Eio_fs_sync.Barrier.Make (struct
+  let module Counting = Eio_fs.Sync.Barrier.Make (struct
     type t = unit
 
     let sync_file () file =
       incr files;
-      Eio_fs_sync.Barrier.(sync_file portable) file
+      Eio_fs.Sync.Barrier.(sync_file portable) file
 
     let sync_dir () dir =
       incr dirs;
-      Eio_fs_sync.Barrier.(sync_dir portable) dir
+      Eio_fs.Sync.Barrier.(sync_dir portable) dir
   end) in
   let barrier = Counting.v () in
   let issued name ~files:f ~dirs:d fn =
@@ -423,20 +423,20 @@ let test_barrier_is_used () =
   in
   let fs = env#fs in
   issued "publish" ~files:1 ~dirs:1 (fun () ->
-      Eio_fs_sync.publish ~barrier ~max_bytes:1L (fs / "p")
+      Eio_fs.Sync.publish ~barrier ~max_bytes:1L (fs / "p")
         (Eio.Flow.copy_string "x"));
   issued "save" ~files:1 ~dirs:1 (fun () ->
-      Eio_fs_sync.save ~barrier (fs / "s") "x");
+      Eio_fs.Sync.save ~barrier (fs / "s") "x");
   issued "save with no barrier" ~files:0 ~dirs:0 (fun () ->
-      Eio_fs_sync.save ~barrier:Eio_fs_sync.Barrier.none (fs / "s") "y");
+      Eio_fs.Sync.save ~barrier:Eio_fs.Sync.Barrier.none (fs / "s") "y");
   issued "append_lines" ~files:1 ~dirs:1 (fun () ->
-      Eio_fs_sync.append_lines ~barrier (fs / "l") [ "x" ]);
+      Eio_fs.Sync.append_lines ~barrier (fs / "l") [ "x" ]);
   issued "publish_generation" ~files:1 ~dirs:3 (fun () ->
-      Eio_fs_sync.publish_generation ~barrier (fs / "g") (fun dir ->
+      Eio_fs.Sync.publish_generation ~barrier (fs / "g") (fun dir ->
           Eio.Path.save ~create:(`Exclusive 0o644) (dir / "f") "x"));
   issued "publish_link" ~files:0 ~dirs:2 (fun () ->
       match
-        Eio_fs_sync.publish_link ~barrier ~expected:None ~target:"target"
+        Eio_fs.Sync.publish_link ~barrier ~expected:None ~target:"target"
           (fs / "k")
       with
       | Ok () -> ()
@@ -450,9 +450,9 @@ let with_mem f =
 
 let test_append_creates () =
   with_mem @@ fun p ->
-  Eio_fs_sync.append_lines p [ {|{"a":1}|}; {|{"b":2}|} ];
+  Eio_fs.Sync.append_lines p [ {|{"a":1}|}; {|{"b":2}|} ];
   Alcotest.(check string) "created" "{\"a\":1}\n{\"b\":2}\n" (Eio.Path.load p);
-  Eio_fs_sync.append_lines ~barrier:Eio_fs_sync.Barrier.none p [ {|{"c":3}|} ];
+  Eio_fs.Sync.append_lines ~barrier:Eio_fs.Sync.Barrier.none p [ {|{"c":3}|} ];
   Alcotest.(check string)
     "appended" "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n" (Eio.Path.load p)
 
@@ -462,10 +462,10 @@ let test_append_creates () =
 let test_append_repairs_a_torn_line () =
   with_mem @@ fun p ->
   Eio.Path.save ~create:(`Exclusive 0o644) p "{\"a\":1}\n{\"b\":";
-  Eio_fs_sync.append_lines p [ {|{"c":3}|} ];
+  Eio_fs.Sync.append_lines p [ {|{"c":3}|} ];
   Alcotest.(check string)
     "torn line ended" "{\"a\":1}\n{\"b\":\n{\"c\":3}\n" (Eio.Path.load p);
-  Eio_fs_sync.append_lines p [ {|{"d":4}|} ];
+  Eio_fs.Sync.append_lines p [ {|{"d":4}|} ];
   Alcotest.(check string)
     "an LF is not added twice" "{\"a\":1}\n{\"b\":\n{\"c\":3}\n{\"d\":4}\n"
     (Eio.Path.load p)
@@ -473,12 +473,12 @@ let test_append_repairs_a_torn_line () =
 let test_append_to_empty () =
   with_mem @@ fun p ->
   Eio.Path.save ~create:(`Exclusive 0o644) p "";
-  Eio_fs_sync.append_lines p [ "x" ];
+  Eio_fs.Sync.append_lines p [ "x" ];
   Alcotest.(check string) "no leading LF" "x\n" (Eio.Path.load p)
 
 let test_append_nothing () =
   with_mem @@ fun p ->
-  Eio_fs_sync.append_lines p [];
+  Eio_fs.Sync.append_lines p [];
   Alcotest.(check bool)
     "no file" true
     (Eio.Path.kind ~follow:true p = `Not_found)
@@ -486,7 +486,7 @@ let test_append_nothing () =
 let test_append_refuses_lf () =
   with_mem @@ fun p ->
   Eio.Path.save ~create:(`Exclusive 0o644) p "a\n";
-  (match Eio_fs_sync.append_lines p [ "b"; "c\nd" ] with
+  (match Eio_fs.Sync.append_lines p [ "b"; "c\nd" ] with
   | () -> Alcotest.fail "a line holding LF was appended"
   | exception Invalid_argument _ -> ());
   Alcotest.(check string) "unchanged" "a\n" (Eio.Path.load p)
@@ -500,10 +500,10 @@ let test_append_posix () =
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
   let p = fs / dir / "log.jsonl" in
-  Eio_fs_sync.append_lines p [ "1" ];
+  Eio_fs.Sync.append_lines p [ "1" ];
   Eio.Path.with_open_out ~append:true ~create:`Never p (fun f ->
       Eio.Flow.copy_string "2" f);
-  Eio_fs_sync.append_lines p [ "3" ];
+  Eio_fs.Sync.append_lines p [ "3" ];
   Alcotest.(check string) "repaired" "1\n2\n3\n" (Eio.Path.load p)
 
 (* A journal whose LF commits a record drops a torn last line before it
@@ -513,7 +513,7 @@ let append_discards_a_torn_tail p =
   List.iter
     (fun (before, expected) ->
       Eio.Path.save ~create:(`Or_truncate 0o600) p before;
-      Eio_fs_sync.append_lines ~tail:`Discard p [ "new" ];
+      Eio_fs.Sync.append_lines ~tail:`Discard p [ "new" ];
       Alcotest.(check string)
         (Fmt.str "after %S" before)
         expected (Eio.Path.load p))
@@ -526,11 +526,11 @@ let append_discards_a_torn_tail p =
       ("pending\n" ^ String.make 9000 'x', "pending\nnew\n");
     ];
   Eio.Path.save ~create:(`Or_truncate 0o600) p "pending\ntorn";
-  Eio_fs_sync.append_lines ~tail:`Discard p [];
+  Eio_fs.Sync.append_lines ~tail:`Discard p [];
   Alcotest.(check string)
     "an empty append drops the torn line" "pending\n" (Eio.Path.load p);
   Eio.Path.unlink p;
-  Eio_fs_sync.append_lines ~tail:`Discard p [];
+  Eio_fs.Sync.append_lines ~tail:`Discard p [];
   Alcotest.(check bool)
     "an empty append makes no file" true
     (Eio.Path.kind ~follow:true p = `Not_found)
@@ -560,11 +560,11 @@ let test_append_retries_a_failed_parent_barrier () =
     else None
   in
   let p = Eio_fs_chaos.wrap schedule env#fs / "log.jsonl" in
-  (match Eio_fs_sync.append_lines p [ "1" ] with
+  (match Eio_fs.Sync.append_lines p [ "1" ] with
   | () -> Alcotest.fail "the directory barrier did not fail"
   | exception Eio.Io _ -> ());
   dir_syncs := 0;
-  Eio_fs_sync.append_lines p [ "2" ];
+  Eio_fs.Sync.append_lines p [ "2" ];
   Alcotest.(check bool) "the directory is barriered again" true (!dir_syncs > 0);
   Alcotest.(check string) "both lines" "1\n2\n" (Eio.Path.load p)
 
@@ -582,10 +582,10 @@ let test_append_nothing_retries_the_barriers () =
     else None
   in
   let p = Chaos.wrap schedule (Crash.wrap ctl env#fs) / "log.jsonl" in
-  (match Eio_fs_sync.append_lines p [ "1" ] with
+  (match Eio_fs.Sync.append_lines p [ "1" ] with
   | () -> Alcotest.fail "the directory barrier did not fail"
   | exception Eio.Io _ -> ());
-  Eio_fs_sync.append_lines p [];
+  Eio_fs.Sync.append_lines p [];
   Crash.crash ctl;
   Alcotest.(check string)
     "the log survives" "1\n"
@@ -605,7 +605,7 @@ let test_sparse_cost size =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
   let dir =
-    fs / Filename.get_temp_dir_name () / Eio_fs_sync.fresh_name "sparse"
+    fs / Filename.get_temp_dir_name () / Eio_fs.Sync.fresh_name "sparse"
   in
   Eio.Path.mkdir ~perm:0o700 dir;
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree dir) @@ fun () ->
@@ -618,7 +618,7 @@ let test_sparse_cost size =
      closes, not the root of [fs]. *)
   Eio.Switch.run @@ fun sw ->
   let observed = Eio_fs_chaos.wrap schedule (Eio.Path.open_dir ~sw dir) in
-  Eio_fs_sync.publish_sparse ~max_bytes:(Int64.of_int size)
+  Eio_fs.Sync.publish_sparse ~max_bytes:(Int64.of_int size)
     ~exclusive:Eio_fs_unix.exclusive_rename ~size_bytes:(Int64.of_int size)
     (observed / "image")
     [
@@ -657,11 +657,11 @@ let test_sparse_bounds_before_io () =
     (fun (name, ceiling, size, spans, limit) ->
       operations := [];
       (match
-         Eio_fs_sync.publish_sparse ~max_bytes:ceiling ~size_bytes:size
+         Eio_fs.Sync.publish_sparse ~max_bytes:ceiling ~size_bytes:size
            (fs / "image") spans
        with
       | () -> Alcotest.failf "%s was accepted" name
-      | exception Eio_fs_sync.Limit_exceeded { max_bytes; attempted } when limit
+      | exception Eio_fs.Sync.Limit_exceeded { max_bytes; attempted } when limit
         ->
           Alcotest.(check int64) "ceiling" ceiling max_bytes;
           Alcotest.(check int64) "attempted logical size" size attempted
@@ -690,8 +690,8 @@ let test_sparse_exclusive () =
   List.iter
     (fun name ->
       (match
-         Eio_fs_sync.publish_sparse ~max_bytes:16L
-           ~exclusive:Eio_fs_sync.Rename.capability ~size_bytes:16L (fs / name)
+         Eio_fs.Sync.publish_sparse ~max_bytes:16L
+           ~exclusive:Eio_fs.Sync.Rename.capability ~size_bytes:16L (fs / name)
            [ (0L, Cstruct.of_string "new") ]
        with
       | () -> Alcotest.failf "sparse publication replaced %s" name
@@ -718,7 +718,7 @@ let test_sparse_write_failure () =
   in
   let fs = Eio_fs_chaos.wrap schedule env#fs in
   (match
-     Eio_fs_sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
+     Eio_fs.Sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
        ~size_bytes:16L (fs / "image")
        [ (4L, Cstruct.of_string "new") ]
    with
@@ -737,11 +737,11 @@ let test_sparse_durable_and_empty () =
   let module Crash = Eio_fs_chaos.Private.Crash in
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl env#fs in
-  Eio_fs_sync.publish_sparse ~max_bytes:16L
-    ~exclusive:Eio_fs_sync.Rename.capability ~size_bytes:16L (fs / "image")
+  Eio_fs.Sync.publish_sparse ~max_bytes:16L
+    ~exclusive:Eio_fs.Sync.Rename.capability ~size_bytes:16L (fs / "image")
     [ (0L, Cstruct.of_string "HDR"); (12L, Cstruct.of_string "TAIL") ];
-  Eio_fs_sync.publish_sparse ~max_bytes:0L
-    ~exclusive:Eio_fs_sync.Rename.capability ~size_bytes:0L (fs / "empty") [];
+  Eio_fs.Sync.publish_sparse ~max_bytes:0L
+    ~exclusive:Eio_fs.Sync.Rename.capability ~size_bytes:0L (fs / "empty") [];
   Crash.crash ctl;
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
@@ -768,7 +768,7 @@ let test_sparse_cancellation () =
   let fs = Eio_fs_chaos.wrap schedule env#fs in
   Eio.Fiber.first
     (fun () ->
-      Eio_fs_sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
+      Eio_fs.Sync.publish_sparse ~max_bytes:16L ~tmp:(fs / "draft")
         ~size_bytes:16L (fs / "image")
         [ (4L, Cstruct.of_string "new") ];
       Alcotest.fail "gated producer completed before cancellation")
@@ -794,10 +794,10 @@ let test_error_backtrace generation () =
   Eio_fs_mem.run @@ fun env ->
   match
     if generation then
-      Eio_fs_sync.publish_generation ~barrier:Eio_fs_sync.Barrier.none
+      Eio_fs.Sync.publish_generation ~barrier:Eio_fs.Sync.Barrier.none
         (env#fs / "generation") (fun _ -> raise_publication_origin ())
     else
-      Eio_fs_sync.publish ~max_bytes:1L (env#fs / "image") (fun _ ->
+      Eio_fs.Sync.publish ~max_bytes:1L (env#fs / "image") (fun _ ->
           raise_publication_origin ())
   with
   | () -> Alcotest.fail "producer exception was swallowed"
@@ -830,7 +830,7 @@ let test_small_copy_buffer () =
   let src =
     Eio.Resource.T ({ Src.left = "v" }, Eio.Flow.Pi.source (module Src))
   in
-  Eio_fs_sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
+  Eio_fs.Sync.publish ~max_bytes:3L (env#fs / "cfg") (fun f ->
       Eio.Flow.copy src f);
   Alcotest.(check string) "published" "v" (Eio.Path.load (env#fs / "cfg"));
   Alcotest.(check bool)
@@ -845,12 +845,12 @@ let publish_long_name fs unit =
   List.iter
     (fun d -> Eio.Path.mkdir ~perm:0o755 (fs / d))
     [ "file"; "tree"; "link" ];
-  Eio_fs_sync.save (fs / "file" / name) "saved";
+  Eio_fs.Sync.save (fs / "file" / name) "saved";
   Alcotest.(check string)
     "a saved file" "saved"
     (Eio.Path.load (fs / "file" / name));
   let generation path i =
-    Eio_fs_sync.publish_generation path (fun d ->
+    Eio_fs.Sync.publish_generation path (fun d ->
         Eio.Path.save ~create:(`Exclusive 0o644) (d / "f") i)
   in
   (* A name sharing all but its last character has generations of its own. *)
@@ -869,7 +869,7 @@ let publish_long_name fs unit =
     "two pointers, one generation of one, two of the other" 5
     (List.length (Eio.Path.read_dir (fs / "tree")));
   (match
-     Eio_fs_sync.publish_link ~expected:None ~target:"target"
+     Eio_fs.Sync.publish_link ~expected:None ~target:"target"
        (fs / "link" / name)
    with
   | Ok () -> ()
@@ -906,15 +906,15 @@ let test_long_directories () =
   in
   let dir = Eio_fs_mem.as_user alice root / d1 / d2 in
   let target = d1 ^ "/" ^ d2 ^ "/state" in
-  Eio_fs_sync.save (dir / "state") "saved";
+  Eio_fs.Sync.save (dir / "state") "saved";
   Alcotest.(check string) "a saved file" "saved" (Eio.Path.load (dir / "state"));
-  Eio_fs_sync.publish_generation (dir / "tree") (fun d ->
+  Eio_fs.Sync.publish_generation (dir / "tree") (fun d ->
       Eio.Path.save ~create:(`Exclusive 0o644) (d / "f") "g");
   Alcotest.(check string)
     "a published generation" "g"
     (Eio.Path.load (dir / "tree" / "f"));
   (match
-     Eio_fs_sync.publish_link ~expected:None ~target:"target" (dir / "link")
+     Eio_fs.Sync.publish_link ~expected:None ~target:"target" (dir / "link")
    with
   | Ok () -> ()
   | Error _ -> Alcotest.fail "the link was refused");
@@ -925,7 +925,7 @@ let test_long_directories () =
     (Eio.Path.read_dir (root / d1));
   Alcotest.(check string)
     "a fresh name stays in the target's directory" (Filename.dirname target)
-    (Filename.dirname (Eio_fs_sync.fresh_name target))
+    (Filename.dirname (Eio_fs.Sync.fresh_name target))
 
 let suite =
   ( "eio_fs_sync",
@@ -1019,8 +1019,8 @@ module Links = struct
     Eio_mock.Backend.run @@ fun () ->
     Eio_fs_mem.run @@ fun env -> test env#fs
 
-  let publish fs ?(barrier = Eio_fs_sync.Barrier.none) expected target =
-    Eio_fs_sync.publish_link ~barrier ~expected ~target (fs / "portal")
+  let publish fs ?(barrier = Eio_fs.Sync.Barrier.none) expected target =
+    Eio_fs.Sync.publish_link ~barrier ~expected ~target (fs / "portal")
 
   let test_raw () =
     fixture @@ fun fs ->
@@ -1083,7 +1083,7 @@ module Links = struct
     let wrapped = Crash.wrap ctl fs in
     ignore
       (Result.get_ok
-         (publish wrapped ~barrier:Eio_fs_sync.Barrier.portable (Some "../old")
+         (publish wrapped ~barrier:Eio_fs.Sync.Barrier.portable (Some "../old")
             "../new library//./checkout"));
     Crash.crash ctl;
     Alcotest.(check string)
@@ -1106,7 +1106,7 @@ module Links = struct
     in
     let faults = Chaos.wrap schedule disk in
     (match
-       publish faults ~barrier:Eio_fs_sync.Barrier.portable (Some "../old")
+       publish faults ~barrier:Eio_fs.Sync.Barrier.portable (Some "../old")
          "../new"
      with
     | _ -> Alcotest.fail "post-publication barrier failure hidden"
@@ -1118,7 +1118,7 @@ module Links = struct
       (Eio.Path.read_link (fs / "portal"));
     ignore
       (Result.get_ok
-         (publish disk ~barrier:Eio_fs_sync.Barrier.portable (Some "../new")
+         (publish disk ~barrier:Eio_fs.Sync.Barrier.portable (Some "../new")
             "../new"));
     Crash.crash ctl;
     Alcotest.(check string)
@@ -1139,7 +1139,7 @@ module Links = struct
     in
     let faults = Chaos.wrap schedule fs in
     (match
-       publish faults ~barrier:Eio_fs_sync.Barrier.portable (Some "../old")
+       publish faults ~barrier:Eio_fs.Sync.Barrier.portable (Some "../old")
          "../new"
      with
     | Error (`Changed (Some "../foreign")) -> ()
@@ -1162,7 +1162,7 @@ module Links = struct
     Eio.Path.symlink ~link_to:"../old library//./checkout" (root / "portal");
     ignore
       (Result.get_ok
-         (publish root ~barrier:Eio_fs_sync.Barrier.portable
+         (publish root ~barrier:Eio_fs.Sync.Barrier.portable
             (Some "../old library//./checkout") "/selected/library"));
     Alcotest.(check string)
       "native POSIX raw switch" "/selected/library"

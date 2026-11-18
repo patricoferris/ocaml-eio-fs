@@ -6,7 +6,6 @@
   eio_main
   eio-fs
   eio-fs.chaos
-  eio-fs.sync
   eio-fs.unix
   chaos_helpers
   alcotest))

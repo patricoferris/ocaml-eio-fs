@@ -144,7 +144,7 @@ let test_read_only_file_sync () =
   Eio.Path.save ~create:(`Exclusive 0o444) (raw / "f") "data";
   Eio.Switch.run @@ fun sw ->
   let file = Eio.Path.open_in ~sw (chaos / "f") in
-  match Eio_fs_sync.file_barrier file with
+  match Eio_fs.Sync.file_barrier file with
   | None -> Alcotest.fail "a read-only file registers no barrier"
   | Some barrier ->
       barrier ~full:false;

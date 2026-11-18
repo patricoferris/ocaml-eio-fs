@@ -2,7 +2,7 @@
     by whoever deploys it. The host decides what exclusion a directory needs: on
     a POSIX host another process can open the same files, so the section is a
     record lock ([Eio_fs_unix.with_lock]); where the backend declares
-    [Eio_fs_sync.Process_local], excluding fibers is enough. *)
+    [Eio_fs.Sync.Process_local], excluding fibers is enough. *)
 
 type t
 (** The type for critical-section runners. *)

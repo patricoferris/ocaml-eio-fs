@@ -3,7 +3,7 @@
    raise in the body leaves the section usable, and that a runner which cannot
    enter says so in the section's own vocabulary. *)
 
-module Lock = Eio_fs_sync.Lock
+module Lock = Eio_fs.Sync.Lock
 
 (* [none] adds no exclusion, so what it owes the caller is not to get in the
    way: run the section and answer what the section answered. *)

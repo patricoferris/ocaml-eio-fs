@@ -235,7 +235,7 @@ let exec ~sw ~w ~wu ~dry hs i op =
       match hs.dfh with
       | None -> raise Exit
       | Some h -> (
-          match Eio_fs_sync.file_barrier h with
+          match Eio_fs.Sync.file_barrier h with
           | Some b -> b ~full:false
           | None -> raise (Anomaly "no file barrier on dir handle")))
 

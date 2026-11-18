@@ -65,7 +65,7 @@ let saves n env =
 
 let publishes n env =
   for i = 1 to n do
-    Eio_fs_sync.publish ~max_bytes:16L
+    Eio_fs.Sync.publish ~max_bytes:16L
       Eio.Path.(env#fs / Fmt.str "f%d" i)
       (Eio.Flow.copy_string "x")
   done

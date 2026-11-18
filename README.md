@@ -126,7 +126,7 @@ Eio_fs_chaos.run: a power cut lost an acknowledged file: /config held "new" when
 ```
 
 The save above does not sync its directory, so a power cut loses the
-rename. `Eio_fs_sync.save` writes a file atomically and syncs its directory
+rename. `Eio_fs.Sync.save` writes a file atomically and syncs its directory
 too, and `Eio.Path.sync_dir` syncs a directory by hand. A report gives the
 fault, the operations of the run, what the program printed, if anything, and
 one line to paste that runs that case again; to find it, a replay may run the
@@ -268,23 +268,24 @@ across power cuts, or about on-disk layout.
 
 ## Libraries
 
-- `eio-fs` has `Eio_fs`: `Crunch` loads into an in-memory filesystem a
-  directory tree its `eio-fs-crunch` binary embeds in an executable, `Tree`
-  walks, measures, copies and formats a tree on any Eio backend, and
-  `Nofollow` reads a file, bounded, refusing a symbolic link at the final
-  path component, and `Path` works on path strings, without touching a
-  filesystem.
+- `eio-fs` has `Eio_fs`. `Crunch` loads into an in-memory filesystem a
+  directory tree its `eio-fs-crunch` binary embeds in an executable. `Tree`
+  walks, measures, copies and formats a tree on any Eio backend. `Nofollow`
+  reads a file, bounded, refusing a symbolic link at the final path
+  component. `Path` works on path strings, without touching a filesystem.
+  `Sync` writes a file atomically on any Eio filesystem, and durably with
+  the barrier it is given: the default is enough on Linux, while on macOS
+  only `Eio_fs_unix.barrier` goes through the drive's cache. A program links
+  only the modules it uses.
 - `eio-fs.mem` has `Eio_fs_mem`, the in-memory filesystem.
   [`eio_fs_mem.mli`](lib/mem/eio_fs_mem.mli) says how closely it follows
   each kernel.
 - `eio-fs.chaos` has `Eio_fs_chaos`, the two checks above and the faults
   they are made of, so a program that uses only the filesystem links none of
   it.
-- `eio-fs.sync` writes a file atomically on any Eio filesystem, and
-  durably with the barrier it is given: the default is enough on Linux,
-  while on macOS only `Eio_fs_unix.barrier` goes through the drive's cache.
-- `eio-fs.unix` binds POSIX calls that Eio and `Unix` lack, such as file
-  locks and extended attributes.
+- `eio-fs.unix` has `Eio_fs_unix`, the POSIX calls that Eio and `Unix` lack,
+  such as file locks and extended attributes, for a program that links
+  `unix`.
 
 Each library documents itself in its `.mli`, under [`lib/`](lib/).
 

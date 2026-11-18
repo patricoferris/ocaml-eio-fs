@@ -208,7 +208,7 @@ let test_read_only_handle_write_refused () =
 
 (* {2 Descriptors that are not regular files}
 
-   Opening a directory as a flow is a supported operation: eio-fs.sync reaches a
+   Opening a directory as a flow is a supported operation: Eio_fs.Sync reaches a
    directory's write pi that way, and both real Eio backends allow the O_RDONLY
    open. The descriptor that comes back still answers the whole file interface,
    so every operation on it has to fail the way a real backend fails one.
@@ -960,7 +960,7 @@ let test_linux_rename_dots () =
   let _, a = linux_tree () in
   let rename x y () = Eio.Path.rename (a / x) (a / y) in
   let exclusive x y () =
-    Eio_fs_sync.Rename.exclusive Eio_fs_sync.Rename.capability (a / x) (a / y)
+    Eio_fs.Sync.Rename.exclusive Eio_fs.Sync.Rename.capability (a / x) (a / y)
   in
   Alcotest.(check (list string))
     "rename"

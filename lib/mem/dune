@@ -13,7 +13,7 @@
   eio
   eio.utils
   eio_fs_path
-  eio-fs.sync
+  eio_fs_sync
   eio_fs_internal
   fmt
   cstruct

@@ -10,7 +10,7 @@ exception Unavailable of string
 
 let () =
   Printexc.register_printer (function
-    | Unavailable why -> Some ("Eio_fs_sync.Lock.Unavailable: " ^ why)
+    | Unavailable why -> Some ("Eio_fs.Sync.Lock.Unavailable: " ^ why)
     | _ -> None)
 
 let use t f = t.run f

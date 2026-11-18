@@ -6,7 +6,7 @@
   eio.mock
   eio-fs.mem
   eio-fs.chaos
-  eio-fs.sync
+  eio-fs
   alcotest
   fmt
   cstruct

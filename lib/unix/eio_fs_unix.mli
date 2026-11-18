@@ -1,7 +1,7 @@
 (** POSIX filesystem calls that Eio and [Unix] do not bind.
 
     [Eio_fs_unix] is for a program that links unix anyway, beside the portable
-    machinery of {!Eio_fs_sync}. It holds the {{!barriers}barriers} that go
+    machinery of {!Eio_fs.Sync}. It holds the {{!barriers}barriers} that go
     through the drive's cache (on Darwin {!full_fsync}, where [fsync] stops in
     it), a filesystem's {{!capacity}capacity}, {{!clones}copy-on-write clones},
     {{!trees}tree removal} in batches, {{!files}positioned reads and writes},
@@ -27,7 +27,7 @@ val full_fsync : Unix.file_descr -> unit
 val sync_dir : _ Eio.Path.t -> unit
 (** [sync_dir dir] makes [dir]'s entries durable: the barrier a commit protocol
     issues after renaming a file into place. A backend that registers a
-    {!Eio_fs_sync.Dir_sync} answers through it, asked for a full barrier, so
+    {!Eio_fs.Sync.Dir_sync} answers through it, asked for a full barrier, so
     [Eio_fs_chaos.Power] under [~os:`Macos] keeps what it commits; a plain POSIX
     directory is opened and {!full_fsync}ed on the descriptor that open returns,
     which resolves every component beneath [dir]'s capability, off the calling
@@ -41,17 +41,17 @@ val sync_dir : _ Eio.Path.t -> unit
 val sync_file : _ Eio.File.rw -> unit
 (** [sync_file file] makes [file]'s data durable: the barrier a commit protocol
     issues over the bytes it wrote. A backend that registers a
-    {!Eio_fs_sync.File_sync} answers through it, asked for a full barrier and
+    {!Eio_fs.Sync.File_sync} answers through it, asked for a full barrier and
     before any descriptor [file] carries, so a model of power loss observes the
     barrier; a plain POSIX file is {!full_fsync}ed on its descriptor, off the
-    calling fiber's thread. A file with neither takes {!Eio_fs_sync.sync_file},
+    calling fiber's thread. A file with neither takes {!Eio_fs.Sync.sync_file},
     and raises as it does.
 
     @raise Eio.Io as [fsync] fails, or as a registered barrier raises. *)
 
-val barrier : Eio_fs_sync.Barrier.t
+val barrier : Eio_fs.Sync.Barrier.t
 (** [barrier] is {!sync_file} and {!sync_dir} as the barriers a publication of
-    {!Eio_fs_sync} issues: pass it as [~barrier] for a publication that is
+    {!Eio_fs.Sync} issues: pass it as [~barrier] for a publication that is
     durable on Darwin through the drive's cache. A file open for reading only is
     synced through its descriptor too. *)
 
@@ -302,7 +302,7 @@ val extents :
 
 (** {1:rename Exclusive rename} *)
 
-val exclusive_rename : Eio_fs_sync.Rename.t
+val exclusive_rename : Eio_fs.Sync.Rename.t
 (** [exclusive_rename] is the POSIX backend for atomic no-replace publication.
     Directory wrappers are consulted before resolving the source and target
     parents through their capabilities. Linux uses
@@ -310,7 +310,7 @@ val exclusive_rename : Eio_fs_sync.Rename.t
     unsupported platforms or filesystems refuse. An existing target, including a
     symbolic link, is never overwritten.
 
-    Through {!Eio_fs_sync.Rename.exclusive}, it raises [Eio.Io] with
+    Through {!Eio_fs.Sync.Rename.exclusive}, it raises [Eio.Io] with
     {!Eio.Fs.Already_exists} for an existing target, [Eio.Io] as the platform
     call fails otherwise (an unsupported platform or filesystem included), and
     [Invalid_argument] for a path that ends in no file name or whose directory
@@ -446,7 +446,7 @@ val with_lock :
     [path] must be the lock's own regular file: a link, a directory, a FIFO, or
     a name that took the entry between resolution and open is refused with
     {!Eio.Fs.Permission_denied} carrying {!Not_a_lock_file}. A backend with no
-    Unix descriptor is refused unless it registers {!Eio_fs_sync.Process_local}.
+    Unix descriptor is refused unless it registers {!Eio_fs.Sync.Process_local}.
 
     @raise Lock_unavailable as described above.
     @raise Eio.Io
@@ -458,7 +458,7 @@ val with_lock :
     @raise Eio.Io as [lockf] or [flock] fails otherwise.
     @raise Invalid_argument
       if the opened lock file carries no Unix descriptor and its backend is not
-      {!Eio_fs_sync.Process_local}. *)
+      {!Eio_fs.Sync.Process_local}. *)
 
 val probe : _ Eio.Path.t -> [ `Free of string | `Held of refusal ]
 (** [probe path] is the lock over [path] as an acquisition would find it now,
@@ -676,15 +676,15 @@ val lock_section :
   ?create:create ->
   ?contents:string ->
   _ Eio.Path.t ->
-  Eio_fs_sync.Lock.t
+  Eio_fs.Sync.Lock.t
 (** [lock_section path] is {!with_lock} over the lock file [path] as the
     critical section a backend-free component takes from its deployment. Every
     way {!with_lock} can refuse the lock file is raised as
-    {!Eio_fs_sync.Lock.Unavailable}; what the section's body raises travels out
+    {!Eio_fs.Sync.Lock.Unavailable}; what the section's body raises travels out
     untouched.
 
-    @raise Eio_fs_sync.Lock.Unavailable
-      from {!Eio_fs_sync.Lock.use}, never from [lock_section] itself. *)
+    @raise Eio_fs.Sync.Lock.Unavailable
+      from {!Eio_fs.Sync.Lock.use}, never from [lock_section] itself. *)
 
 (** {1:xattrs Extended attributes}
 
@@ -778,7 +778,7 @@ module Link : sig
       [Error (`Changed (Some held))] if a link holding [held] is there, and
       [Error (`Invalid msg)] for any other entry, for an empty [target] or one
       holding a NUL byte, and for a failed call, [msg] naming the path and what
-      to do before a retry. Nothing is replaced. {!Eio_fs_sync.publish_link}
+      to do before a retry. Nothing is replaced. {!Eio_fs.Sync.publish_link}
       replaces an entry, on any backend, and syncs it. *)
 
   type regular = { contents : string; perm : Eio.File.Unix_perm.t }

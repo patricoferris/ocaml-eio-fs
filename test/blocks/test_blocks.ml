@@ -101,7 +101,7 @@ let run ~init ~injection ~policy wl =
           Eio.Path.with_open_in
             (wrap (fail_syncs [ 1 ]) root / "f")
             (fun f ->
-              match Eio_fs_sync.file_barrier f with
+              match Eio_fs.Sync.file_barrier f with
               | None -> failwith "no barrier"
               | Some b -> (
                   match b ~full:false with

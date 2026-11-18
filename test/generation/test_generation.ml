@@ -54,7 +54,7 @@ let pp_tree ppf = function
   | Some t -> Fmt.(Dump.list (Dump.pair string string)) ppf t
 
 let publish fs tree =
-  Eio_fs_sync.publish_generation (fs / "out") (populate tree)
+  Eio_fs.Sync.publish_generation (fs / "out") (populate tree)
 
 (* A base holding [old_tree], published and committed over an earlier
    generation, which the next publication reclaims after its switch. *)
@@ -210,7 +210,7 @@ let test_generation_names () =
   let target = Eio.Path.read_link (fs / "out") in
   Alcotest.(check bool)
     "the link names a generation" true
-    (Eio_fs_sync.is_generation target);
+    (Eio_fs.Sync.is_generation target);
   Alcotest.(check bool)
     "which is hidden" true
     (String.length target > 0 && target.[0] = '.');
@@ -219,7 +219,7 @@ let test_generation_names () =
       Alcotest.(check bool)
         (name ^ " is not a generation")
         false
-        (Eio_fs_sync.is_generation name))
+        (Eio_fs.Sync.is_generation name))
     [
       "out";
       ".out";
@@ -232,13 +232,13 @@ let test_generation_names () =
     ];
   Alcotest.(check bool)
     "a basename holding the infix still parses" true
-    (Eio_fs_sync.is_generation ".a.gen.5.gen.12.3")
+    (Eio_fs.Sync.is_generation ".a.gen.5.gen.12.3")
 
 let test_failed_populate () =
   with_old @@ fun base ->
   let before = List.sort String.compare (Eio.Path.read_dir base) in
   (match
-     Eio_fs_sync.publish_generation (base / "out") (fun dir ->
+     Eio_fs.Sync.publish_generation (base / "out") (fun dir ->
          populate new_tree dir;
          failwith "producer failed")
    with
@@ -256,7 +256,7 @@ let test_failed_populate () =
    fails on it leaves it as it was. *)
 let test_taken_link_name_kept () =
   with_old @@ fun base ->
-  let probe = Eio_fs_sync.fresh_name "out" in
+  let probe = Eio_fs.Sync.fresh_name "out" in
   let dot = String.rindex probe '.' in
   let n =
     int_of_string (String.sub probe (dot + 1) (String.length probe - dot - 1))
@@ -278,7 +278,7 @@ let test_refuses_plain_directory () =
   with_empty @@ fun fs ->
   populate [ ("out/x", "legacy") ] fs;
   let ran = ref false in
-  (match Eio_fs_sync.publish_generation (fs / "out") (fun _ -> ran := true) with
+  (match Eio_fs.Sync.publish_generation (fs / "out") (fun _ -> ran := true) with
   | () -> Alcotest.fail "a plain directory was replaced"
   | exception Eio.Io (Eio.Fs.E (Already_exists _), _) -> ());
   Alcotest.(check bool) "the producer never ran" false !ran;
@@ -308,13 +308,13 @@ let test_posix_readonly_reclaimed () =
   populate [ ("foreign/kept", "outside the generation") ] root;
   Eio.Path.chmod ~follow:false ~perm:0o500 (root / "foreign");
   let foreign = Eio.Path.stat ~follow:false (root / "foreign") in
-  Eio_fs_sync.publish_generation (root / "out") (fun dir ->
+  Eio_fs.Sync.publish_generation (root / "out") (fun dir ->
       readonly [ ("readonly/file", "old rootfs") ] dir;
       Eio.Path.symlink ~link_to:"../foreign" (dir / "link"));
   let old = Eio.Path.read_link (root / "out") in
-  Eio_fs_sync.publish_generation (root / "out")
+  Eio_fs.Sync.publish_generation (root / "out")
     (readonly [ ("readonly/file", "first replacement") ]);
-  Eio_fs_sync.publish_generation (root / "out")
+  Eio_fs.Sync.publish_generation (root / "out")
     (readonly [ ("readonly/file", "complete replacement") ]);
   Alcotest.(check string)
     "replacement is complete" "complete replacement"
@@ -339,13 +339,13 @@ let test_posix_readonly_reclaimed () =
    those staged entries must leave the previous generation and modes intact. *)
 let test_posix_readonly_failed_populate () =
   with_posix @@ fun root ->
-  Eio_fs_sync.publish_generation (root / "out")
+  Eio_fs.Sync.publish_generation (root / "out")
     (readonly [ ("readonly/file", "previous complete rootfs") ]);
   let target = Eio.Path.read_link (root / "out") in
   let before = Eio.Path.stat ~follow:false (root / target) in
   let entries = List.sort String.compare (Eio.Path.read_dir root) in
   (match
-     Eio_fs_sync.publish_generation (root / "out") (fun dir ->
+     Eio_fs.Sync.publish_generation (root / "out") (fun dir ->
          readonly [ ("readonly/file", "never published") ] dir;
          failwith "fixture population failed")
    with
