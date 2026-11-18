@@ -65,7 +65,10 @@ let refused () =
   (let env = ended () in
    match Chaos.ack env P.(env#fs / "f") with
    | () -> Alcotest.fail "an env of no run was accepted"
-   | exception Invalid_argument _ -> ());
+   | exception Invalid_argument m ->
+       Alcotest.(check string)
+         "the refusal names the check"
+         "Eio_fs_chaos.ack: env is not that of a run of Eio_fs_chaos.run" m);
   Chaos.run (fun env ->
       (try P.mkdir ~perm:0o755 P.(env#fs / "d") with Eio.Io _ -> ());
       match Chaos.ack env P.(env#fs / "d") with
