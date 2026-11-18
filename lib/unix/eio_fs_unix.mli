@@ -189,10 +189,12 @@ val pread :
   pos:int ->
   len:int ->
   int
-(** [pread ~cached file ~file_offset buf ~pos ~len] reads up to [len] bytes of
-    [file] from byte [file_offset] into [buf] at [pos], and is the count read,
-    [0] at the end of the file. It reads at most 65,536 bytes, and [file]'s own
-    offset does not move:
+(** [pread ~cached file ~file_offset buf ~pos ~len] is like {!Eio.File.pread}
+    but reads into [bytes], in one system call on the calling thread, where
+    Eio's takes a {!Cstruct.t} list and may hand the call to a system thread. It
+    reads up to [len] bytes of [file] from byte [file_offset] into [buf] at
+    [pos], and is the count read, [0] at the end of the file. It reads at most
+    65,536 bytes, and [file]'s own offset does not move:
     - a file that registers {!Positioned} answers it;
     - a file over a host descriptor is read by POSIX [pread], which [Unix] does
       not bind, retried on [EINTR];
@@ -214,12 +216,13 @@ val pread :
 
 val pwrite :
   _ Eio.File.rw -> file_offset:int -> string -> pos:int -> len:int -> int
-(** [pwrite file ~file_offset s ~pos ~len] writes up to [len] bytes of [s] from
-    [pos] to [file] at byte [file_offset], and is the count written. It writes
-    at most 65,536 bytes, [file]'s own offset does not move, and [file] answers
-    it as it answers {!val-pread}: through {!Positioned}, by POSIX [pwrite] on a
-    host descriptor, retried on [EINTR] while other threads run, or by one
-    {!Eio.File.pwrite_single}.
+(** [pwrite file ~file_offset s ~pos ~len] is like {!Eio.File.pwrite_single} but
+    writes from a [string], in one system call on the calling thread. It writes
+    up to [len] bytes of [s] from [pos] to [file] at byte [file_offset], and is
+    the count written. It writes at most 65,536 bytes, [file]'s own offset does
+    not move, and [file] answers it as it answers {!val-pread}: through
+    {!Positioned}, by POSIX [pwrite] on a host descriptor, retried on [EINTR]
+    while other threads run, or by one {!Eio.File.pwrite_single}.
 
     @raise Invalid_argument
       if [file_offset], [pos] or [len] is negative or [pos + len] is past the
