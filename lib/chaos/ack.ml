@@ -38,7 +38,7 @@ let read t p =
   | _ -> None
   | exception Eio.Io _ -> None
 
-let ack name t ((_, path) : _ Eio.Path.t) =
+let add name t ((_, path) : _ Eio.Path.t) =
   if t.alive () then
     let p = norm path in
     match read t p with

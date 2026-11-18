@@ -2437,7 +2437,7 @@ type cdir = {
 type (_, _, _) Eio.Resource.pi +=
   | Crash_dir : ('t, 't -> cdir, [> `Crash_dir ]) Eio.Resource.pi
 
-let crash_dir_hook :
+let dir_hook :
     (t ->
     ino:int64 option ->
     root:boxed ->
@@ -2451,7 +2451,7 @@ let is_trunc = function
   | `Or_truncate _ | `Exclusive _ -> true
   | `Never | `If_missing _ -> false
 
-let create_perm = function
+let perm_of = function
   | `Never -> 0o644
   | `If_missing p | `Or_truncate p | `Exclusive p -> p
 
@@ -2637,7 +2637,7 @@ module Cdir_impl = struct
       | None -> false
     in
     let base = B.open_out bv ~sw ~follow ~append ~create path in
-    let perm = create_perm create in
+    let perm = perm_of create in
     let fs = opened_file d ~key ~known ~rel ~perm ~prev found in
     let mode = match found with Some st -> st.perm | None -> perm in
     if not (Int.equal fs.mode mode) then d.dctl.effects <- d.dctl.effects + 1;
@@ -2655,7 +2655,7 @@ module Cdir_impl = struct
     let (Base_dir ((module B), bv)) = d.dboxed in
     let sub = B.open_subtree bv ~sw path in
     let ino = (B.stat bv ~follow:true path).ino in
-    !crash_dir_hook d.dctl ~ino:(Some ino) ~root:d.dplace.proot
+    !dir_hook d.dctl ~ino:(Some ino) ~root:d.dplace.proot
       ~prefix:(resolve d (at d.dplace.prefix path))
       ~base:(sub :> Eio.Fs.dir_ty r)
 
@@ -2887,7 +2887,7 @@ let wrap_cdir ctl ~ino ~root ~prefix ~base : [ `Close | Eio.Fs.dir_ty ] r =
        Lazy.force cdir_handler )
     :> [ `Close | Eio.Fs.dir_ty ] r)
 
-let () = crash_dir_hook := wrap_cdir
+let () = dir_hook := wrap_cdir
 
 let v ?os ?(policy = Drop_unsynced) ?(outside = Dropped) ?(block_size = 4096)
     ?(pause = ignore) () =

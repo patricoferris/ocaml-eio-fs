@@ -43,7 +43,7 @@ let run ?os ?budget ?seed ?replay ?setup ?inspect app =
 
 let ack env file =
   let name = "Eio_fs_chaos.ack" in
-  Ack.ack name (Disk.acks name env) file
+  Ack.add name (Disk.acks name env) file
 
 let acked env = Ack.acked (Disk.acks "Eio_fs_chaos.acked" env)
 

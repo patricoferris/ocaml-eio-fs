@@ -17,8 +17,8 @@ type t = {
 val v : at:(unit -> int) -> Eio.Fs.dir_ty Eio.Path.t -> t
 (** [v ~at base] has acknowledged no file of [base]. *)
 
-val ack : string -> t -> _ Eio.Path.t -> unit
-(** [ack name t file] records what [file] holds now, unless the power is cut.
+val add : string -> t -> _ Eio.Path.t -> unit
+(** [add name t file] records what [file] holds now, unless the power is cut.
 
     @raise Invalid_argument
       naming [name] if [file] is not a regular file of [t]'s filesystem. *)
