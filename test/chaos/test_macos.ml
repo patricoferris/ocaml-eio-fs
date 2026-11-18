@@ -200,6 +200,23 @@ let named_as_traced () =
           (String.concat "\n" trace))
     changes
 
+(* A cut that loses what fsync(2) flushed says why; one on Linux does not. *)
+let noted () =
+  let note =
+    "under macOS an fsync stops in the drive's cache; F_FULLFSYNC \
+     (Eio_fs_unix.sync_file, Eio_fs_unix.barrier) goes through it"
+  in
+  Alcotest.(check string)
+    "macOS" note
+    (Expect.field "note" (Expect.report (save ~os:`Macos plain)));
+  let has_note r =
+    List.exists
+      (String.starts_with ~prefix:"  note:")
+      (String.split_on_char '\n' r)
+  in
+  let r = Expect.report (fun () -> replay ()) in
+  if has_note r then Alcotest.failf "a note on Linux: %s" r
+
 let suite =
   ( "macos",
     [
@@ -233,4 +250,5 @@ let suite =
         (Expect.caught (retried ~os:`Macos));
       Alcotest.test_case "a report names a write as its trace does" `Quick
         named_as_traced;
+      Alcotest.test_case "a cut under macOS says what fsync misses" `Quick noted;
     ] )
