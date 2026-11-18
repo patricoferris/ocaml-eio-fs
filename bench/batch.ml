@@ -2,7 +2,7 @@
    ways, with 8 fibres each: one Eio.Path call per operation, Eio_fs_unix.Batch
    with 512 operations per hop, and unconfined Unix calls with 512 operations
    per run_in_systhread. Prints files/s for each. No test runs it:
-   [dune exec bench/batch_bench.exe -- <git repo> <scratch dir>]. *)
+   [dune exec bench/batch.exe -- <git repo> <scratch dir>]. *)
 
 type entry = { path : string; perm : int; link : bool; contents : string }
 
@@ -66,7 +66,7 @@ let rec chunks n l =
       c :: chunks n rest
 
 let fibres = 8
-let batch = 512
+let per_batch = 512
 
 let eio_path root entries =
   List.iter
@@ -106,7 +106,7 @@ let batched root entries =
                   Eio_fs_unix.Batch.Create
                     { path = e.path; perm = e.perm; contents = e.contents })
               c)))
-    (chunks batch entries)
+    (chunks per_batch entries)
 
 let raw native entries =
   let f = Filename.concat native in
@@ -132,7 +132,7 @@ let raw native entries =
             Unix.fchmod fd e.perm;
             Unix.close fd)
         c)
-    (chunks batch entries)
+    (chunks per_batch entries)
 
 let () =
   let repo = Sys.argv.(1) and scratch = Sys.argv.(2) in
