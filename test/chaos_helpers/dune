@@ -1,3 +1,11 @@
 (library
  (name chaos_helpers)
- (libraries eio eio.mock eio_main eio-fs.mem eio-fs.chaos optint cstruct))
+ (libraries
+  eio
+  eio.mock
+  eio_main
+  eio-fs
+  eio-fs.mem
+  eio-fs.chaos
+  optint
+  cstruct))

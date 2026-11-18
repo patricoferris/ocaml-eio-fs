@@ -86,7 +86,9 @@ let fsync ~sw env =
 
 (* fsync(2) through a handle open for reading only. *)
 let fsync_ro ~sw env =
-  Eio_fs.Sync.Barrier.(sync_file portable) (P.open_in ~sw P.(env#fs / "f"))
+  match Eio_fs.Sync.file_barrier (P.open_in ~sw P.(env#fs / "f")) with
+  | Some sync -> sync ~full:false
+  | None -> failwith "a read-only handle registers no barrier"
 
 let dirsync ~sw:_ env = Eio.Path.sync_dir env#fs
 

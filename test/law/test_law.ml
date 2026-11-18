@@ -646,9 +646,12 @@ let rec exec side ~sw step =
   | File_sync f -> (
       match side.files.(f) with
       | None -> "no file"
-      | Some (file, _) ->
-          Eio_fs.Sync.Barrier.sync_file Eio_fs.Sync.Barrier.portable file;
-          "ok")
+      | Some (file, _) -> (
+          match Eio_fs.Sync.file_barrier file with
+          | Some sync ->
+              sync ~full:false;
+              "ok"
+          | None -> exec side ~sw (Fsync f)))
   | Truncate (f, n) ->
       on_write side f
         {

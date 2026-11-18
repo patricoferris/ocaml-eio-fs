@@ -21,6 +21,11 @@ let contents file =
   Eio.File.pread_exact file ~file_offset:(i63 0) [ buf ];
   Cstruct.to_string buf
 
+let sync_read_only file =
+  match Eio_fs.Sync.file_barrier file with
+  | Some sync -> sync ~full:false
+  | None -> invalid_arg "sync_read_only: the file registers no barrier"
+
 let with_crash ctl fn =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->

@@ -50,7 +50,7 @@ let test_posix_needs_no_registration () =
   Eio.Path.mkdir ~perm:0o755 (fs / dir);
   Fun.protect ~finally:(fun () -> Eio.Path.rmtree ~missing_ok:true (fs / dir))
   @@ fun () ->
-  Eio_fs.Sync.Barrier.(sync_dir portable) (fs / dir);
+  Eio.Path.sync_dir (fs / dir);
   Eio_fs.Sync.publish ~max_bytes:1L
     (fs / dir / "cfg")
     (fun f -> Eio.Flow.copy_string "x" f);
@@ -83,9 +83,7 @@ let test_publish_honours_perm_under_umask () =
 let test_unissuable_barrier_raises () =
   Eio_main.run @@ fun env ->
   let fs = Eio.Stdenv.fs env in
-  match
-    Eio_fs.Sync.Barrier.(sync_dir portable) (fs / "/no-such-dir-for-eio-fs-sync")
-  with
+  match Eio.Path.sync_dir (fs / "/no-such-dir-for-eio-fs-sync") with
   | () -> Alcotest.fail "sync_dir accepted a missing directory"
   | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> ()
 
@@ -244,81 +242,6 @@ let test_publish_durability_flag () =
     "non-durable publish lost" true
     (Eio.Path.kind ~follow:false Eio.Path.(post / "fast") = `Not_found)
 
-(* The portable file barrier answers through a registered [File_sync] alone, never also
-   through the file's own sync: the wrapper below counts both. *)
-module Counting_file = struct
-  type t = {
-    base : Eio.File.rw_ty Eio.Resource.t;
-    registered : int ref;  (** barriers answered through [File_sync]. *)
-    delegated : int ref;  (** barriers that reached the file's own sync. *)
-  }
-
-  let read_methods = []
-  let single_read t buf = Eio.Flow.single_read t.base buf
-  let pread t ~file_offset bufs = Eio.File.pread t.base ~file_offset bufs
-  let stat t = Eio.File.stat t.base
-  let seek t off cmd = Eio.File.seek t.base off cmd
-  let close t = Eio.Resource.close t.base
-  let single_write t bufs = Eio.Flow.single_write t.base bufs
-  let copy t ~src = Eio.Flow.Pi.simple_copy ~single_write t ~src
-
-  let pwrite t ~file_offset bufs =
-    Eio.File.pwrite_single t.base ~file_offset bufs
-
-  let sync t =
-    incr t.delegated;
-    Eio.File.sync t.base
-
-  let truncate t len = Eio.File.truncate t.base len
-end
-
-let counting_file ~register base =
-  let state = Counting_file.{ base; registered = ref 0; delegated = ref 0 } in
-  let registration =
-    if register then
-      [
-        Eio.Resource.H
-          ( Eio_fs.Sync.File_sync,
-            fun (t : Counting_file.t) ~full:_ -> incr t.registered );
-      ]
-    else []
-  in
-  let file : Eio.File.rw_ty Eio.Resource.t =
-    Eio.Resource.T
-      ( state,
-        Eio.Resource.handler
-          (registration
-          @ Eio.Resource.bindings (Eio.File.Pi.rw (module Counting_file))) )
-  in
-  (file, state)
-
-let with_in_memory_file fn =
-  Eio_mock.Backend.run @@ fun () ->
-  Eio_fs_mem.run @@ fun env ->
-  Eio.Switch.run @@ fun sw ->
-  fn (Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (env#fs / "f"))
-
-let test_sync_file_answers_through_the_registration () =
-  with_in_memory_file @@ fun base ->
-  let file, state = counting_file ~register:true base in
-  Eio_fs.Sync.Barrier.(sync_file portable) file;
-  Alcotest.(check int)
-    "the registration answered the barrier" 1
-    !(state.Counting_file.registered);
-  Alcotest.(check int)
-    "and nothing reached the file behind it" 0
-    !(state.Counting_file.delegated)
-
-(* A file whose backend registers no [File_sync] is synced with its own
-   sync. *)
-let test_sync_file_without_a_registration_syncs_the_file () =
-  with_in_memory_file @@ fun base ->
-  let file, state = counting_file ~register:false base in
-  Eio_fs.Sync.Barrier.(sync_file portable) file;
-  Alcotest.(check int)
-    "the file's own sync is the barrier" 1
-    !(state.Counting_file.delegated)
-
 (* What the registration is for. Under the crash model a file's writes stay
    un-synced until the model sees a barrier on that file, and [Drop_unsynced]
    loses every un-synced write. Bytes barriered with the portable barrier must
@@ -336,7 +259,7 @@ let test_sync_file_reaches_the_crash_model () =
         Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (fs / "image")
       in
       Eio.Flow.copy_string "payload" file;
-      Eio_fs.Sync.Barrier.(sync_file portable) file);
+      Eio.File.sync file);
   (* The name the bytes live under is the metadata journal's business, as
      fsync(2) divides them, so the entry takes the directory barrier. *)
   Eio.Path.sync_dir fs;
@@ -407,13 +330,8 @@ let test_barrier_is_used () =
   let module Counting = Eio_fs.Sync.Barrier.Make (struct
     type t = unit
 
-    let sync_file () file =
-      incr files;
-      Eio_fs.Sync.Barrier.(sync_file portable) file
-
-    let sync_dir () dir =
-      incr dirs;
-      Eio_fs.Sync.Barrier.(sync_dir portable) dir
+    let sync_file () _ = incr files
+    let sync_dir () _ = incr dirs
   end) in
   let barrier = Counting.v () in
   let issued name ~files:f ~dirs:d fn =
@@ -1003,10 +921,6 @@ let suite =
         test_publish_enforces_byte_limit;
       Alcotest.test_case "publish durability flag" `Quick
         test_publish_durability_flag;
-      Alcotest.test_case "file barrier answers through the registration" `Quick
-        test_sync_file_answers_through_the_registration;
-      Alcotest.test_case "file barrier without a registration syncs the file"
-        `Quick test_sync_file_without_a_registration_syncs_the_file;
       Alcotest.test_case "file barrier reaches the crash model" `Quick
         test_sync_file_reaches_the_crash_model;
       Alcotest.test_case "file cleanup retains producer backtrace" `Quick

@@ -9,11 +9,12 @@
     drive's cache, and {!File_sync} for a file barrier. A {!Barrier.t} is the
     pair of barriers a protocol issues: {!Barrier.portable} by default,
     [Eio_fs_unix.barrier] for the platform's strongest, {!Barrier.none} for
-    none; {!Barrier.sync_file} and {!Barrier.sync_dir} issue one by hand.
-    {!publish} is the protocol itself, under a mandatory byte ceiling
-    ({!Limit_exceeded}). A publication is atomic on any backend, and durable
-    with the barriers it is given: on macOS the portable ones stop in the
-    drive's cache, and only [Eio_fs_unix.barrier] goes through it.
+    none. By hand, {!Eio.File.sync} and {!Eio.Path.sync_dir} issue the portable
+    barriers, and [Eio_fs_unix.sync_file] and [Eio_fs_unix.sync_dir] the
+    platform's strongest. {!publish} is the protocol itself, under a mandatory
+    byte ceiling ({!Limit_exceeded}). A publication is atomic on any backend,
+    and durable with the barriers it is given: on macOS the portable ones stop
+    in the drive's cache, and only [Eio_fs_unix.barrier] goes through it.
 
     {!Process_local} declares whether any opener of a backend's files can exist
     outside this process, and {!Lock} is the exclusion a caller supplies. This
@@ -109,16 +110,6 @@ module Barrier : sig
 
   val none : t
   (** [none] issues no barrier: a publication keeps only its atomicity. *)
-
-  val sync_file : t -> _ Eio.File.ro -> unit
-  (** [sync_file t file] is [t]'s barrier over [file]'s data.
-
-      @raise Invalid_argument
-        if [t] is {!portable} and [file]'s backend registers no {!File_sync} and
-        its handle has no sync. *)
-
-  val sync_dir : t -> _ Eio.Path.t -> unit
-  (** [sync_dir t dir] is [t]'s barrier over [dir]'s entries. *)
 end
 
 (** {1:dirs Directories} *)

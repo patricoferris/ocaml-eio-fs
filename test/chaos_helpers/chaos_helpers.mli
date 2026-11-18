@@ -23,6 +23,10 @@ val with_chaos :
 val contents : [> Eio.File.ro_ty ] Eio.File.ro -> string
 (** [contents file] is the whole of [file], read through the handle. *)
 
+val sync_read_only : _ Eio.File.ro -> unit
+(** [sync_read_only file] is fsync(2) through a handle open for reading only:
+    the {!Eio_fs.Sync.File_sync} barrier [file] registers, not full. *)
+
 val with_crash :
   Eio_fs_chaos.Private.Crash.t ->
   (raw:Eio.Fs.dir_ty Eio.Path.t ->

@@ -295,8 +295,7 @@ let test_crash_inode_identity () =
   let ctl = Crash.v () in
   let fs = Crash.wrap ctl root in
   Eio.Path.chmod ~follow:false ~perm:0o600 (fs / "f");
-  Eio.Switch.run (fun sw ->
-      Eio_fs.Sync.Barrier.(sync_file portable) (Eio.Path.open_in ~sw (fs / "f")));
+  Eio.Switch.run (fun sw -> sync_read_only (Eio.Path.open_in ~sw (fs / "f")));
   Eio.Path.chmod ~follow:false ~perm:0o600 (fs / "g");
   Eio.Path.rename (fs / "g") (fs / "h");
   Eio.Path.with_open_out ~create:`Never (fs / "h") Eio.File.sync;

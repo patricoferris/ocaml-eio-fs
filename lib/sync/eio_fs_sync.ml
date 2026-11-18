@@ -31,7 +31,7 @@ let sync_any_file (Eio.Resource.T (v, ops) as file) =
   | None, Some (module W) -> W.sync v
   | None, None ->
       invalid_arg
-        "Eio_fs.Sync.Barrier.sync_file: file has a backend with no sync, and \
+        "Eio_fs.Sync: the file to sync has a backend with no sync, and \
          registers no File_sync barrier"
 
 let can_sync (Eio.Resource.T (_, ops) as file) =

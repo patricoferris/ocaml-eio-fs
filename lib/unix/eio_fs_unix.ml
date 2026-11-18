@@ -212,12 +212,18 @@ let sync_dir ((res, path) as p : _ Eio.Path.t) =
    one the wrapper never saw. A file opened for reading only, as a published
    generation's are, carries its descriptor all the same; one with neither a
    registration nor a descriptor takes the portable barrier. *)
-let sync_file file =
+let sync_file (Eio.Resource.T (v, ops) as file) =
   match Eio_fs_sync.file_barrier file with
   | Some barrier -> barrier ~full:true
   | None -> (
       match Eio_unix.Resource.fd_opt file with
-      | None -> Eio_fs_sync.Barrier.(sync_file portable) file
+      | None -> (
+          match Eio.Resource.get_opt ops Eio.File.Pi.Write with
+          | Some (module W) -> W.sync v
+          | None ->
+              invalid_arg
+                "Eio_fs_unix.sync_file: file has no descriptor, no sync and no \
+                 Eio_fs.Sync.File_sync barrier")
       | Some fd ->
           Eio_unix.Fd.use_exn "eio-fs-sync-file" fd @@ fun fd ->
           eio_unix_errors @@ fun () ->

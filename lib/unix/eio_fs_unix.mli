@@ -45,10 +45,11 @@ val sync_file : _ Eio.File.ro -> unit
     before any descriptor [file] carries, so a model of power loss observes the
     barrier; a POSIX file, one open for reading only included, is
     {!full_fsync}ed on its descriptor, off the calling fiber's thread. A file
-    with neither takes [Eio_fs.Sync.Barrier.(sync_file portable)], and raises as
-    it does.
+    with neither is synced by its own {!Eio.File.sync}.
 
-    @raise Eio.Io as [fsync] fails, or as a registered barrier raises. *)
+    @raise Eio.Io as [fsync] fails, or as a registered barrier raises.
+    @raise Invalid_argument
+      if [file] has no registered barrier, no descriptor and no sync. *)
 
 val barrier : Eio_fs.Sync.Barrier.t
 (** [barrier] is {!sync_file} and {!sync_dir} as the barriers a publication of

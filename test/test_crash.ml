@@ -1039,7 +1039,7 @@ let test_crash_sync_through_another_spelling () =
   overwrite (fs / "f") "data";
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_in ~sw (fs / "./f") in
-      Eio_fs.Sync.Barrier.(sync_file portable) h);
+      sync_read_only h);
   let post = Crash.post_crash ctl in
   Alcotest.(check string) "durable" "data" (Eio.Path.load (post / "f"))
 
@@ -1066,7 +1066,7 @@ let test_crash_sync_through_a_directory_handle () =
   write_new ~sync:true (fs / "d" / "f") "data";
   Eio.Switch.run (fun sw ->
       let h = Eio.Path.open_in ~sw (fs / "d") in
-      Eio_fs.Sync.Barrier.(sync_file portable) h);
+      sync_read_only h);
   let post = Crash.post_crash ctl in
   Alcotest.(check string)
     "the entry is durable" "data"
