@@ -2,11 +2,11 @@
 # REGEN=1; test/provenance checks it.
 generator: test/interop/stat/scripts/generate.sh
 regenerate: REGEN=1 dune build @test/interop/stat/regen-traces
-revision: a6a35ed5b6be9458e993c6763dc969071a97a4cf
-recorded: 2026-11-18T13:47:59Z
+revision: 137da70f537a3ad1d378594d7a554f456ffa59c8
+recorded: 2026-11-18T14:51:13Z
 uid: 501
 host: Darwin 27.3.0 arm64
-eio_posix: 1.7
+eio_posix: 1.7 from git+https://github.com/ocaml-multicore/eio.git#v1.7
 docker: 29.8.2
 linux.image: ocaml/opam@sha256:d161f099e5d053fe198accc09fda214c6275289570847fd906f9c65f862bf460
 linux: Linux 7.2.12-orbstack-00394-gbecdd6130068 #1 SMP PREEMPT Thu Oct 22 22:17:17 UTC 2026 aarch64
