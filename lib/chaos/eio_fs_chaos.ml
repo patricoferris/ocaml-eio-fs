@@ -63,13 +63,13 @@ let device ?os ?user ?(under = []) ?budget ?seed ?replay dir =
       (Device.program ?os ?user dir)
 
 module Private = struct
-  let check_faults ?budget ?seed ?replay ?os ?setup run =
-    Eio_chaos.Private.run ~name ~passes:[ Errors ] ?budget ?seed ?replay ?os
+  let check_faults ?os ?budget ?seed ?replay ?setup run =
+    Eio_chaos.Private.run ~name ~passes:[ Errors ] ?os ?budget ?seed ?replay
       ?setup
       [ disk () ]
       run
 
-  let check_cuts ?budget ?seed ?replay ?os ?setup run ~recover =
+  let check_cuts ?os ?budget ?seed ?replay ?setup run ~recover =
     let acked = ref [] in
     let app env =
       if Eio_chaos.Private.restarted env then
@@ -81,7 +81,7 @@ module Private = struct
           env
       end
     in
-    Eio_chaos.Private.run ~name ~passes:[ Cuts ] ?budget ?seed ?replay ?os
+    Eio_chaos.Private.run ~name ~passes:[ Cuts ] ?os ?budget ?seed ?replay
       ?setup
       [ disk () ]
       app

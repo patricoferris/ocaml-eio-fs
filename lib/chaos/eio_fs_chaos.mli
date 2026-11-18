@@ -706,20 +706,20 @@ module Private : sig
       [os] differ from those {!val-device} expects. *)
 
   val check_faults :
+    ?os:[< Eio_chaos.os ] ->
     ?budget:int ->
     ?seed:int ->
     ?replay:string ->
-    ?os:[< Eio_chaos.os ] ->
     ?setup:(env -> unit) ->
     (env -> unit) ->
     unit
   (** [check_faults] is {!run} with its errors alone: no power cut. *)
 
   val check_cuts :
+    ?os:[< Eio_chaos.os ] ->
     ?budget:int ->
     ?seed:int ->
     ?replay:string ->
-    ?os:[< Eio_chaos.os ] ->
     ?setup:(env -> unit) ->
     (ack:('a -> unit) -> env -> unit) ->
     recover:(acked:'a list -> env -> unit) ->
