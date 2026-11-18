@@ -7,7 +7,7 @@ Each test gets a fresh filesystem of its own, used through the ordinary
 `Eio.Path` API, so the code under test does not change.
 `Eio_fs_chaos.run` is chaos engineering on one machine: it runs a program
 again and again, each time with a different filesystem error or power cut,
-and checks that it starts again on what the failure left
+and checks that it starts again on what the fault left
 ([How it works](#how-it-works)). `Eio_fs_chaos.device` checks that an Eio
 filesystem answers as Linux or macOS does.
 
@@ -48,11 +48,29 @@ The `env` has the capabilities of `Eio.Stdenv`, each simulated
 ([How it works](#how-it-works)), so a `main` written against `Eio.Stdenv`
 runs unchanged. `Eio_fs_chaos.disk ()` is the same disk as a part of
 [eio-chaos](https://github.com/samoht/ocaml-eio-chaos), to test a program on
-it and other simulated devices at once: a program that also talks to a peer
-is checked with
-`Eio_chaos.run [ Eio_fs_chaos.disk (); Eio_net_chaos.network () ] main`,
-whose runs fail the disk, the network of
-[eio-net](https://github.com/samoht/ocaml-eio-net), or both.
+it and other simulated devices at once. This program saves a file, then
+serves it to a client, with a timeout so that a silent peer does not hang
+it. Its runs fail the disk, the network of
+[eio-net](https://github.com/samoht/ocaml-eio-net), or both:
+
+```ocaml
+# let serve (env : Eio_fs_chaos.env) =
+    let file = Eio.Path.(env#fs / "log") in
+    Eio.Path.save ~create:(`Or_truncate 0o644) file "up";
+    Eio.Switch.run @@ fun sw ->
+    let addr = `Tcp (Eio.Net.Ipaddr.V4.loopback, 8080) in
+    let l = Eio.Net.listen ~reuse_addr:true ~backlog:1 ~sw env#net addr in
+    Eio.Fiber.fork_daemon ~sw (fun () ->
+        Eio.Net.run_server l ~on_error:ignore (fun flow _ ->
+            Eio.Flow.copy_string (Eio.Path.load file) flow));
+    let get () = Eio.Flow.read_all (Eio.Net.connect ~sw env#net addr) in
+    match Eio.Time.with_timeout env#clock 5.0 (fun () -> Ok (get ())) with
+    | Ok _ | Error `Timeout -> ()
+    | exception (Eio.Io _ | End_of_file) -> ();;
+val serve : Eio_fs_chaos.env -> unit = <fun>
+# Eio_chaos.run [ Eio_fs_chaos.disk (); Eio_net_chaos.network () ] serve;;
+- : unit = ()
+```
 
 The first run has no fault. Each later run starts from the same state and
 meets one fault:
@@ -99,10 +117,11 @@ val save : [> Eio.Fs.dir_ty ] Eio.Path.t -> string -> unit = <fun>
 ```
 
 The save above does not sync its directory, so a power cut loses the
-rename. A failure report gives the fault, the operations of the run, what
-the program printed, and one line to paste that runs that case again; to
-find it, a replay may run the program a few times first, and the failing run
-is the last.
+rename. `Eio_fs_sync.save` writes a file atomically and syncs its directory
+too, and `Eio.Path.sync_dir` syncs a directory by hand. A report gives the
+fault, the operations of the run, what the program printed, and one line to
+paste that runs that case again; to find it, a replay may run the program a
+few times first, and the failing run is the last.
 
 Faults fall only on the operations the first run makes, and that run starts
 on an empty filesystem. Code that runs only at a restart, such as the read
@@ -183,20 +202,24 @@ those lines with `(eio_posix differs here too)`.
 
 ## How it works
 
-**Chaos engineering, on one machine.** Chaos engineering runs a system,
-injects the failures the real world produces, and tries to disprove a
-hypothesis about its steady state. `run` does this in one process,
-deterministically:
+### Chaos engineering, on one machine
+
+`Eio_fs_chaos.run` is the check of
+[eio-chaos](https://github.com/samoht/ocaml-eio-chaos#chaos-engineering-on-one-machine)
+on the disk alone, and its README says how the faults are picked and what a
+pass means. On the disk:
 
 - **steady state:** the program returns, and when it is restarted on what a
-  failure left, it starts and works again, with every file it acknowledged
+  fault left, it starts and works again, with every file it acknowledged
   intact;
-- **failures:** each failure the real kernel can produce at each call the
+- **faults:** each fault the real kernel can produce at each call the
   program made, and a power cut;
-- **result:** either the hypothesis held for every failure tried, or the
-  first counter-example and one line that replays it.
+- **result:** either the hypothesis held for every fault tried, or the first
+  counter-example and one line that replays it.
 
-**What is simulated.** The program receives each device as an Eio
+### What is simulated
+
+The program receives each device as an Eio
 capability, through `env`. The package replaces each capability with a
 simulated one; the program is not changed.
 
@@ -215,13 +238,13 @@ next. Without hermetic, a direct call escapes the check, and when it makes
 two runs differ, the report names the first difference and its likely
 cause. The same holds for a filesystem under `device`.
 
-**What is guaranteed.**
+### What is guaranteed
 
 1. With no fault, the simulated filesystem answers each call as Linux or
    macOS does through Eio, as recorded on real kernels; the Limitations list
    the known differences.
-2. Only failures the real kernel can return at that call are injected, and a
-   power cut leaves only the states the crash rules allow. So every failure
+2. Only faults the real kernel can return at that call are injected, and a
+   power cut leaves only the states the crash rules allow. So every fault
    reported can happen on a real machine.
 3. Completeness is not guaranteed. Faults fall only on the calls the program
    made, at most two per run, and a power cut leaves only the crash states of
@@ -263,9 +286,15 @@ across power cuts, or about on-disk layout.
   it. The rest follows ext4, so a cut may leave a state APFS would not
   ([`Eio_fs_chaos.Power`](lib/chaos/eio_fs_chaos.mli)).
 
+## Related work
+
+`device` checks a filesystem against recordings of real kernels, as
+[SibylFS](https://sibylfs.github.io/) checked real filesystems against a
+model of POSIX. The litmus tests of the power cut port the crash models of
+[Ferrite](https://github.com/uwplse/ferrite).
+
 ## Licence
 
 ISC, see [LICENSE.md](LICENSE.md). The in-memory filesystem started as Patrick
 Ferris's [eio_mem](https://git.sirref.org/eio_mem), and `eio-fs.path` adapts
-its modification of [fpath](https://github.com/dbuenzli/fpath). The tests
-port the crash models of [Ferrite](https://github.com/uwplse/ferrite).
+its modification of [fpath](https://github.com/dbuenzli/fpath).

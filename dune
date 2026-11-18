@@ -4,4 +4,12 @@
 
 (mdx
  (files README.md)
- (libraries eio-fs eio-fs.chaos eio-chaos eio eio_main cstruct))
+ (libraries
+  eio-fs
+  eio-fs.chaos
+  eio-net.chaos
+  eio-chaos
+  eio
+  eio.core
+  eio_main
+  cstruct))
