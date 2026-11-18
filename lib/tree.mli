@@ -4,8 +4,7 @@
       its links ({!links}), change its modes ({!grant_owner}, {!revoke_writes}),
       copy its files with other links apart ({!unshare}) or format it
       ({!pp_tree});
-    - the names a directory holds ({!entries}), and the removal of a chain of
-      empty directories ({!remove_empty});
+    - the removal of a chain of empty directories ({!remove_empty});
     - what a path is called outside the program ({!name}), and whether two paths
       name one file ({!same_file}). *)
 
@@ -46,12 +45,6 @@ val revoke_writes : _ Eio.Path.t -> unit
     same mode. It costs a stat per entry and a listing per directory.
 
     @raise Eio.Io when an entry cannot be read or changed. *)
-
-val entries : _ Eio.Path.t -> string list
-(** [entries dir] is [Eio.Path.read_dir dir], and [[]] where nothing stands at
-    [dir]: a directory not made yet reads as an empty one.
-
-    @raise Eio.Io when [dir] cannot be listed for another reason. *)
 
 val remove_empty : 'a Eio.Path.t list -> (unit, 'a Eio.Path.t * exn) result
 (** [remove_empty dirs] removes each directory of [dirs] in turn while it is

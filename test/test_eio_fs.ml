@@ -73,18 +73,6 @@ let test_same_file () =
   | _ -> Alcotest.fail "a failed stat was not raised"
   | exception Eio.Io _ -> ()
 
-(* Nothing standing at a directory lists as no name; one standing lists its
-   own. *)
-let test_entries () =
-  with_fs @@ fun fs ->
-  Alcotest.(check (list string)) "absent" [] (Eio_fs.Tree.entries (fs / "none"));
-  Eio.Path.mkdir ~perm:0o700 (fs / "d");
-  write fs "d/a" "";
-  write fs "d/b" "";
-  Alcotest.(check (list string))
-    "present" [ "a"; "b" ]
-    (List.sort String.compare (Eio_fs.Tree.entries (fs / "d")))
-
 (* The chain is removed nearest first while empty: the first directory that
    holds anything ends it and stays, with those after it; one that is gone
    ends it too. *)
@@ -792,7 +780,6 @@ let suite =
       Alcotest.test_case "two roots are distinct files" `Quick
         test_v_roots_are_distinct_files;
       Alcotest.test_case "same_file" `Quick test_same_file;
-      Alcotest.test_case "entries" `Quick test_entries;
       Alcotest.test_case "remove_empty" `Quick test_remove_empty;
       Alcotest.test_case "links" `Quick test_links;
       Alcotest.test_case "unshare" `Quick test_unshare;

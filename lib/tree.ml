@@ -102,11 +102,6 @@ let same_file a b =
   | Some a, Some b -> Int64.equal a.dev b.dev && Int64.equal a.ino b.ino
   | _ -> false
 
-let entries dir =
-  match Eio.Path.read_dir dir with
-  | names -> names
-  | exception Eio.Io (Eio.Fs.E (Not_found _), _) -> []
-
 (* A failed rmdir(2) is read again rather than by its errno, which POSIX
    lets be EEXIST or ENOTEMPTY for a directory that holds anything. *)
 let rec remove_empty = function
