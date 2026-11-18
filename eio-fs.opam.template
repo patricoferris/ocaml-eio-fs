@@ -2,6 +2,6 @@ available: os != "win32"
 # eio-chaos is not on opam yet: drop this pin once it is released.
 # eio-net, which the tests use, is not on opam yet: drop its pin once it is.
 pin-depends: [
-  ["eio-chaos.dev" "git+https://github.com/samoht/ocaml-eio-chaos.git#6c07eac4a94475334d8afb21d5e4d05de8676dbf"]
-  ["eio-net.dev" "git+https://github.com/samoht/ocaml-eio-net.git#e20f4dc12d1dda3e0892f208ee80d1b91df1d052"]
+  ["eio-chaos.0.1.0" "git+https://github.com/samoht/ocaml-eio-chaos.git#b6b7c5cbb2e9c82e487a33eef553f3506211ae5d"]
+  ["eio-net.0.1.0" "git+https://github.com/samoht/ocaml-eio-net.git#db392a72758537f9ab8a8417b7d7e01a0e207372"]
 ]

@@ -7,7 +7,7 @@ eio-fs is an in-memory filesystem for Eio, to test code under
 filesystem errors and power cuts. Each test gets a fresh filesystem of its
 own, used through the ordinary Eio.Path API, so the code under test does not
 change. Eio_fs_chaos.run runs a program again and again, each time with a
-different filesystem error or power cut, and restarts it on what the failure
+different filesystem error or power cut, and restarts it on what the fault
 left. Eio_fs_chaos.device checks that an Eio filesystem answers as Linux or
 macOS does."""
 maintainer: ["Thomas Gazagnaire <thomas@gazagnaire.org>"]
@@ -17,7 +17,7 @@ authors: [
   "Patrick Ferris"
 ]
 license: "ISC"
-tags: ["eio" "filesystem" "in-memory"]
+tags: ["eio" "test" "chaos" "filesystem" "in-memory"]
 homepage: "https://github.com/samoht/ocaml-eio-fs"
 bug-reports: "https://github.com/samoht/ocaml-eio-fs/issues"
 depends: [
@@ -29,7 +29,7 @@ depends: [
   "cstruct" {>= "6.2.0"}
   "optint"
   "mtime"
-  "eio-chaos"
+  "eio-chaos" {>= "0.1.0" & < "0.2.0"}
   "uucp"
   "uunf"
   "cmdliner" {>= "1.1.0"}
@@ -38,7 +38,7 @@ depends: [
   "mdx" {with-test & >= "2.3.0"}
   "alcotest" {with-test & >= "1.7.0"}
   "alcobar" {with-test}
-  "eio-net" {with-test}
+  "eio-net" {with-test & >= "0.1.0" & < "0.2.0"}
   "eio_posix" {with-test & >= "1.7"}
   "odoc" {with-doc}
 ]
@@ -62,6 +62,6 @@ available: os != "win32"
 # eio-chaos is not on opam yet: drop this pin once it is released.
 # eio-net, which the tests use, is not on opam yet: drop its pin once it is.
 pin-depends: [
-  ["eio-chaos.dev" "git+https://github.com/samoht/ocaml-eio-chaos.git#6c07eac4a94475334d8afb21d5e4d05de8676dbf"]
-  ["eio-net.dev" "git+https://github.com/samoht/ocaml-eio-net.git#e20f4dc12d1dda3e0892f208ee80d1b91df1d052"]
+  ["eio-chaos.0.1.0" "git+https://github.com/samoht/ocaml-eio-chaos.git#b6b7c5cbb2e9c82e487a33eef553f3506211ae5d"]
+  ["eio-net.0.1.0" "git+https://github.com/samoht/ocaml-eio-net.git#db392a72758537f9ab8a8417b7d7e01a0e207372"]
 ]

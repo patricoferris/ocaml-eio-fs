@@ -18,13 +18,13 @@
 (package
  (name eio-fs)
  (synopsis "In-memory filesystem for Eio, to test code under filesystem errors and power cuts")
- (tags (eio filesystem in-memory))
+ (tags (eio test chaos filesystem in-memory))
  (description
   "eio-fs is an in-memory filesystem for Eio, to test code under
 filesystem errors and power cuts. Each test gets a fresh filesystem of its
 own, used through the ordinary Eio.Path API, so the code under test does not
 change. Eio_fs_chaos.run runs a program again and again, each time with a
-different filesystem error or power cut, and restarts it on what the failure
+different filesystem error or power cut, and restarts it on what the fault
 left. Eio_fs_chaos.device checks that an Eio filesystem answers as Linux or
 macOS does.")
  (depends
@@ -35,7 +35,7 @@ macOS does.")
   (cstruct (>= 6.2.0))
   optint
   mtime
-  eio-chaos
+  (eio-chaos (and (>= 0.1.0) (< 0.2.0)))
   uucp
   uunf
   (cmdliner (>= 1.1.0))
@@ -44,5 +44,5 @@ macOS does.")
   (mdx (and :with-test (>= 2.3.0)))
   (alcotest (and :with-test (>= 1.7.0)))
   (alcobar :with-test)
-  (eio-net :with-test)
+  (eio-net (and :with-test (>= 0.1.0) (< 0.2.0)))
   (eio_posix (and :with-test (>= 1.7)))))
