@@ -38,22 +38,22 @@ val sync_dir : _ Eio.Path.t -> unit
       if [dir] cannot be opened for its barrier, as [fsync] fails, or as a
       registered barrier raises. *)
 
-val sync_file : _ Eio.File.rw -> unit
+val sync_file : _ Eio.File.ro -> unit
 (** [sync_file file] makes [file]'s data durable: the barrier a commit protocol
     issues over the bytes it wrote. A backend that registers a
     {!Eio_fs.Sync.File_sync} answers through it, asked for a full barrier and
     before any descriptor [file] carries, so a model of power loss observes the
-    barrier; a plain POSIX file is {!full_fsync}ed on its descriptor, off the
-    calling fiber's thread. A file with neither takes {!Eio_fs.Sync.sync_file},
-    and raises as it does.
+    barrier; a POSIX file, one open for reading only included, is
+    {!full_fsync}ed on its descriptor, off the calling fiber's thread. A file
+    with neither takes [Eio_fs.Sync.Barrier.(sync_file portable)], and raises as
+    it does.
 
     @raise Eio.Io as [fsync] fails, or as a registered barrier raises. *)
 
 val barrier : Eio_fs.Sync.Barrier.t
 (** [barrier] is {!sync_file} and {!sync_dir} as the barriers a publication of
     {!Eio_fs.Sync} issues: pass it as [~barrier] for a publication that is
-    durable on Darwin through the drive's cache. A file open for reading only is
-    synced through its descriptor too. *)
+    durable on Darwin through the drive's cache. *)
 
 (** {1:capacity Capacity} *)
 

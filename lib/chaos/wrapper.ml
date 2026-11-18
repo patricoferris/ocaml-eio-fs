@@ -98,7 +98,8 @@ let close_resource r =
    rebuilt from its bindings so reaches no operation the wrapper does not
    implement, and so no operation that steps around the schedule or the
    journal. It registers [Eio_fs_sync.File_sync], bound to its own sync, so a
-   barrier issued through [Eio_fs_sync.sync_file] reaches the wrapper.
+   barrier issued through [Eio_fs_sync.Barrier.sync_file] reaches the
+   wrapper.
 
    The base file stays reachable through [Eio_fs_internal.Base_file] alone,
    which no library outside this package can name: eio-fs.unix takes the

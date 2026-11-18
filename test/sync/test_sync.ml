@@ -244,7 +244,7 @@ let test_publish_durability_flag () =
     "non-durable publish lost" true
     (Eio.Path.kind ~follow:false Eio.Path.(post / "fast") = `Not_found)
 
-(* [sync_file] answers through a registered [File_sync] alone, never also
+(* The portable file barrier answers through a registered [File_sync] alone, never also
    through the file's own sync: the wrapper below counts both. *)
 module Counting_file = struct
   type t = {
@@ -301,7 +301,7 @@ let with_in_memory_file fn =
 let test_sync_file_answers_through_the_registration () =
   with_in_memory_file @@ fun base ->
   let file, state = counting_file ~register:true base in
-  Eio_fs.Sync.sync_file file;
+  Eio_fs.Sync.Barrier.(sync_file portable) file;
   Alcotest.(check int)
     "the registration answered the barrier" 1
     !(state.Counting_file.registered);
@@ -314,16 +314,17 @@ let test_sync_file_answers_through_the_registration () =
 let test_sync_file_without_a_registration_syncs_the_file () =
   with_in_memory_file @@ fun base ->
   let file, state = counting_file ~register:false base in
-  Eio_fs.Sync.sync_file file;
+  Eio_fs.Sync.Barrier.(sync_file portable) file;
   Alcotest.(check int)
     "the file's own sync is the barrier" 1
     !(state.Counting_file.delegated)
 
 (* What the registration is for. Under the crash model a file's writes stay
    un-synced until the model sees a barrier on that file, and [Drop_unsynced]
-   loses every un-synced write. Bytes barriered with [sync_file] must survive
-   the cut; had the barrier answered anywhere but through the registration the
-   model would have recorded none and the bytes would be gone. *)
+   loses every un-synced write. Bytes barriered with the portable barrier must
+   survive the cut; had the barrier answered anywhere but through the
+   registration the model would have recorded none and the bytes would be
+   gone. *)
 let test_sync_file_reaches_the_crash_model () =
   Eio_mock.Backend.run @@ fun () ->
   Eio_fs_mem.run @@ fun env ->
@@ -335,7 +336,7 @@ let test_sync_file_reaches_the_crash_model () =
         Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (fs / "image")
       in
       Eio.Flow.copy_string "payload" file;
-      Eio_fs.Sync.sync_file file);
+      Eio_fs.Sync.Barrier.(sync_file portable) file);
   (* The name the bytes live under is the metadata journal's business, as
      fsync(2) divides them, so the entry takes the directory barrier. *)
   Eio.Path.sync_dir fs;

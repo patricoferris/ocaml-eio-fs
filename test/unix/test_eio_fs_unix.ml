@@ -216,7 +216,7 @@ let test_sync_file_takes_the_descriptor_when_nothing_is_registered () =
   Eio.Switch.run @@ fun sw ->
   let base = Eio.Path.open_out ~sw ~create:(`If_missing 0o644) (dir / "f") in
   let file, _ = registered_file ~sw ~register:false base in
-  Eio_fs.Sync.sync_file file;
+  Eio_fs.Sync.Barrier.(sync_file portable) file;
   match Eio_fs_unix.sync_file file with
   | () ->
       Alcotest.fail

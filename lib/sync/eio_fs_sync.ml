@@ -23,11 +23,6 @@ type (_, _, _) Eio.Resource.pi +=
 let file_barrier (Eio.Resource.T (v, ops)) =
   Option.map (fun f ~full -> f v ~full) (Eio.Resource.get_opt ops File_sync)
 
-let sync_file file =
-  match file_barrier file with
-  | Some barrier -> barrier ~full:false
-  | None -> Eio.File.sync file
-
 (* Any handle on the file, read-only included: its registered barrier, else
    the write side the POSIX backends give every handle. *)
 let sync_any_file (Eio.Resource.T (v, ops) as file) =

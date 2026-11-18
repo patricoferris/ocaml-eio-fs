@@ -5,15 +5,15 @@
     power cut after it loses none of it: a file barrier covers a file's data,
     and a directory barrier the entries of a directory. [Eio.Path.sync_dir]
     issues the barrier a write-temporary-then-rename protocol needs. A backend
-    registers {!Dir_sync} for a barrier that may also go through the drive's
-    cache. {!sync_file} is the barrier over the bytes an entry names: a backend
-    registers {!File_sync}, otherwise the barrier is {!Eio.File.sync}.
+    registers {!Dir_sync} for a directory barrier that may also go through the
+    drive's cache, and {!File_sync} for a file barrier. A {!Barrier.t} is the
+    pair of barriers a protocol issues: {!Barrier.portable} by default,
+    [Eio_fs_unix.barrier] for the platform's strongest, {!Barrier.none} for
+    none; {!Barrier.sync_file} and {!Barrier.sync_dir} issue one by hand.
     {!publish} is the protocol itself, under a mandatory byte ceiling
-    ({!Limit_exceeded}), and issues the barriers a {!Barrier.t} names: the
-    portable ones above by default, [Eio_fs_unix.barrier] for the platform's
-    strongest, {!Barrier.none} for none. A publication is atomic on any backend,
-    and durable with the barriers it is given: on macOS the portable ones stop
-    in the drive's cache, and only [Eio_fs_unix.barrier] goes through it.
+    ({!Limit_exceeded}). A publication is atomic on any backend, and durable
+    with the barriers it is given: on macOS the portable ones stop in the
+    drive's cache, and only [Eio_fs_unix.barrier] goes through it.
 
     {!Process_local} declares whether any opener of a backend's files can exist
     outside this process, and {!Lock} is the exclusion a caller supplies. This
@@ -49,15 +49,6 @@ type (_, _, _) Eio.Resource.pi +=
 val file_barrier : 'a Eio.Resource.t -> (full:bool -> unit) option
 (** [file_barrier res] is [Some b] with [b] the file barrier [res] registers
     through {!File_sync}, and [None] if it registers none. *)
-
-val sync_file : _ Eio.File.rw -> unit
-(** [sync_file file] makes [file]'s data durable: the barrier a commit protocol
-    issues over the bytes it wrote. A backend that registers {!File_sync}
-    answers through it, whole and never alongside the file's own sync; otherwise
-    the barrier is {!Eio.File.sync}. [Eio_fs_unix.sync_file] also goes through
-    the drive's cache, for programs that link unix.
-
-    @raise Eio.Io as {!Eio.File.sync}, or as the registered barrier raises. *)
 
 (** {1:declarations Backend declarations} *)
 
@@ -110,10 +101,11 @@ module Barrier : sig
   end
 
   val portable : t
-  (** [portable] is {!sync_file}, on a file open for reading through the write
-      side the POSIX backends give every handle, and [Eio.Path.sync_dir]. On
-      Darwin both are [fsync(2)], which reaches the drive but not through its
-      cache. *)
+  (** [portable] is the barrier a backend registers through {!File_sync},
+      otherwise the file's own {!Eio.File.sync}, reached on a file open for
+      reading through the write side the POSIX backends give every handle; and
+      [Eio.Path.sync_dir]. On Darwin both are [fsync(2)], which reaches the
+      drive but not through its cache: [Eio_fs_unix.barrier] goes through it. *)
 
   val none : t
   (** [none] issues no barrier: a publication keeps only its atomicity. *)

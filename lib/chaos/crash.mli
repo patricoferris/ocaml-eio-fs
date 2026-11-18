@@ -213,8 +213,8 @@ val wrap : t -> _ Eio.Path.t -> [ `Close | Eio.Fs.dir_ty ] Eio.Path.t
 
     As for {!Wrapper.wrap}, the wrapper and what it opens hold [base] out of
     reach, so every write that reaches [base] through them enters the journal. A
-    file's writes stay unsynced until {!Eio.File.sync} or
-    {!Eio_fs_sync.sync_file} reaches it through the wrapper. Under {!Dropped} a
+    file's writes stay unsynced until {!Eio.File.sync} or a barrier of
+    {!Eio_fs_sync.Barrier} reaches it through the wrapper. Under {!Dropped} a
     crash rebuilds the tree from the model, so a change made outside the
     wrapper, by name or on the host descriptor [eio-fs.unix] locks, is gone from
     the post-crash image; under {!Kept} it stays.
