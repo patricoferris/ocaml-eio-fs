@@ -100,29 +100,35 @@ let test_sync_dir_lets_a_sibling_fiber_run () =
     Alcotest.failf "sibling fiber ran %d times during %d barriers, wanted %d"
       !turns barriers floor
 
-(* full_fsync accepts a regular file descriptor, including a read-only one. *)
-let test_full_fsync_file () =
+(* A host descriptor, a read-only one included, is synced as the file
+   [Eio_unix.File.import_ro] makes of it. *)
+let test_sync_file_of_a_descriptor () =
   with_real_dir @@ fun dir ->
   Eio.Path.save ~create:(`Or_truncate 0o644) (dir / "f") "x";
   let path = Eio.Path.native_exn (dir / "f") in
   let fd = Unix.openfile path [ Unix.O_RDONLY ] 0 in
   Fun.protect
     ~finally:(fun () -> Unix.close fd)
-    (fun () -> Eio_fs_unix.full_fsync fd)
+    (fun () ->
+      Eio.Switch.run @@ fun sw ->
+      Eio_fs_unix.sync_file (Eio_unix.File.import_ro ~sw ~close_unix:false fd))
 
-(* [full_fsync] syncs a real file (F_FULLFSYNC on Darwin, fsync elsewhere)
-   and raises the OS error on a closed descriptor. *)
-let test_full_fsync_surfaces_errors () =
+(* The barrier on a real file (F_FULLFSYNC on Darwin, fsync elsewhere) raises
+   the OS error of a descriptor closed beneath its file. *)
+let test_sync_file_surfaces_errors () =
   let path = Filename.temp_file "eio-fs-fullfsync" ".dat" in
   let fd = Unix.openfile path [ Unix.O_WRONLY ] 0o644 in
   let written = Unix.write_substring fd "durable bytes" 0 13 in
   Alcotest.(check int) "wrote the payload" 13 written;
-  Eio_fs_unix.full_fsync fd;
+  Eio_main.run @@ fun _ ->
+  Eio.Switch.run @@ fun sw ->
+  let file = Eio_unix.File.import_rw ~sw ~close_unix:false fd in
+  Eio_fs_unix.sync_file file;
   Unix.close fd;
   Sys.remove path;
-  match Eio_fs_unix.full_fsync fd with
-  | () -> Alcotest.fail "full_fsync accepted a closed descriptor"
-  | exception Unix.Unix_error (Unix.EBADF, _, _) -> ()
+  match Eio_fs_unix.sync_file file with
+  | () -> Alcotest.fail "the barrier accepted a closed descriptor"
+  | exception Eio.Io _ -> ()
 
 (* ---- the file barrier asks the registration before the descriptor ----
 
@@ -1159,9 +1165,10 @@ let suite =
         test_sync_file_under_the_crash_model_survives_the_cut;
       Alcotest.test_case "file barrier on a plain POSIX file" `Quick
         test_sync_file_on_a_plain_posix_file;
-      Alcotest.test_case "full_fsync on a file" `Quick test_full_fsync_file;
-      Alcotest.test_case "full_fsync surfaces errors" `Quick
-        test_full_fsync_surfaces_errors;
+      Alcotest.test_case "sync_file of a host descriptor" `Quick
+        test_sync_file_of_a_descriptor;
+      Alcotest.test_case "sync_file surfaces errors" `Quick
+        test_sync_file_surfaces_errors;
       Alcotest.test_case "statvfs reports raw block capacity" `Quick
         test_statvfs_reports_raw_block_capacity;
       Alcotest.test_case "clone_tree" `Quick test_clone_tree;

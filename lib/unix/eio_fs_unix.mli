@@ -2,11 +2,12 @@
 
     [Eio_fs_unix] is for a program that links unix anyway, beside the portable
     machinery of {!Eio_fs.Sync}. It holds the {{!barriers}barriers} that go
-    through the drive's cache (on Darwin {!full_fsync}, where [fsync] stops in
-    it), a filesystem's {{!capacity}capacity}, {{!clones}copy-on-write clones},
-    {{!trees}tree removal} in batches, {{!files}positioned reads and writes},
-    the {{!sparse}sparse map}, {{!rename}exclusive rename}, POSIX
-    {{!record_locks}record locks}, {{!lock_files}lock files} and their leases,
+    through the drive's cache (on Darwin [fcntl F_FULLFSYNC], where [fsync]
+    stops in it), a filesystem's {{!capacity}capacity},
+    {{!clones}copy-on-write clones}, {{!trees}tree removal} in batches,
+    {{!files}positioned reads and writes}, the {{!sparse}sparse map},
+    {{!rename}exclusive rename}, POSIX {{!record_locks}record locks},
+    {{!lock_files}lock files} and their leases,
     {{!val-xattrs}extended attributes}, {{!regular_files}regular files} read
     without waiting on a FIFO, {{!batches}batches} confined beneath a directory,
     and a root whose calls run {{!inline}on the calling thread}.
@@ -17,22 +18,17 @@
 
 (** {1:barriers Barriers} *)
 
-val full_fsync : Unix.file_descr -> unit
-(** [full_fsync fd] pushes [fd]'s data through to stable storage. On Darwin it
-    is [fcntl F_FULLFSYNC], falling back to [fsync] on a filesystem that refuses
-    it (SMB, exFAT); elsewhere it is [fsync].
-
-    @raise Unix.Unix_error as [fsync]. *)
-
 val sync_dir : _ Eio.Path.t -> unit
 (** [sync_dir dir] makes [dir]'s entries durable: the barrier a commit protocol
     issues after renaming a file into place. A backend that registers a
     {!Eio_fs.Sync.Dir_sync} answers through it, asked for a full barrier, so
-    [Eio_fs_chaos.Power] under [~os:`Macos] keeps what it commits; a plain POSIX
-    directory is opened and {!full_fsync}ed on the descriptor that open returns,
-    which resolves every component beneath [dir]'s capability, off the calling
-    fiber's thread. A directory whose handle carries no descriptor takes
-    [Eio.Path.sync_dir], and raises as it does.
+    [Eio_fs_chaos.Power] under [~os:`Macos] keeps what it commits. A plain POSIX
+    directory is opened, every component resolved beneath [dir]'s capability,
+    and the descriptor that open returns is synced off the calling fiber's
+    thread: by [fcntl F_FULLFSYNC] on Darwin, falling back to [fsync] on a
+    filesystem that refuses it (SMB, exFAT), and by [fsync] elsewhere. A
+    directory whose handle carries no descriptor takes [Eio.Path.sync_dir], and
+    raises as it does.
 
     @raise Eio.Io
       if [dir] cannot be opened for its barrier, as [fsync] fails, or as a
@@ -43,9 +39,11 @@ val sync_file : _ Eio.File.ro -> unit
     issues over the bytes it wrote. A backend that registers a
     {!Eio_fs.Sync.File_sync} answers through it, asked for a full barrier and
     before any descriptor [file] carries, so a model of power loss observes the
-    barrier; a POSIX file, one open for reading only included, is
-    {!full_fsync}ed on its descriptor, off the calling fiber's thread. A file
-    with neither is synced by its own {!Eio.File.sync}.
+    barrier. A POSIX file, one open for reading only included, is synced on its
+    descriptor as {!sync_dir} syncs a directory's; a bare host descriptor is
+    synced as the file {!Eio_unix.File.import_ro} makes of it. A file with
+    neither a registration nor a descriptor is synced by its own
+    {!Eio.File.sync}.
 
     @raise Eio.Io as [fsync] fails, or as a registered barrier raises.
     @raise Invalid_argument
