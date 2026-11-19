@@ -2,4 +2,4 @@
  (name record)
  (enabled_if
   (= %{os_type} Unix))
- (libraries stat_workload eio eio_posix fmt))
+ (libraries stat_workload eio eio_posix))

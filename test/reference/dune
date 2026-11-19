@@ -1,4 +1,4 @@
 (test
  (name test)
  (package eio-fs)
- (libraries eio eio.mock eio-fs.mem eio-fs.chaos alcotest fmt cstruct optint))
+ (libraries eio eio.mock eio-fs.mem eio-fs.chaos alcotest fmt optint))
