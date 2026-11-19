@@ -4,7 +4,6 @@
 
 (mdx
  (files README.md)
- (preludes prelude.txt)
  (libraries
   eio-fs.mem
   eio-fs.chaos
