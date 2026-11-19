@@ -86,6 +86,27 @@ let test_one_line () =
       if String.contains got '\n' then Alcotest.failf "on several lines: %S" got
   | l -> Alcotest.failf "%d scenarios differ" (List.length l)
 
+(* A name prints as its characters where it is valid UTF-8, as a terminal
+   shows it, and an invalid byte stays escaped. A case-sensitive filesystem
+   differs from macOS on the names it folds. *)
+let test_names () =
+  Eio_mock.Backend.run @@ fun () ->
+  let report =
+    failure @@ fun () ->
+    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~user ())
+  in
+  let has sub =
+    let n = String.length sub and m = String.length report in
+    let rec go i = i + n <= m && (String.sub report i n = sub || go (i + 1)) in
+    go 0
+  in
+  List.iter
+    (fun sub -> if not (has sub) then Alcotest.failf "no %S in:\n%s" sub report)
+    [
+      "write \xc3\xa9 x; stat \xc3\x89"; "[e\xcc\x81/\xc3\xa9]"; "write \\255 x";
+    ];
+  if has "\\195" then Alcotest.failf "an escaped name in:\n%s" report
+
 (* Where eio_posix differs from the kernel too, the report says so. *)
 let test_eio_posix_too () =
   let differing =
@@ -279,6 +300,7 @@ let () =
           Alcotest.test_case "the fault agrees with Linux" `Quick
             test_stat_fault_linux;
           Alcotest.test_case "an error on one line" `Quick test_one_line;
+          Alcotest.test_case "names in UTF-8" `Quick test_names;
           Alcotest.test_case "where eio_posix differs too" `Quick
             test_eio_posix_too;
           Alcotest.test_case "the other os" `Quick test_wrong_os;
