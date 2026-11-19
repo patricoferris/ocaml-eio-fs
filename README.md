@@ -9,7 +9,7 @@ Each test gets a fresh filesystem of its own, used through the ordinary
 again and again, each time with a different filesystem error or power cut,
 and checks that it starts again on what the fault left
 ([How it works](#how-it-works)). `Eio_fs_chaos.device` checks that an Eio
-filesystem answers as Linux or macOS does.
+filesystem answers as Linux, macOS or Windows does.
 
 ## Installation
 
