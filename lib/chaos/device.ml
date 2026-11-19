@@ -162,9 +162,79 @@ let ids (user : Eio_fs_mem.user) =
         name
   | Some g -> { K.gid = Int64.to_int user.gid; other_gid = Int64.to_int g }
 
-(* An answer on one line: an error Eio prints on several is joined. *)
-let one_line s =
-  String.split_on_char '\n' s |> List.map String.trim |> String.concat " "
+(* The bytes of the run of escapes [\NNN] of [s] at [i], and the index
+   after it. *)
+let escapes s i =
+  let n = String.length s in
+  let digit k = s.[k] >= '0' && s.[k] <= '9' in
+  let b = Buffer.create 8 in
+  let rec go i =
+    if
+      i + 3 < n
+      && s.[i] = '\\'
+      && digit (i + 1)
+      && digit (i + 2)
+      && digit (i + 3)
+    then
+      let c = int_of_string (String.sub s (i + 1) 3) in
+      if c < 256 then (
+        Buffer.add_char b (Char.chr c);
+        go (i + 4))
+      else i
+    else i
+  in
+  let j = go i in
+  (Buffer.contents b, j)
+
+(* [bytes], escaped bytes, as UTF-8 where it is valid and prints, each other
+   byte escaped again, as it was. An escaped byte is not printable ASCII, so a valid
+   character prints iff it is not a control character, U+00A0 or above. *)
+let utf_8 out bytes =
+  let n = String.length bytes in
+  let prints d =
+    Uchar.utf_decode_is_valid d
+    &&
+    let c = Uchar.to_int (Uchar.utf_decode_uchar d) in
+    c >= 0xa0
+  in
+  let rec go k =
+    if k < n then
+      let d = String.get_utf_8_uchar bytes k in
+      if prints d then (
+        let len = Uchar.utf_decode_length d in
+        Buffer.add_string out (String.sub bytes k len);
+        go (k + len))
+      else (
+        Buffer.add_string out (String.escaped (String.make 1 bytes.[k]));
+        go (k + 1))
+  in
+  go 0
+
+(* [s], as a trace spells it, as a report shows it: on one line, an error
+   Eio prints on several joined, and each name in its characters where it
+   is valid UTF-8, as a terminal shows it. An invalid byte and a control
+   character stay escaped. *)
+let shown s =
+  let s =
+    String.split_on_char '\n' s |> List.map String.trim |> String.concat " "
+  in
+  let n = String.length s in
+  let out = Buffer.create n in
+  let rec go i =
+    if i < n then
+      match escapes s i with
+      | "", _ when s.[i] = '\\' && i + 1 < n ->
+          Buffer.add_string out (String.sub s i 2);
+          go (i + 2)
+      | "", _ ->
+          Buffer.add_char out s.[i];
+          go (i + 1)
+      | bytes, j ->
+          utf_8 out bytes;
+          go j
+  in
+  go 0;
+  Buffer.contents out
 
 (* A scenario that differs: its operations up to the first answer outside
    what [os] gave, that answer, and the one expected, and why when it is not
@@ -182,10 +252,10 @@ let differs ~posix ~scenario ~ops ~got j (a : answer) =
   let upto = List.filteri (fun i _ -> i <= j) (List.map String.escaped ops) in
   {
     scenario;
-    ops = String.concat "; " upto;
-    expected = a.want;
+    ops = shown (String.concat "; " upto);
+    expected = shown a.want;
     why = Option.map (Fmt.str "as %s answers: %s" a.from) a.why;
-    got = one_line (List.nth got j);
+    got = shown (List.nth got j);
     posix;
   }
 
@@ -354,7 +424,7 @@ let scenario_differs ~run_in ~posix f i (scenario, ops, p) =
               ops = "";
               expected = "";
               why = None;
-              got = one_line e;
+              got = shown e;
               posix = false;
             };
           ])
