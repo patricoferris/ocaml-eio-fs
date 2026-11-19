@@ -33,7 +33,7 @@ macOS does.")
   (cstruct (>= 6.2.0))
   optint
   (mtime (>= 2.0.0))
-  (eio-chaos (and (>= 0.1.0) (< 0.2.0)))
+  (eio-chaos (>= 0.1.0))
   uucp
   uunf
   (cmdliner (>= 1.1.0))
