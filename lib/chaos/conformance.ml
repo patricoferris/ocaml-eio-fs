@@ -162,9 +162,10 @@ let ids (user : Eio_fs_mem.user) =
         name
   | Some g -> { K.gid = Int64.to_int user.gid; other_gid = Int64.to_int g }
 
-(* The bytes of the run of escapes [\NNN] of [s] at [i], and the index
-   after it. *)
-let escapes s i =
+(* The bytes of the run of [s] at [i] outside printable ASCII, each escaped
+   [\NNN], as a trace spells it, or raw, as an error's message holds it, and
+   the index after it. *)
+let unprintable s i =
   let n = String.length s in
   let digit k = s.[k] >= '0' && s.[k] <= '9' in
   let b = Buffer.create 8 in
@@ -181,21 +182,34 @@ let escapes s i =
         Buffer.add_char b (Char.chr c);
         go (i + 4))
       else i
+    else if i < n && (s.[i] < ' ' || s.[i] > '~') then (
+      Buffer.add_char b s.[i];
+      go (i + 1))
     else i
   in
   let j = go i in
   (Buffer.contents b, j)
 
-(* [bytes], escaped bytes, as UTF-8 where it is valid and prints, each other
-   byte escaped again, as it was. An escaped byte is not printable ASCII, so a valid
-   character prints iff it is not a control character, U+00A0 or above. *)
+(* A bidi control or an invisible format character: printed, it could
+   reorder a line on a terminal, or hide in a name. *)
+let invisible c =
+  c = 0xad || c = 0x61c || c = 0x180e
+  || (c >= 0x200b && c <= 0x200f)
+  || (c >= 0x202a && c <= 0x202e)
+  || (c >= 0x2060 && c <= 0x206f)
+  || c = 0xfeff
+  || (c >= 0xfff9 && c <= 0xfffb)
+
+(* [bytes], bytes outside printable ASCII, as UTF-8 where it is valid and
+   prints, each other byte escaped. A valid character so prints iff it is
+   U+00A0 or above, past the control characters, and not invisible. *)
 let utf_8 out bytes =
   let n = String.length bytes in
   let prints d =
     Uchar.utf_decode_is_valid d
     &&
     let c = Uchar.to_int (Uchar.utf_decode_uchar d) in
-    c >= 0xa0
+    c >= 0xa0 && not (invisible c)
   in
   let rec go k =
     if k < n then
@@ -212,8 +226,8 @@ let utf_8 out bytes =
 
 (* [s], as a trace spells it, as a report shows it: on one line, an error
    Eio prints on several joined, and each name in its characters where it
-   is valid UTF-8, as a terminal shows it. An invalid byte and a control
-   character stay escaped. *)
+   is valid UTF-8, as a terminal shows it. An invalid byte, a control
+   character and an invisible one, escaped or not, print escaped. *)
 let shown s =
   let s =
     String.split_on_char '\n' s |> List.map String.trim |> String.concat " "
@@ -222,7 +236,7 @@ let shown s =
   let out = Buffer.create n in
   let rec go i =
     if i < n then
-      match escapes s i with
+      match unprintable s i with
       | "", _ when s.[i] = '\\' && i + 1 < n ->
           Buffer.add_string out (String.sub s i 2);
           go (i + 2)
