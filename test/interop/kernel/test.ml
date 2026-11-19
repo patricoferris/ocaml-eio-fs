@@ -71,20 +71,33 @@ let () =
         true
     | _ -> false)
 
-let test_one_line () =
+(* The one scenario that differs from macOS, with what it got, when a stat of
+   A raises that error, the path it names ending with [suffix]. *)
+let odd_stat suffix =
   let odd (op : Chaos.Op.t) =
     if op.kind = `Stat && Filename.basename op.path = "A" then
       raise
-        (Eio.Exn.add_context (Eio.Exn.create (Eio.Exn.X Odd)) "stat %s" op.path)
+        (Eio.Exn.add_context
+           (Eio.Exn.create (Eio.Exn.X Odd))
+           "stat %s" (op.path ^ suffix))
     else None
   in
   match
     Chaos.Private.conformance_differing ~os:`Macos ~user (fun ~sw:_ _ ->
         Chaos.wrap odd (Eio_fs_mem.v ~os:`Macos ~user ()))
   with
-  | [ (_, got) ] ->
-      if String.contains got '\n' then Alcotest.failf "on several lines: %S" got
+  | [ (_, got) ] -> got
   | l -> Alcotest.failf "%d scenarios differ" (List.length l)
+
+let test_one_line () =
+  let got = odd_stat "" in
+  if String.contains got '\n' then Alcotest.failf "on several lines: %S" got
+
+(* Whether [sub] occurs in [s]. *)
+let contains ~sub s =
+  let n = String.length sub and m = String.length s in
+  let rec go i = i + n <= m && (String.sub s i n = sub || go (i + 1)) in
+  go 0
 
 (* A name prints as its characters where it is valid UTF-8, as a terminal
    shows it, and an invalid byte stays escaped. A case-sensitive filesystem
@@ -95,17 +108,32 @@ let test_names () =
     failure @@ fun () ->
     Chaos.conformance ~os:`Macos ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~user ())
   in
-  let has sub =
-    let n = String.length sub and m = String.length report in
-    let rec go i = i + n <= m && (String.sub report i n = sub || go (i + 1)) in
-    go 0
-  in
+  let has sub = contains ~sub report in
   List.iter
     (fun sub -> if not (has sub) then Alcotest.failf "no %S in:\n%s" sub report)
     [
       "write \xc3\xa9 x; stat \xc3\x89"; "[e\xcc\x81/\xc3\xa9]"; "write \\255 x";
     ];
   if has "\\195" then Alcotest.failf "an escaped name in:\n%s" report
+
+(* A bidi control or an invisible format character stays escaped: printed, it
+   could reorder the line or hide in a name. *)
+let test_format_chars () =
+  let chars =
+    [ 0x00ad; 0x061c; 0x200b; 0x200e; 0x202a; 0x202e; 0x2066; 0x2069; 0xfeff ]
+  in
+  let utf_8 c =
+    let b = Buffer.create 4 in
+    Buffer.add_utf_8_uchar b (Uchar.of_int c);
+    Buffer.contents b
+  in
+  let got = odd_stat ("a" ^ String.concat "" (List.map utf_8 chars) ^ "b") in
+  List.iter
+    (fun c ->
+      let raw = utf_8 c and escaped = String.escaped (utf_8 c) in
+      if contains ~sub:raw got || not (contains ~sub:escaped got) then
+        Alcotest.failf "U+%04X is not escaped in %S" c got)
+    chars
 
 (* Where eio_posix differs from the kernel too, the report says so. *)
 let test_eio_posix_too () =
@@ -302,6 +330,8 @@ let () =
             test_stat_fault_linux;
           Alcotest.test_case "an error on one line" `Quick test_one_line;
           Alcotest.test_case "names in UTF-8" `Quick test_names;
+          Alcotest.test_case "format characters escaped" `Quick
+            test_format_chars;
           Alcotest.test_case "where eio_posix differs too" `Quick
             test_eio_posix_too;
           Alcotest.test_case "the other os" `Quick test_wrong_os;
