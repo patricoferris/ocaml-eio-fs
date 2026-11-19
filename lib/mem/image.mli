@@ -1,5 +1,6 @@
 (** A directory tree as values, read from any filesystem and loaded into a new
-    in-memory one: [Eio_fs.Crunch]'s entries and [Eio_fs_mem.load]'s copy. *)
+    in-memory one: [Eio_fs_mem.Crunch]'s entries and [Eio_fs_mem.load]'s copy.
+*)
 
 (** The type for nodes of a tree, each at its absolute path. *)
 type entry =

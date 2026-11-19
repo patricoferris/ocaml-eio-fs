@@ -1,7 +1,7 @@
 (library
  (name eio_fs_mem)
  (public_name eio-fs.mem)
- (modules eio_fs_mem)
+ (modules eio_fs_mem crunch)
  (libraries hermetic eio eio.utils eio_fs_mem_core fmt))
 
 (library

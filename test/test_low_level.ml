@@ -373,12 +373,12 @@ let embedded names =
           Sys.opaque_identity (String.make 64 (Char.chr (97 + i)))
         in
         Weak.set weak i (Some contents);
-        Eio_fs.Crunch.File { path = "/" ^ name; perm = 0o644; contents })
+        Eio_fs_mem.Crunch.File { path = "/" ^ name; perm = 0o644; contents })
       names
   in
   ( weak,
-    Eio_fs.Crunch.load
-      (Eio_fs.Crunch.Dir { path = "/"; perm = 0o755 } :: entries) )
+    Eio_fs_mem.Crunch.load
+      (Eio_fs_mem.Crunch.Dir { path = "/"; perm = 0o755 } :: entries) )
 
 let collected weak i =
   Gc.full_major ();

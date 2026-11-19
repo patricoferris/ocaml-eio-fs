@@ -9,4 +9,4 @@
  (name verify_assets)
  (package eio-fs)
  (modules verify_assets assets)
- (libraries eio-fs eio eio.mock alcotest))
+ (libraries eio-fs.mem eio eio.mock alcotest))

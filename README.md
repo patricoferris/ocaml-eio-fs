@@ -116,9 +116,10 @@ as one over a network, can also be checked while those devices fail.
 ## Libraries
 
 - `eio-fs` has `Eio_fs`, helpers for any Eio filesystem: atomic and durable
-  writes, tree walks and copies, path strings, and a loader for directory
-  trees embedded in an executable.
-- `eio-fs.mem` has `Eio_fs_mem`, the in-memory filesystem.
+  writes, tree walks and copies, and path strings.
+- `eio-fs.mem` has `Eio_fs_mem`, the in-memory filesystem, and
+  `Eio_fs_mem.Crunch`, which loads a directory tree that the `eio-fs-crunch`
+  binary embedded in an executable.
 - `eio-fs.chaos` has `Eio_fs_chaos`, the two checks above.
 - `eio-fs.unix` has `Eio_fs_unix`, the POSIX calls that Eio lacks, such as
   file locks and extended attributes. It is not built on Windows.

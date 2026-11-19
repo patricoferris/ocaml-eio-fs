@@ -2,4 +2,4 @@
  (name main)
  (public_name eio-fs-crunch)
  (package eio-fs)
- (libraries eio_fs eio_fs_mem_core cmdliner eio eio_main fmt))
+ (libraries eio-fs.mem eio_fs_mem_core cmdliner eio eio_main fmt))

@@ -17,11 +17,11 @@ let output =
 
 (* The walk Eio_fs_mem.load copies a tree with, its entries recorded from
    the image's root. *)
-let scan dir : Eio_fs.Crunch.entry list =
+let scan dir : Eio_fs_mem.Crunch.entry list =
   Eio_fs_mem_core.Image.scan ~at:"/" dir
   |> List.map (function
     | Eio_fs_mem_core.Image.Dir { path; perm } ->
-        Eio_fs.Crunch.Dir { path; perm }
+        Eio_fs_mem.Crunch.Dir { path; perm }
     | File { path; perm; contents } -> File { path; perm; contents }
     | Symlink { path; target } -> Symlink { path; target })
 
@@ -31,7 +31,7 @@ let run dir output =
   | entries -> (
       match output with
       | None ->
-          Fmt.pr "%a@?" Eio_fs.Crunch.pp_ml entries;
+          Fmt.pr "%a@?" Eio_fs_mem.Crunch.pp_ml entries;
           0
       | Some file when Filename.extension file <> ".ml" ->
           Fmt.epr "eio-fs-crunch: output file %s must end in .ml@." file;
@@ -42,8 +42,10 @@ let run dir output =
               Eio.Path.(env#fs / name)
               contents
           in
-          save file (Fmt.str "%a" Eio_fs.Crunch.pp_ml entries);
-          save (Filename.remove_extension file ^ ".mli") Eio_fs.Crunch.interface;
+          save file (Fmt.str "%a" Eio_fs_mem.Crunch.pp_ml entries);
+          save
+            (Filename.remove_extension file ^ ".mli")
+            Eio_fs_mem.Crunch.interface;
           0)
   | exception (Eio.Io _ as e) ->
       Fmt.epr "eio-fs-crunch: %a@." Eio.Exn.pp e;

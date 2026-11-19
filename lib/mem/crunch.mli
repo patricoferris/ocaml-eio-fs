@@ -1,8 +1,8 @@
 (** Compile-time file embedding for the in-memory filesystem, in the style of
     ocaml-crunch. The [eio-fs-crunch] binary serialises a directory tree into an
-    OCaml module of {!Crunch.entry} values; at runtime the generated module's
-    [load ()] rebuilds the tree in a new in-memory filesystem. A copy of a
-    directory made at run time, with no binary, is [Eio_fs_mem.load].
+    OCaml module of {!entry} values; at runtime the generated module's [load ()]
+    rebuilds the tree in a new in-memory filesystem. A copy of a directory made
+    at run time, with no binary, is [Eio_fs_mem.load].
 
     With [-o assets.ml] the binary writes the module and its interface,
     [assets.mli]. This dune rule regenerates them when the [static] directory
@@ -55,9 +55,9 @@ val load :
 
 val pp_ml : entry list Fmt.t
 (** [pp_ml] formats the [.ml] file of a standalone OCaml module embedding the
-    entries. The generated module exposes [entries : Eio_fs.Crunch.entry list]
-    and [load ?os ?clock ()], which is {!load} of [entries] with the same
-    optional arguments. *)
+    entries. The generated module exposes
+    [entries : Eio_fs_mem.Crunch.entry list] and [load ?os ?clock ()], which is
+    {!load} of [entries] with the same optional arguments. *)
 
 val interface : string
 (** [interface] is the [.mli] file matching what {!pp_ml} prints: it declares

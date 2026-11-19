@@ -1,9 +1,9 @@
 (** In-memory {!Eio.Fs} filesystem.
 
     For hermetic tests: code reads and writes files through {!Eio.Path} without
-    touching the host's disk. Each call to {!v}, {!load} or {!run} makes a
-    filesystem of its own: two of them share no file. The library [eio-fs.chaos]
-    tests programs and filesystems with it.
+    touching the host's disk. Each call to {!v}, {!load}, {!Crunch.load} or
+    {!run} makes a filesystem of its own: two of them share no file. The library
+    [eio-fs.chaos] tests programs and filesystems with it.
 
     Where Linux, macOS and Windows differ, the filesystem follows one, chosen by
     [?os]: [`Linux], the default, [`Macos] or [`Windows]. The choice comes from
@@ -174,6 +174,10 @@ val load :
       if [path] is not a directory, if it or an entry under it cannot be read,
       or if a regular file is replaced between the stat that found it and the
       open that copies it: that open does not follow a link. *)
+
+module Crunch = Crunch
+(** Directory trees embedded in an executable, loaded as {!load} loads a copy.
+*)
 
 type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 (** The type for the standard environment {!run} passes on: an in-memory

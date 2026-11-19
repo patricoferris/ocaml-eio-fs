@@ -33,6 +33,8 @@ let as_user = Memfs.as_user
 let load ?os ?clock ?filter path =
   Image.load ?os ?clock (Image.scan ?filter ~at:(snd path) path)
 
+module Crunch = Crunch
+
 type stdenv = < fs : Eio.Fs.dir_ty Eio.Path.t ; cwd : Eio.Fs.dir_ty Eio.Path.t >
 
 (* Root owns the tree and makes the current directory, which it gives to
