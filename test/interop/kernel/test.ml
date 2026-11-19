@@ -31,15 +31,12 @@ let failure f =
   | () -> Alcotest.fail "the check passed"
   | exception Failure report -> report
 
-(* The scenarios a report says differ. *)
-let differing report =
-  String.split_on_char '\n' report
-  |> List.filter_map (fun l ->
-      if String.length l > 2 && String.sub l 0 2 = "  " && l.[2] <> ' ' then
-        match String.index_opt l ':' with
-        | Some i -> Some (String.sub l 2 (i - 2))
-        | None -> None
-      else None)
+(* [s] on one line, each run of spaces and line feeds a space. *)
+let flat s =
+  String.map (function '\n' -> ' ' | c -> c) s
+  |> String.split_on_char ' '
+  |> List.filter (( <> ) "")
+  |> String.concat " "
 
 (* "stat A" after "write a x" finds the file on macOS: a stat of [A] that
    answers ENOENT differs there. *)
@@ -58,11 +55,13 @@ let test_stat_fault () =
   Alcotest.(check string)
     "report"
     {|Eio_fs_chaos.device: 1 of 112 scenarios differ from macOS
-  case lookup: write a x; stat A: expected file 1, got ENOENT
-  111 passed, 1 differed, 3 left out; 3 that need a native path|}
+  scenario     operations         expected  got
+  ------------------------------------------------
+  case lookup  write a x; stat A  file 1    ENOENT
+  111 passed, 1 differed, 3 left out: 3 that need a native path|}
     report
 
-(* An error that prints on several lines is reported on one. *)
+(* An error that prints on several lines is given on one. *)
 type Eio.Exn.Backend.t += Odd
 
 let () =
@@ -79,20 +78,18 @@ let test_one_line () =
         (Eio.Exn.add_context (Eio.Exn.create (Eio.Exn.X Odd)) "stat %s" op.path)
     else None
   in
-  let report =
-    failure @@ fun () ->
-    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
+  match
+    Chaos.Private.device_differing ~os:`Macos ~user (fun ~sw:_ _ ->
         Chaos.wrap odd (Eio_fs_mem.v ~os:`Macos ~user ()))
-  in
-  Alcotest.(check int)
-    "lines" 3
-    (List.length (String.split_on_char '\n' report))
+  with
+  | [ (_, got) ] ->
+      if String.contains got '\n' then Alcotest.failf "on several lines: %S" got
+  | l -> Alcotest.failf "%d scenarios differ" (List.length l)
 
 (* Where eio_posix differs from the kernel too, the report says so. *)
 let test_eio_posix_too () =
-  let report =
-    failure @@ fun () ->
-    Chaos.device ~os:`Linux ~user (fun ~sw:_ _ ->
+  let differing =
+    Chaos.Private.device_differing ~os:`Linux ~user (fun ~sw:_ _ ->
         Chaos.wrap
           (fun op ->
             if
@@ -103,17 +100,13 @@ let test_eio_posix_too () =
           (Eio_fs_mem.v ~user ()))
   in
   let differs = Chaos.Private.eio_posix_differs `Linux in
+  if differing = [] then Alcotest.fail "no scenario differs";
   List.iter
-    (fun line ->
-      match differing line with
-      | [ s ] ->
-          let marked =
-            String.ends_with ~suffix:"(eio_posix differs here too)" line
-          in
-          if marked <> List.mem s differs then
-            Alcotest.failf "%s: marked %b" s marked
-      | _ -> ())
-    (String.split_on_char '\n' report)
+    (fun (s, got) ->
+      let marked = String.ends_with ~suffix:" *" got in
+      if marked <> List.mem s differs then
+        Alcotest.failf "%s: marked %b" s marked)
+    differing
 
 (* Linux does not find [A] either: the same directory passes there. *)
 let test_stat_fault_linux () =
@@ -125,14 +118,13 @@ let test_stat_fault_linux () =
    not. *)
 let test_wrong_os () =
   Eio_mock.Backend.run @@ fun () ->
-  let report =
-    failure @@ fun () ->
-    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
+  let differing =
+    Chaos.Private.device_differing ~os:`Macos ~user (fun ~sw:_ _ ->
         Eio_fs_mem.v ~os:`Linux ~user ())
   in
   Alcotest.(check bool)
     "names the first scenario" true
-    (List.mem "case lookup" (differing report))
+    (List.mem_assoc "case lookup" differing)
 
 (* A report without [~user] counts the scenarios it left out. *)
 let test_left_out () =
@@ -141,11 +133,11 @@ let test_left_out () =
     failure @@ fun () ->
     Chaos.device ~os:`Macos (fun ~sw:_ _ -> Eio_fs_mem.v ~os:`Linux ())
   in
-  let last = List.hd (List.rev (String.split_on_char '\n' report)) in
   Alcotest.(check bool)
     "left out" true
     (String.ends_with
-       ~suffix:"14 left out; 11 that need ~user; 3 that need a native path" last)
+       ~suffix:"14 left out: 11 that need ~user, 3 that need a native path"
+       (flat report))
 
 (* The trace with its columns in reverse order but the operations', and one
    added: the device finds each column by its name. *)
@@ -246,9 +238,7 @@ let test_host () =
       in
       let differs = Chaos.Private.eio_posix_differs os in
       let failed =
-        match Chaos.device ~os ~user fresh with
-        | () -> []
-        | exception Failure r -> differing r
+        List.map fst (Chaos.Private.device_differing ~os ~user fresh)
       in
       let only l l' = List.filter (fun x -> not (List.mem x l')) l in
       let wrong =

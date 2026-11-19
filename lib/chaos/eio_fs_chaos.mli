@@ -267,13 +267,13 @@ val device :
     alone.
 
     @raise Failure
-      if an answer differs, with one line for each such scenario: its name, its
-      operations up to that one, the answer expected and the one given, as
-      [case lookup: write a x; stat A: expected file 1, got ENOENT]. The line
-      ends with [(eio_posix differs here too)] where eio_posix fails that
-      scenario, and the next line says why when the answer expected is
-      eio_posix's rather than the kernel's. Then how many scenarios passed,
-      differed and were left out, and why.
+      if an answer differs, with a report ({!Eio_chaos.fail}): a table with a
+      row for each such scenario, its name, its operations up to that one, the
+      answer expected and the one given, as [case lookup], [write a x; stat A],
+      [file 1] and [ENOENT]. What was given is marked [*] where eio_posix fails
+      that scenario too, and what was expected is marked with a note that says
+      why when it is eio_posix's answer rather than the kernel's. Then the
+      notes, and how many scenarios passed, differed and were left out, and why.
     @raise Invalid_argument
       if [user] is root, its umask is not [0o022], or it has no supplementary
       group. *)
@@ -725,6 +725,15 @@ module Private : sig
   val eio_posix_differs : [< Eio_chaos.os ] -> string list
   (** [eio_posix_differs os] is the scenarios whose answers eio_posix gave on
       [os] differ from those {!val-device} expects. *)
+
+  val device_differing :
+    ?os:[< Eio_chaos.os ] ->
+    ?user:Eio_fs_mem.user ->
+    (sw:Eio.Switch.t -> env -> _ Eio.Path.t) ->
+    (string * string) list
+  (** [device_differing ~os ~user dir] is the scenarios {!val-device} reports,
+      in order, each with what [dir] got, followed by [" *"] where eio_posix
+      differs there too. *)
 
   val expected :
     ?trace:string ->

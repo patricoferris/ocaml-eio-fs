@@ -167,19 +167,76 @@ let one_line s =
   String.split_on_char '\n' s |> List.map String.trim |> String.concat " "
 
 (* A scenario that differs: its operations up to the first answer outside
-   what [os] gave, that answer, and the one expected, marked when eio_posix
-   differs there too. *)
+   what [os] gave, that answer, and the one expected, and why when it is not
+   the kernel's; [posix] when eio_posix differs there too. *)
+type differs = {
+  scenario : string;
+  ops : string;
+  expected : string;
+  why : string option;
+  got : string;
+  posix : bool;
+}
+
 let differs ~posix ~scenario ~ops ~got j (a : answer) =
   let upto = List.filteri (fun i _ -> i <= j) (List.map String.escaped ops) in
-  let line =
-    Fmt.str "  %s: %s: expected %s, got %s%s" scenario (String.concat "; " upto)
-      a.want
-      (one_line (List.nth got j))
-      (if posix then " (eio_posix differs here too)" else "")
+  {
+    scenario;
+    ops = String.concat "; " upto;
+    expected = a.want;
+    why = Option.map (Fmt.str "as %s answers: %s" a.from) a.why;
+    got = one_line (List.nth got j);
+    posix;
+  }
+
+let posix_note = "(eio_posix differs here too)"
+
+(* [d] on one line, and why on the next. *)
+let line d =
+  let l =
+    Fmt.str "%s: %s: expected %s, got %s%s" d.scenario d.ops d.expected d.got
+      (if d.posix then " " ^ posix_note else "")
   in
-  match a.why with
-  | None -> line
-  | Some why -> Fmt.str "%s@\n    (expected as %s answers: %s)" line a.from why
+  match d.why with
+  | None -> l
+  | Some why -> Fmt.str "%s@\n    (expected %s)" l why
+
+(* What [d] got, marked when eio_posix differs there too. *)
+let got d = if d.posix then d.got ^ " *" else d.got
+
+(* The rows of a report of [ds], and its notes: why each answer expected
+   that is not the kernel's is expected, numbered once each. *)
+let rows ds =
+  let whys =
+    List.fold_left
+      (fun acc d ->
+        match d.why with
+        | Some w when not (List.mem w acc) -> acc @ [ w ]
+        | _ -> acc)
+      [] ds
+  in
+  let number w =
+    let rec go i = function
+      | [] -> 0
+      | x :: rest -> if x = w then i else go (i + 1) rest
+    in
+    go 1 whys
+  in
+  let row d =
+    let expected =
+      match d.why with
+      | None -> d.expected
+      | Some w -> Fmt.str "%s [%d]" d.expected (number w)
+    in
+    Eio_chaos.difference ~operations:d.ops ~expected ~got:(got d) d.scenario
+  in
+  let notes =
+    (if List.exists (fun d -> d.posix) ds then
+       [ "* eio_posix differs here too." ]
+     else [])
+    @ List.mapi (fun i w -> Fmt.str "[%d] Expected %s." (i + 1) w) whys
+  in
+  (List.map row ds, notes)
 
 let eio_posix_differs os =
   let os = (os :> os) in
@@ -290,7 +347,17 @@ let scenario_differs ~run_in ~posix f i (scenario, ops, p) =
       in
       match got with
       | Ok got -> first got 0 answers
-      | Error e -> [ Fmt.str "  %s: %s" scenario (one_line e) ])
+      | Error e ->
+          [
+            {
+              scenario;
+              ops = "";
+              expected = "";
+              why = None;
+              got = one_line e;
+              posix = false;
+            };
+          ])
 
 (* The failure that reports [differed], and the scenarios [plan] left out. *)
 let fail ~os plan differed =
@@ -300,7 +367,7 @@ let fail ~os plan differed =
   let reasons =
     List.filter_map
       (fun (why, n) ->
-        if n > 0 then Fmt.kstr Option.some "; %d %s" n why else None)
+        if n > 0 then Fmt.kstr Option.some "%d %s" n why else None)
       [
         ("that need ~user", count `User);
         ("that need a native path", count `Native);
@@ -310,23 +377,37 @@ let fail ~os plan differed =
   let left = count `User + count `Native + count `Unrecorded in
   let failed = List.length differed in
   let ran = List.length K.scenarios - left in
-  Fmt.failwith
-    "%s: %d of %d scenarios differ from %s@\n\
-     %s@\n\
-    \  %d passed, %d differed, %d left out%s"
-    name failed ran (os_name os)
-    (String.concat "\n" differed)
-    (ran - failed) failed left (String.concat "" reasons)
+  let differences, notes = rows differed in
+  let footer =
+    String.concat "\n"
+      (notes
+      @ [
+          Fmt.str "%d passed, %d differed, %d left out%s" (ran - failed) failed
+            left
+            (match reasons with [] -> "" | l -> ": " ^ String.concat ", " l);
+        ])
+  in
+  Fmt.kstr
+    (Eio_chaos.fail ~name ~differences ~footer)
+    "%d of %d scenarios differ from %s" failed ran (os_name os)
 
-let check ?os ?user ~run:run_in f =
+(* The scenarios [f] answers differently from [os], and the plan they ran
+   under. *)
+let differences ?os ?user ~run:run_in f =
   let os = os_of os in
   let posix = eio_posix_differs os in
   let native = has_native ~run:run_in f in
   let plan = plan os user ~native in
-  let differed =
-    List.concat (List.mapi (scenario_differs ~run_in ~posix f) plan)
-  in
-  if differed <> [] then fail ~os plan differed
+  (os, plan, List.concat (List.mapi (scenario_differs ~run_in ~posix f) plan))
+
+let differing ?os ?user ~run f =
+  let _, _, rows = differences ?os ?user ~run f in
+  List.map (fun d -> (d.scenario, got d)) rows
+
+let check ?os ?user ~run f =
+  match differences ?os ?user ~run f with
+  | _, _, [] -> ()
+  | os, plan, differed -> fail ~os plan differed
 
 (* An answer a failure below a device may explain: an error eio-fs injects,
    as it answers it, a missing file, a refused access, a read-only or full
@@ -387,7 +468,7 @@ let program ?os ?user f (env : Eio_chaos.env) =
                     else if lenient && injected g then ()
                     else
                       failwith
-                        (String.trim
+                        (line
                            (differs ~posix:(List.mem scenario posix) ~scenario
                               ~ops ~got j a))
               in

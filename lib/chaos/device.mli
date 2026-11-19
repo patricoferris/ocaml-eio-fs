@@ -16,6 +16,16 @@ val check :
 (** [check ~os ~user ~run dir] is {!Eio_fs_chaos.device}, each scenario run by
     [run], which is its answers, or why its run did not end. *)
 
+val differing :
+  ?os:[< `Linux | `Macos | `Windows ] ->
+  ?user:Eio_fs_mem.user ->
+  run:((Eio_chaos.env -> string list) -> (string list, string) result) ->
+  (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
+  (string * string) list
+(** [differing ~os ~user ~run dir] is the scenarios {!check} reports, in order,
+    each with what it got, followed by [" *"] where eio_posix differs there too.
+*)
+
 val expected :
   ?trace:string ->
   ?basic:bool ->
@@ -45,4 +55,5 @@ val program :
     again.
 
     @raise Failure
-      with the line of {!check}'s report for the first answer outside that. *)
+      with a line for the first answer outside that: the scenario, its
+      operations up to that one, the answer expected and the one given. *)

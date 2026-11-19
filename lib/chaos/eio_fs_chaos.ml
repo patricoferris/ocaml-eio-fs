@@ -88,6 +88,11 @@ module Private = struct
 
   let scenarios = Device.scenarios
   let eio_posix_differs = Device.eio_posix_differs
+
+  let device_differing ?os ?user dir =
+    let run f = Eio_chaos.Private.within ?os (below []) f in
+    Device.differing ?os ?user ~run dir
+
   let expected = Device.expected
 
   module Crash = Crash
