@@ -10,7 +10,7 @@ let contains s sub =
 
 (* Saves a log and asks a server for a greeting, each of which may fail.
    With [bug], it fails once both did in one run, which only a pair of
-   failures across the two parts makes. *)
+   failures across the two devices makes. *)
 let both ?(bug = false) () =
   Eio_chaos.run [ Eio_fs_chaos.disk (); Eio_net_chaos.network () ] @@ fun env ->
   let saved =
@@ -48,7 +48,7 @@ let pair () =
 let remote ?leak ~sw env = Remote.v ?leak ~sw env
 
 let over_network ?leak () =
-  Eio_fs_chaos.device ~budget:500
+  Eio_fs_chaos.conformance ~budget:500
     ~under:[ Eio_net_chaos.network () ]
     (remote ?leak)
 
@@ -57,9 +57,9 @@ let leaks () =
   if
     not
       (String.starts_with
-         ~prefix:"Eio_fs_chaos.device: the program failed under a fault" r
+         ~prefix:"Eio_fs_chaos.conformance: the program failed under a fault" r
       && contains r "Connection_reset"
-      && contains r "replay:   Eio_fs_chaos.device ~replay:\"net+fs/")
+      && contains r "replay:   Eio_fs_chaos.conformance ~replay:\"net+fs/")
   then Alcotest.failf "the leak is not reported: %s" r
 
 let suite =

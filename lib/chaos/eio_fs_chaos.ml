@@ -36,7 +36,7 @@ end
 (* {1 The check} *)
 
 let name = "Eio_fs_chaos.run"
-let disk = Disk.part
+let disk = Disk.device
 
 let run ?os ?budget ?seed ?replay ?setup ?inspect app =
   Eio_chaos.run ~name ?os ?budget ?seed ?replay ?setup ?inspect [ disk () ] app
@@ -47,20 +47,20 @@ let ack env file =
 
 let acked env = Ack.acked (Disk.acks "Eio_fs_chaos.acked" env)
 
-(* The parts a device is built over, and a quiet disk unless one is. *)
+(* The devices a filesystem is built over, and a quiet disk unless one is. *)
 let below under =
   if List.exists (fun p -> Eio_chaos.Private.name p = Disk.name) under then
     under
   else under @ [ Eio_chaos.quiet (disk ()) ]
 
-let device ?os ?user ?(under = []) ?budget ?seed ?replay dir =
-  let parts = below under in
-  let run f = Eio_chaos.Private.within ?os parts f in
-  if replay = None then Device.check ?os ?user ~run dir;
+let conformance ?os ?user ?(under = []) ?budget ?seed ?replay dir =
+  let devices = below under in
+  let run f = Eio_chaos.Private.within ?os devices f in
+  if replay = None then Conformance.check ?os ?user ~run dir;
   if under <> [] then
-    Eio_chaos.Private.run ~name:"Eio_fs_chaos.device" ~args:"dir"
-      ~passes:[ Errors ] ?os ?budget ?seed ?replay parts
-      (Device.program ?os ?user dir)
+    Eio_chaos.Private.run ~name:"Eio_fs_chaos.conformance" ~args:"dir"
+      ~passes:[ Errors ] ?os ?budget ?seed ?replay devices
+      (Conformance.program ?os ?user dir)
 
 module Private = struct
   let check_faults ?os ?budget ?seed ?replay ?setup run =
@@ -86,14 +86,14 @@ module Private = struct
       [ disk () ]
       app
 
-  let scenarios = Device.scenarios
-  let eio_posix_differs = Device.eio_posix_differs
+  let scenarios = Conformance.scenarios
+  let eio_posix_differs = Conformance.eio_posix_differs
 
-  let device_differing ?os ?user dir =
+  let conformance_differing ?os ?user dir =
     let run f = Eio_chaos.Private.within ?os (below []) f in
-    Device.differing ?os ?user ~run dir
+    Conformance.differing ?os ?user ~run dir
 
-  let expected = Device.expected
+  let expected = Conformance.expected
 
   module Crash = Crash
   module Law = Law

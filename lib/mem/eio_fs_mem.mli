@@ -11,7 +11,7 @@
     every machine. {!section-macos} and {!section-windows} list what [`Macos]
     and [`Windows] change. Its answers are those recorded on Linux and macOS
     through the kernel and eio_posix, and on Windows through eio_windows, and
-    [Eio_fs_chaos.device] checks them.
+    [Eio_fs_chaos.conformance] checks them.
 
     An entry's stat carries what Linux gives on tmpfs. Its times come from the
     clock given to {!v}, and stay at [0.] without one; under [Eio_fs_chaos.run]

@@ -1,8 +1,8 @@
-An uncaught device report prints as a run's does: a table of the
+An uncaught conformance report prints as a run's does: a table of the
 scenarios that differ, and a summary.
 
-  $ ./device.exe
-  Fatal error: exception Eio_fs_chaos.device: 1 of 112 scenarios differ from macOS
+  $ ./conformance.exe
+  Fatal error: exception Eio_fs_chaos.conformance: 1 of 112 scenarios differ from macOS
     scenario     operations         expected  got
     ------------------------------------------------
     case lookup  write a x; stat A  file 1    ENOENT

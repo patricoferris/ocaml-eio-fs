@@ -103,7 +103,7 @@ let alone (op : Op.t) : choice list =
 let sync_time = Mtime.Span.(1 * ms)
 let op_time = Mtime.Span.(1 * us)
 
-(* {1 The part} *)
+(* {1 The device} *)
 
 type t = {
   mutable os : Eio_chaos.os;
@@ -412,7 +412,7 @@ let restart t ~power ~cut =
   t.keep <- cut;
   capability t fs
 
-module Part = Eio_chaos.Part (struct
+module Device = Eio_chaos.Device (struct
   type nonrec t = t
 
   let name = name
@@ -425,16 +425,16 @@ module Part = Eio_chaos.Part (struct
   let indeterminate = indeterminate
 end)
 
-let part () = Part.v (v ())
+let device () = Device.v (v ())
 
 let acks name (env : Eio_chaos.env) =
-  match Part.find env#chaos with
+  match Device.find env#chaos with
   | Some ({ ack = Some a; _ } : t) -> a
   | Some _ | None ->
       Fmt.invalid_arg "%s: env is not that of a run of Eio_fs_chaos.run" name
 
 let acknowledge (env : Eio_chaos.env) =
-  match Part.find env#chaos with
+  match Device.find env#chaos with
   | Some d when not (crashed d) ->
       note_ack d;
       true

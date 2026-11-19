@@ -1,4 +1,4 @@
-(* Chaos.device against the kernel traces: the in-memory filesystem passes
+(* Chaos.conformance against the kernel traces: the in-memory filesystem passes
    for Linux and for macOS, as a user and as root, a directory with a fault
    fails with a report, and eio_posix on this machine fails exactly where its
    recorded answers differ from the kernel's. README.md says where the
@@ -13,18 +13,18 @@ let user =
 
 let memfs (os : os) () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~os ~user ())
+  Chaos.conformance ~os ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~os ~user ())
 
 (* Without [~user], the scenarios that need one are left out, and root
    passes the others. *)
 let memfs_root (os : os) () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os (fun ~sw:_ _ -> Eio_fs_mem.v ~os ())
+  Chaos.conformance ~os (fun ~sw:_ _ -> Eio_fs_mem.v ~os ())
 
 (* A device built on another capability takes it from the env: here a
    wrapper over the env's own filesystem. *)
 let overlay (os : os) () =
-  Chaos.device ~os (fun ~sw:_ env -> Chaos.wrap (fun _ -> None) env#fs)
+  Chaos.conformance ~os (fun ~sw:_ env -> Chaos.wrap (fun _ -> None) env#fs)
 
 let failure f =
   match f () with
@@ -49,12 +49,12 @@ let test_stat_fault () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ ->
+    Chaos.conformance ~os:`Macos ~user (fun ~sw:_ _ ->
         Chaos.wrap no_stat_of_a (Eio_fs_mem.v ~os:`Macos ~user ()))
   in
   Alcotest.(check string)
     "report"
-    {|Eio_fs_chaos.device: 1 of 112 scenarios differ from macOS
+    {|Eio_fs_chaos.conformance: 1 of 112 scenarios differ from macOS
   scenario     operations         expected  got
   ------------------------------------------------
   case lookup  write a x; stat A  file 1    ENOENT
@@ -79,7 +79,7 @@ let test_one_line () =
     else None
   in
   match
-    Chaos.Private.device_differing ~os:`Macos ~user (fun ~sw:_ _ ->
+    Chaos.Private.conformance_differing ~os:`Macos ~user (fun ~sw:_ _ ->
         Chaos.wrap odd (Eio_fs_mem.v ~os:`Macos ~user ()))
   with
   | [ (_, got) ] ->
@@ -93,7 +93,7 @@ let test_names () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~user ())
+    Chaos.conformance ~os:`Macos ~user (fun ~sw:_ _ -> Eio_fs_mem.v ~user ())
   in
   let has sub =
     let n = String.length sub and m = String.length report in
@@ -110,7 +110,7 @@ let test_names () =
 (* Where eio_posix differs from the kernel too, the report says so. *)
 let test_eio_posix_too () =
   let differing =
-    Chaos.Private.device_differing ~os:`Linux ~user (fun ~sw:_ _ ->
+    Chaos.Private.conformance_differing ~os:`Linux ~user (fun ~sw:_ _ ->
         Chaos.wrap
           (fun op ->
             if
@@ -132,7 +132,7 @@ let test_eio_posix_too () =
 (* Linux does not find [A] either: the same directory passes there. *)
 let test_stat_fault_linux () =
   Eio_mock.Backend.run @@ fun () ->
-  Chaos.device ~os:`Linux ~user (fun ~sw:_ _ ->
+  Chaos.conformance ~os:`Linux ~user (fun ~sw:_ _ ->
       Chaos.wrap no_stat_of_a (Eio_fs_mem.v ~user ()))
 
 (* Under [`Linux] the filesystem keeps [a] and [A] apart, as macOS does
@@ -140,7 +140,7 @@ let test_stat_fault_linux () =
 let test_wrong_os () =
   Eio_mock.Backend.run @@ fun () ->
   let differing =
-    Chaos.Private.device_differing ~os:`Macos ~user (fun ~sw:_ _ ->
+    Chaos.Private.conformance_differing ~os:`Macos ~user (fun ~sw:_ _ ->
         Eio_fs_mem.v ~os:`Linux ~user ())
   in
   Alcotest.(check bool)
@@ -152,7 +152,7 @@ let test_left_out () =
   Eio_mock.Backend.run @@ fun () ->
   let report =
     failure @@ fun () ->
-    Chaos.device ~os:`Macos (fun ~sw:_ _ -> Eio_fs_mem.v ~os:`Linux ())
+    Chaos.conformance ~os:`Macos (fun ~sw:_ _ -> Eio_fs_mem.v ~os:`Linux ())
   in
   Alcotest.(check bool)
     "left out" true
@@ -161,7 +161,7 @@ let test_left_out () =
        (flat report))
 
 (* The trace with its columns in reverse order but the operations', and one
-   added: the device finds each column by its name. *)
+   added: the conformance check finds each column by its name. *)
 let test_columns_by_name () =
   let lines =
     In_channel.with_open_bin
@@ -200,10 +200,11 @@ let invalid name f =
 let test_refused () =
   Eio_mock.Backend.run @@ fun () ->
   let fs ~sw:_ _ = Eio_fs_mem.v ~user () in
-  invalid "root" (fun () -> Chaos.device ~user:Eio_fs_mem.root fs);
-  invalid "umask" (fun () -> Chaos.device ~user:{ user with umask = 0o077 } fs);
+  invalid "root" (fun () -> Chaos.conformance ~user:Eio_fs_mem.root fs);
+  invalid "umask" (fun () ->
+      Chaos.conformance ~user:{ user with umask = 0o077 } fs);
   invalid "no supplementary group" (fun () ->
-      Chaos.device ~user:{ user with groups = [ 1000L ] } fs)
+      Chaos.conformance ~user:{ user with groups = [ 1000L ] } fs)
 
 (* eio_posix on this machine, in a fresh directory of $TMPDIR. *)
 
@@ -259,7 +260,7 @@ let test_host () =
       in
       let differs = Chaos.Private.eio_posix_differs os in
       let failed =
-        List.map fst (Chaos.Private.device_differing ~os ~user fresh)
+        List.map fst (Chaos.Private.conformance_differing ~os ~user fresh)
       in
       let only l l' = List.filter (fun x -> not (List.mem x l')) l in
       let wrong =
@@ -294,7 +295,7 @@ let () =
           Alcotest.test_case "an overlay over env#fs, Windows" `Quick
             (overlay `Windows);
         ] );
-      ( "device",
+      ( "conformance",
         [
           Alcotest.test_case "a stat fault" `Quick test_stat_fault;
           Alcotest.test_case "the fault agrees with Linux" `Quick

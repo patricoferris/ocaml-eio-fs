@@ -11,8 +11,8 @@
   blocks
   journal
   wrapper
-  device
-  device_traces)
+  conformance
+  conformance_traces)
  (libraries
   hermetic
   eio
@@ -29,7 +29,7 @@
   mtime))
 
 (rule
- (target device_traces.ml)
+ (target conformance_traces.ml)
  (deps ../../test/interop/kernel/traces/fs.csv)
  (action
   (with-stdout-to

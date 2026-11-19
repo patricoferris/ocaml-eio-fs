@@ -1,11 +1,12 @@
-(** The disk of {!Eio_fs_chaos.run}, as a part of {!Eio_chaos.run}: an in-memory
-    filesystem, the faults proposed at its operations, and its power cuts. *)
+(** The disk of {!Eio_fs_chaos.run}, as a device of {!Eio_chaos.run}: an
+    in-memory filesystem, the faults proposed at its operations, and its power
+    cuts. *)
 
 val name : string
-(** [name] is the part's name, ["fs"]. *)
+(** [name] is the device's name, ["fs"]. *)
 
-val part : unit -> Eio_chaos.part
-(** [part ()] is a fresh disk, as a part. *)
+val device : unit -> Eio_chaos.device
+(** [device ()] is a fresh disk, as a device. *)
 
 val acks : string -> Eio_chaos.env -> Ack.t
 (** [acks name env] is the files acknowledged in the run of [env].

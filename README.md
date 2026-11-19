@@ -7,7 +7,7 @@ The filesystem is used through the ordinary `Eio.Path` API, so the code
 under test does not change. On top of it, `Eio_fs_chaos.run` runs a program
 again and again, each time with a different disk error or power cut, and
 checks that the program starts again on what the fault left.
-`Eio_fs_chaos.device` checks that a filesystem of your own answers as Linux,
+`Eio_fs_chaos.conformance` checks that a filesystem of your own answers as Linux,
 macOS or Windows does.
 
 ## Installation
@@ -89,7 +89,7 @@ The rename is lost because the save does not sync the directory.
 case, and the [eio-chaos](https://github.com/samoht/ocaml-eio-chaos) README
 says more about how faults are chosen and what a pass means.
 
-`Eio_fs_chaos.disk ()` is the same disk as a part of eio-chaos, to test a
+`Eio_fs_chaos.disk ()` is the same disk as a device of eio-chaos, to test a
 program on several simulated devices at once, such as the disk and the
 network of [eio-net](https://github.com/samoht/ocaml-eio-net).
 [`eio_fs_chaos.mli`](lib/chaos/eio_fs_chaos.mli) documents the rest,
@@ -97,13 +97,13 @@ including how to give the first run a disk that is not empty.
 
 ## Testing a filesystem
 
-`Eio_fs_chaos.device` checks that an Eio filesystem of your own, such as a
+`Eio_fs_chaos.conformance` checks that an Eio filesystem of your own, such as a
 wrapper over another one, answers as the kernel does. It takes a function
 that makes a fresh, empty directory, and runs in it about a hundred short
 scenarios recorded on real Linux, macOS and Windows machines:
 
 ```ocaml
-# Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ());;
+# Eio_fs_chaos.conformance (fun ~sw:_ _env -> Eio_fs_mem.v ());;
 - : unit = ()
 ```
 
@@ -128,7 +128,7 @@ how closely the simulation follows each kernel and where it stops.
 
 ## Related work
 
-`device` checks a filesystem against recordings of real kernels, as
+`conformance` checks a filesystem against recordings of real kernels, as
 [SibylFS](https://sibylfs.github.io/) checked real filesystems against a
 model of POSIX. The power cut follows the crash models of
 [Ferrite](https://github.com/uwplse/ferrite).

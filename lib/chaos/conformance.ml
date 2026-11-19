@@ -30,7 +30,7 @@ let parse csv =
           | _ -> Fmt.failwith "Eio_fs: a malformed kernel trace line: %s" line)
         lines
 
-let shipped = lazy (parse Device_traces.csv)
+let shipped = lazy (parse Conformance_traces.csv)
 
 (* The columns that hold [os]'s answers: the kernel's straight, where the
    recorder could reach it, and Eio's backend's. On Windows only
@@ -126,7 +126,7 @@ let expected ?trace ?(basic = false) os name =
         (answers ?trace ~basic os name ops)
 
 let scenarios = List.map fst K.scenarios
-let name = "Eio_fs_chaos.device"
+let name = "Eio_fs_chaos.conformance"
 
 (* The answers of these were a user's: root passes every permission check,
    and the others change a file's group to a supplementary one. *)
@@ -344,7 +344,7 @@ type plan =
 
 let os_of = function Some (#os as os) -> os | None -> `Linux
 
-(* What [device] does with each scenario: run it, with the answers it
+(* What [conformance] does with each scenario: run it, with the answers it
    expects, or leave it out, and why. Without [user] the scenarios that need
    one are left out; on Windows, the answers are a basic user's with it and an
    administrator's without. *)

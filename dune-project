@@ -23,7 +23,7 @@ filesystem errors and power cuts. Each test gets a fresh filesystem of its
 own, used through the ordinary Eio.Path API, so the code under test does not
 change. Eio_fs_chaos.run runs a program again and again, each time with a
 different filesystem error or power cut, and restarts it on what the fault
-left. Eio_fs_chaos.device checks that an Eio filesystem answers as Linux or
+left. Eio_fs_chaos.conformance checks that an Eio filesystem answers as Linux or
 macOS does.")
  (depends
   (hermetic (>= 0.1.0))

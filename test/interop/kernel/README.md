@@ -6,7 +6,7 @@ on Linux and macOS straight from the kernel through `Unix` and through
 eio_posix, on Windows through eio_windows alone, as OCaml's `Unix` reaches
 the C runtime there, not the kernel, once as an administrator and once as a
 basic user, who may not make a symbolic link. The library ships the trace;
-`Eio_fs_chaos.device` finds a column by its name. `test.ml` replays every
+`Eio_fs_chaos.conformance` finds a column by its name. `test.ml` replays every
 scenario on the in-memory filesystem under each `os` and compares.
 
 ## Regenerate

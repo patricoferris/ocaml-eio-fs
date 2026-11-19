@@ -7,26 +7,26 @@
       runs the program many times on in-memory filesystems that fail, and each
       time starts it again on what the fault left, as a machine restarts a
       service.
-    - {!val-device} checks that an Eio filesystem answers as Linux or macOS
+    - {!val-conformance} checks that an Eio filesystem answers as Linux or macOS
       does.
 
     Both raise [Failure] with a report when the check fails, as an assertion
     does, so they are the body of a test in any test runner. {!run} is
-    {!Eio_chaos.run} on one part, {!disk}: a program that also needs a network
+    {!Eio_chaos.run} on one device, {!disk}: a program that also needs a network
     is tested with [Eio_chaos.run [ disk (); Eio_net_chaos.network () ]]. A test
     that wants one fault at one place builds it from the
     {{!blocks}building blocks}: {!wrap} for errors, {!Power} for a power cut by
     hand, {!ack} for a file the program has promised to keep.
 
-    {!run}, {!val-device} and {!Power.v} take [?os], as {!Eio_fs_mem.v} does:
-    [`Linux], the default, [`Macos] or [`Windows]. It picks the filesystem's
-    answers and what a power cut keeps of each kind of sync. The choice comes
-    from the argument, never from the host, so a test checks the same thing on
-    every machine.
+    {!run}, {!val-conformance} and {!Power.v} take [?os], as {!Eio_fs_mem.v}
+    does: [`Linux], the default, [`Macos] or [`Windows]. It picks the
+    filesystem's answers and what a power cut keeps of each kind of sync. The
+    choice comes from the argument, never from the host, so a test checks the
+    same thing on every machine.
 
-    {!val-device} replays {e scenarios}, each a short sequence of operations
-    recorded on each kernel. A report of {!run} names its runs as scenarios too:
-    a fault at a place of the first run.
+    {!val-conformance} replays {e scenarios}, each a short sequence of
+    operations recorded on each kernel. A report of {!run} names its runs as
+    scenarios too: a fault at a place of the first run.
 
     How a check picks its {{!exploration}faults}, the {{!contracts}contracts} a
     program meets, its {{!replay}reports and replay}, its {{!runs}runs} and the
@@ -43,7 +43,7 @@ type env = Eio_chaos.env
       process's (an absolute path or link and a [".."] above it are refused with
       [Permission_denied]). Both run as {!Eio_fs_mem.root}, and
       {!Eio_fs_mem.as_user} runs them as another user. [net] refuses each
-      operation, unless another part gives it, as the network of eio-net does;
+      operation, unless another device gives it, as the network of eio-net does;
     - [clock] and [mono_clock] start at [0.], and a wait takes no time
       ({{!runs}runs});
     - [secure_random] and the default [Random] state draw from a fixed seed,
@@ -56,7 +56,7 @@ type env = Eio_chaos.env
     - [process_mgr] starts nothing: [spawn] and [pipe] raise [Eio.Io] with
       [Not_available];
     - [debug] is Eio's, [backend_id] is ["chaos"], and [chaos] is the run's
-      {!Eio_chaos.t}, for a device the program builds itself.
+      {!Eio_chaos.t}, for a device the program builds over others.
 
     A program that reaches the system other than through [env], by [Unix], the
     standard library's channels, [Random.self_init], [Domain.spawn] or
@@ -144,29 +144,30 @@ val run :
       if [budget] is not positive, or [replay] is not a replay string of [run].
 *)
 
-val disk : unit -> Eio_chaos.part
-(** [disk ()] is the disk of {!run} as a part of {!Eio_chaos.run}, to test a
+val disk : unit -> Eio_chaos.device
+(** [disk ()] is the disk of {!run} as a device of {!Eio_chaos.run}, to test a
     program on it and other simulated devices at once: an in-memory filesystem
     that answers as the [~os] of the check does, with the faults and power cuts
     above. [run app] is [Eio_chaos.run [ disk () ] app], but for the name its
     reports give. *)
 
-(** {1:device Testing a filesystem} *)
+(** {1:conformance Testing a filesystem} *)
 
-val device :
+val conformance :
   ?os:[< Eio_chaos.os ] ->
   ?user:Eio_fs_mem.user ->
-  ?under:Eio_chaos.part list ->
+  ?under:Eio_chaos.device list ->
   ?budget:int ->
   ?seed:int ->
   ?replay:string ->
   (sw:Eio.Switch.t -> env -> _ Eio.Path.t) ->
   unit
-(** [device ~os ~user dir] runs each scenario recorded on the kernel of [os]
-    (defaults to [`Linux]) in a directory of mode [0o755] it makes in a fresh,
-    empty directory [dir ~sw env], opened as a sandbox, as the recorder ran it
-    below its current directory, and compares each answer with the kernel's.
-    [sw] ends with the scenario, so what [dir] opens under it is closed there.
+(** [conformance ~os ~user dir] runs each scenario recorded on the kernel of
+    [os] (defaults to [`Linux]) in a directory of mode [0o755] it makes in a
+    fresh, empty directory [dir ~sw env], opened as a sandbox, as the recorder
+    ran it below its current directory, and compares each answer with the
+    kernel's. [sw] ends with the scenario, so what [dir] opens under it is
+    closed there.
 
     Each scenario runs in an event loop of its own, as a run of {!run} does,
     given an {!type-env} whose [fs] is a fresh in-memory filesystem that answers
@@ -176,7 +177,8 @@ val device :
     time in the scenario's loop.
 
     {[
-    let check_mem () = Eio_fs_chaos.device (fun ~sw:_ _env -> Eio_fs_mem.v ())
+    let check_mem () =
+      Eio_fs_chaos.conformance (fun ~sw:_ _env -> Eio_fs_mem.v ())
     ]}
 
     A scenario is a short sequence of {!Eio.Path} operations: names that differ
@@ -236,20 +238,21 @@ val device :
     differs on 13 of the 115 scenarios on Linux and 21 on macOS. A filesystem
     that wraps eio_posix differs there too.
 
-    [device] runs every scenario, whatever the earlier ones answered. In a
+    [conformance] runs every scenario, whatever the earlier ones answered. In a
     scenario it stops at the first answer that differs, as the later ones depend
     on it. It blocks its caller, as {!run} does.
 
-    {b Over other parts.} A filesystem built over other devices, as a remote
+    {b Over other devices.} A filesystem built over other devices, as a remote
     filesystem over a network, takes them from its {!type-env}: [under]
-    (defaults to none) are the parts it holds, with a quiet {!disk} as its [fs]
-    unless one of them is a disk. Its scenarios first run as above, each on
-    healthy parts. Then, if [under] is not empty, [device] is {!Eio_chaos.run}
-    of a program that runs every scenario in turn, in one event loop, with
-    [budget], [seed] and [replay] as {!run} takes them, and the faults the parts
-    of [under] allow, but no power cut. It passes iff each run does:
+    (defaults to none) are the devices it holds, with a quiet {!disk} as its
+    [fs] unless one of them is a disk. Its scenarios first run as above, each on
+    healthy devices. Then, if [under] is not empty, [conformance] is
+    {!Eio_chaos.run} of a program that runs every scenario in turn, in one event
+    loop, with [budget], [seed] and [replay] as {!run} takes them, and the
+    faults the devices of [under] allow, but no power cut. It passes iff each
+    run does:
 
-    - until a part fails, every answer is the kernel's;
+    - until a device fails, every answer is the kernel's;
     - once one failed ({!Eio_chaos.faulted}), an answer is the kernel's, or an
       error eio-fs injects, which the fault below may explain: a missing file, a
       refused access, a read-only or full filesystem, or an input/output error.
@@ -263,8 +266,8 @@ val device :
     [Connection_reset] or [End_of_file], fails, and so does a success that
     differs from the kernel's, as a short read given as the whole file. A device
     that turns a harmless fault below into an error of its own passes. A report
-    is that of {!run}, named after [device], and its replay line runs that case
-    alone.
+    is that of {!run}, named after [conformance], and its replay line runs that
+    case alone.
 
     @raise Failure
       if an answer differs, with a report ({!Eio_chaos.fail}): a table with a
@@ -720,20 +723,21 @@ end
    policies and controls, the law of the wrapper, and counters. *)
 module Private : sig
   val scenarios : string list
-  (** [scenarios] is the name of each scenario {!val-device} runs, in order. *)
+  (** [scenarios] is the name of each scenario {!val-conformance} runs, in
+      order. *)
 
   val eio_posix_differs : [< Eio_chaos.os ] -> string list
   (** [eio_posix_differs os] is the scenarios whose answers eio_posix gave on
-      [os] differ from those {!val-device} expects. *)
+      [os] differ from those {!val-conformance} expects. *)
 
-  val device_differing :
+  val conformance_differing :
     ?os:[< Eio_chaos.os ] ->
     ?user:Eio_fs_mem.user ->
     (sw:Eio.Switch.t -> env -> _ Eio.Path.t) ->
     (string * string) list
-  (** [device_differing ~os ~user dir] is the scenarios {!val-device} reports,
-      in order, each with what [dir] got, followed by [" *"] where eio_posix
-      differs there too. *)
+  (** [conformance_differing ~os ~user dir] is the scenarios {!val-conformance}
+      reports, in order, each with what [dir] got, followed by [" *"] where
+      eio_posix differs there too. *)
 
   val expected :
     ?trace:string ->
@@ -741,10 +745,10 @@ module Private : sig
     [< Eio_chaos.os ] ->
     string ->
     string list option
-  (** [expected ~trace ~basic os name] is the answers {!val-device} expects of
-      the scenario [name] on [os], as a basic user on Windows if [basic], read
-      from the CSV text [trace] (defaults to the trace the library holds), or
-      [None] if it was not recorded there. A column is found by its name. *)
+  (** [expected ~trace ~basic os name] is the answers {!val-conformance} expects
+      of the scenario [name] on [os], as a basic user on Windows if [basic],
+      read from the CSV text [trace] (defaults to the trace the library holds),
+      or [None] if it was not recorded there. A column is found by its name. *)
 
   val check_faults :
     ?os:[< Eio_chaos.os ] ->

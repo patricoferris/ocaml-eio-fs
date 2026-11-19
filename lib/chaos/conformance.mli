@@ -13,8 +13,8 @@ val check :
   run:((Eio_chaos.env -> string list) -> (string list, string) result) ->
   (sw:Eio.Switch.t -> Eio_chaos.env -> _ Eio.Path.t) ->
   unit
-(** [check ~os ~user ~run dir] is {!Eio_fs_chaos.device}, each scenario run by
-    [run], which is its answers, or why its run did not end. *)
+(** [check ~os ~user ~run dir] is {!Eio_fs_chaos.conformance}, each scenario run
+    by [run], which is its answers, or why its run did not end. *)
 
 val differing :
   ?os:[< `Linux | `Macos | `Windows ] ->
@@ -49,7 +49,7 @@ val program :
   unit
 (** [program ~os ~user dir env] replays every scenario in turn, each in a
     directory of its own under [dir ~sw env], for a run of {!Eio_chaos.run}
-    whose parts are those [dir] is built over. Until a part fails, an answer
+    whose devices are those [dir] is built over. Until a device fails, an answer
     must be the kernel's; once one failed, an answer may also be an error eio-fs
     injects, and the scenario ends there. A restart replays every scenario
     again.
