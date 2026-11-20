@@ -48,6 +48,12 @@
 #include <sys/uio.h>
 #endif
 
+/* The BSDs declare statfs in sys/mount.h, after sys/param.h. */
+#if !defined(__APPLE__) && !defined(__linux__)
+#include <sys/param.h>
+#include <sys/mount.h>
+#endif
+
 CAMLprim value caml_eio_fs_is_darwin(value unit)
 {
 #ifdef __APPLE__
@@ -760,6 +766,8 @@ CAMLprim value caml_eio_fs_rename_exclusive(value srcfd_v, value src_v,
 #elif defined(__linux__) && defined(SYS_renameat2)
     r = syscall(SYS_renameat2, srcfd, src, dstfd, dst, RENAME_NOREPLACE);
 #else
+    (void)srcfd;
+    (void)dstfd;
     errno = ENOSYS;
     r = -1;
 #endif
