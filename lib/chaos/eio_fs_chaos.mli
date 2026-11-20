@@ -96,7 +96,7 @@ val run :
     - from one operation on, the filesystem is read-only, full, or denies every
       access;
     - the power is cut after an operation that changes the disk. The disk keeps
-      what was synced, and either everything written since or nothing of it.
+      what was synced and may lose the rest, as {!section-model} says.
 
     After each of those runs, [run] runs [app] again with no fault, on what the
     filesystem then holds, as a machine restarts a service. After a power cut,
