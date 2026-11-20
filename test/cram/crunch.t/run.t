@@ -3,6 +3,7 @@ permissions, symbolic links and empty directories.
 
   $ umask 022
   $ mkdir -p tree/static
+  $ chmod g-s tree tree/static
   $ printf 'hello\n' > tree/index.html
   $ printf '#!/bin/sh\n' > tree/run.sh
   $ chmod 755 tree/run.sh
