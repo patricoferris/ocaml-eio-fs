@@ -114,20 +114,27 @@ let test_sync_file_of_a_descriptor () =
       Eio_fs_unix.sync_file (Eio_unix.File.import_ro ~sw ~close_unix:false fd))
 
 (* The barrier on a real file (F_FULLFSYNC on Darwin, fsync elsewhere) raises
-   the OS error of a descriptor closed beneath its file. *)
+   the OS error of a descriptor that no longer names a file beneath it. The
+   descriptor is turned into a pipe in place, with [dup2], rather than closed:
+   a closed number is the lowest free one, so any open elsewhere in the
+   process could take it and the second barrier would sync that file. *)
 let test_sync_file_surfaces_errors () =
   let path = Filename.temp_file "eio-fs-fullfsync" ".dat" in
-  let fd = Unix.openfile path [ Unix.O_WRONLY ] 0o644 in
+  let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CLOEXEC ] 0o644 in
+  Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
   let written = Unix.write_substring fd "durable bytes" 0 13 in
   Alcotest.(check int) "wrote the payload" 13 written;
   Eio_main.run @@ fun _ ->
   Eio.Switch.run @@ fun sw ->
   let file = Eio_unix.File.import_rw ~sw ~close_unix:false fd in
   Eio_fs_unix.sync_file file;
-  Unix.close fd;
+  let r, w = Unix.pipe ~cloexec:true () in
+  Unix.dup2 ~cloexec:true r fd;
+  Unix.close r;
+  Unix.close w;
   Sys.remove path;
   match Eio_fs_unix.sync_file file with
-  | () -> Alcotest.fail "the barrier accepted a closed descriptor"
+  | () -> Alcotest.fail "the barrier accepted a pipe"
   | exception Eio.Io _ -> ()
 
 (* ---- the file barrier asks the registration before the descriptor ----
