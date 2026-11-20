@@ -3,7 +3,16 @@
  (package eio-fs)
  (libraries eio eio.mock posix eio-fs.mem eio-fs.chaos unix fmt alcotest)
  (deps
-  (source_tree traces)))
+  (source_tree traces))
+ (action
+  (run %{test} test "^(memfs|conformance)$")))
+
+(rule
+ (alias host)
+ (deps
+  (source_tree traces))
+ (action
+  (run %{exe:test.exe} test host)))
 
 (rule
  (alias regen-traces)
