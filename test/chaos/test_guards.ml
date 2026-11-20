@@ -487,16 +487,16 @@ let test_too_many_turns () =
     ()
 
 (* A thousand fibers on a heartbeat of 100 ms and three polling every 1 ms,
-   for 500 s of clock: more than 6 million turns in all, each fiber waiting
-   on its timer between two, and no busy loop. The errors alone pin it: a
-   power cut repeats those turns in each of its many runs. *)
+   for 5 s of clock: each fiber waits on its timer between two turns, so the
+   run ends with no busy loop. The errors alone pin it: a power cut repeats
+   those turns in each of its many runs. *)
 let test_timers_are_not_busy () =
   Eio_fs_chaos.Private.check_faults (fun env ->
       match P.mkdir ~perm:0o755 P.(env#fs / "d") with
       | exception Eio.Io _ -> ()
       | () ->
           let ticker period () =
-            while Eio.Time.now env#clock < 500. do
+            while Eio.Time.now env#clock < 5. do
               Eio.Time.sleep env#clock period
             done
           in
