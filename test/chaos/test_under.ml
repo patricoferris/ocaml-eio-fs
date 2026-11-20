@@ -70,6 +70,6 @@ let suite =
       Alcotest.test_case "a pair across the disk and the network" `Quick pair;
       Alcotest.test_case "a remote filesystem over a faulty network" `Slow
         (Expect.passes (over_network ?leak:None));
-      Alcotest.test_case "a remote filesystem that leaks network errors" `Quick
+      Alcotest.test_case "a remote filesystem that leaks network errors" `Slow
         leaks;
     ] )

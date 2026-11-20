@@ -1330,9 +1330,9 @@ let suite =
         test_yield_poll_is_busy;
       Alcotest.test_case "a loop of tiny sleeps is a busy loop" `Slow
         test_tiny_sleeps_are_busy;
-      Alcotest.test_case "a run stops at 10 million turns" `Quick
+      Alcotest.test_case "a run stops at 10 million turns" `Slow
         test_too_many_turns;
-      Alcotest.test_case "many fibers on timers are not busy" `Quick
+      Alcotest.test_case "many fibers on timers are not busy" `Slow
         test_timers_are_not_busy;
       Alcotest.test_case "10000 yields meet a deadline of 100 ms" `Quick
         test_yields_meet_a_deadline;
@@ -1351,11 +1351,11 @@ let suite =
         test_wide_pool_is_not_a_spin;
       Alcotest.test_case "a batch that drops what fails is not a spin" `Quick
         test_busy_is_not_a_spin;
-      Alcotest.test_case "a pool that tries each name once is not a spin" `Quick
+      Alcotest.test_case "a pool that tries each name once is not a spin" `Slow
         test_pool_is_not_a_spin;
       Alcotest.test_case "only the errors Linux returns" `Quick
         test_errors_linux_returns;
-      Alcotest.test_case "the heap stays flat" `Quick test_heap_stays_flat;
+      Alcotest.test_case "the heap stays flat" `Slow test_heap_stays_flat;
       Alcotest.test_case "the sampled tier builds what it runs" `Slow
         test_sampled_heap;
       Alcotest.test_case "the heap stays flat in a busy loop" `Quick

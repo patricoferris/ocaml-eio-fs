@@ -84,8 +84,8 @@ let suite =
         `Quick test_seed_replay;
       Alcotest.test_case "a power cut found under seed 7 replays under any seed"
         `Quick test_crash_seed_replay;
-      Alcotest.test_case "64 saves fit the default budget" `Quick
+      Alcotest.test_case "64 saves fit the default budget" `Slow
         (Expect.passes (check (saves 64)));
-      Alcotest.test_case "16 publications fit the default budget" `Quick
+      Alcotest.test_case "16 publications fit the default budget" `Slow
         (Expect.passes (check (publishes 16)));
     ] )

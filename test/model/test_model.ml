@@ -1128,9 +1128,10 @@ let modes =
       fun seed -> `Barriers_reorder seed );
   ]
 
-(* Each mode runs 1000 seeds of 40 operations. *)
-let test (alice, mode) () =
-  for seed = 0 to 999 do
+(* Each mode runs seeds [first] to [last] of 40 operations: the quick case the
+   first 50, the slow case the rest of 1000. *)
+let test (alice, mode) ~first ~last () =
+  for seed = first to last do
     match run_workload ~alice ~mode:(mode seed) ~seed ~len:40 () with
     | () -> ()
     | exception Mismatch s -> Alcotest.failf "seed %d: %s" seed s
@@ -1138,7 +1139,13 @@ let test (alice, mode) () =
 
 let suite =
   ( "model",
-    List.map
+    List.concat_map
       (fun (name, alice, mode) ->
-        Alcotest.test_case name `Quick (test (alice, mode)))
+        [
+          Alcotest.test_case name `Quick (test (alice, mode) ~first:0 ~last:49);
+          Alcotest.test_case
+            (name ^ ", 950 more seeds")
+            `Slow
+            (test (alice, mode) ~first:50 ~last:999);
+        ])
       modes )
