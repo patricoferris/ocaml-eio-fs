@@ -113,12 +113,23 @@ let test_sync_file_of_a_descriptor () =
       Eio.Switch.run @@ fun sw ->
       Eio_fs_unix.sync_file (Eio_unix.File.import_ro ~sw ~close_unix:false fd))
 
-(* The barrier on a real file (F_FULLFSYNC on Darwin, fsync elsewhere) raises
-   the OS error of a descriptor that no longer names a file beneath it. The
-   descriptor is turned into a pipe in place, with [dup2], rather than closed:
-   a closed number is the lowest free one, so any open elsewhere in the
-   process could take it and the second barrier would sync that file. *)
+(* OBuilder's runc sandbox, with fast_sync, answers every fsync(2) itself. *)
+let host_drops_fsync () =
+  let r, w = Unix.pipe ~cloexec:true () in
+  Fun.protect
+    ~finally:(fun () ->
+      Unix.close r;
+      Unix.close w)
+    (fun () ->
+      match Unix.fsync r with
+      | () -> true
+      | exception Unix.Unix_error _ -> false)
+
+(* The barrier raises the error of a descriptor that is no longer a file. The
+   descriptor becomes a pipe with [dup2]: once closed, any open in the process
+   could take its number. *)
 let test_sync_file_surfaces_errors () =
+  if host_drops_fsync () then Alcotest.skip ();
   let path = Filename.temp_file "eio-fs-fullfsync" ".dat" in
   let fd = Unix.openfile path [ Unix.O_WRONLY; Unix.O_CLOEXEC ] 0o644 in
   Fun.protect ~finally:(fun () -> Unix.close fd) @@ fun () ->
