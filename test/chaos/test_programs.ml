@@ -69,13 +69,13 @@ let suite =
         (Expect.passes (Probe.log_varying 300));
       Alcotest.test_case "records: a crash leaves a length the file had" `Quick
         (Expect.passes Probe.fixed_records);
-      Alcotest.test_case "a/b: correct" `Quick
+      Alcotest.test_case "a/b: correct" `Slow
         (Expect.passes (fun () -> Two_faults.Ab.test ()));
       (* The pair is the fifth on the path of one of 174 first faults that
          change what the run writes: past the default budget. *)
-      Alcotest.test_case "a/b: slot A by default, by the sampled tier" `Quick
+      Alcotest.test_case "a/b: slot A by default, by the sampled tier" `Slow
         (Expect.caught (Two_faults.Ab.test ~budget:100_000 ~bug:`Default_slot));
-      Alcotest.test_case "seqlock: correct" `Quick
+      Alcotest.test_case "seqlock: correct" `Slow
         (Expect.passes (fun () -> Two_faults.Seqlock.test ()));
       Alcotest.test_case "seqlock: advance on failure, by the sampled tier"
         `Quick

@@ -389,5 +389,5 @@ let suite =
     [
       Alcotest.test_case
         (Fmt.str "%d workloads against the reference" workloads)
-        `Quick test_differential;
+        `Slow test_differential;
     ] )

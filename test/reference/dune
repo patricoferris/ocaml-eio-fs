@@ -1,4 +1,11 @@
 (test
  (name test)
  (package eio-fs)
+ (action
+  (run %{test} --quick-tests))
  (libraries eio eio.mock eio-fs.mem eio-fs.chaos alcotest fmt optint))
+
+(rule
+ (alias slow)
+ (action
+  (run %{exe:test.exe})))

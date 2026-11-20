@@ -403,7 +403,10 @@ let check_scope s =
   (!workloads, List.rev !found)
 
 let test_scope s =
-  Alcotest.test_case (Fmt.str "%s, depth %d" s.name s.depth) `Quick (fun () ->
+  Alcotest.test_case
+    (Fmt.str "%s, depth %d" s.name s.depth)
+    (if s.depth >= 3 then `Slow else `Quick)
+    (fun () ->
       match check_scope s with
       | _, [] -> ()
       | n, (f :: _ as fs) ->

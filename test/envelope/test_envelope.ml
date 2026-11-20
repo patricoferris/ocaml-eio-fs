@@ -955,5 +955,5 @@ let suite =
   ( "envelope",
     Alcotest.test_case
       (Fmt.str "%d workloads under every policy" workloads)
-      `Quick test_differential
+      `Slow test_differential
     :: List.map test_case cases )

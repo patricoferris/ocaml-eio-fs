@@ -1328,7 +1328,7 @@ let suite =
       Alcotest.test_case "a run every fiber waits in hangs" `Quick test_hang;
       Alcotest.test_case "a yield poll is a busy loop" `Quick
         test_yield_poll_is_busy;
-      Alcotest.test_case "a loop of tiny sleeps is a busy loop" `Quick
+      Alcotest.test_case "a loop of tiny sleeps is a busy loop" `Slow
         test_tiny_sleeps_are_busy;
       Alcotest.test_case "a run stops at 10 million turns" `Quick
         test_too_many_turns;
@@ -1347,7 +1347,7 @@ let suite =
         test_hot_spin_stops_early;
       Alcotest.test_case "the report of a spin is short" `Quick
         test_spin_report_is_short;
-      Alcotest.test_case "a wide pool is not a spin" `Quick
+      Alcotest.test_case "a wide pool is not a spin" `Slow
         test_wide_pool_is_not_a_spin;
       Alcotest.test_case "a batch that drops what fails is not a spin" `Quick
         test_busy_is_not_a_spin;
@@ -1356,7 +1356,7 @@ let suite =
       Alcotest.test_case "only the errors Linux returns" `Quick
         test_errors_linux_returns;
       Alcotest.test_case "the heap stays flat" `Quick test_heap_stays_flat;
-      Alcotest.test_case "the sampled tier builds what it runs" `Quick
+      Alcotest.test_case "the sampled tier builds what it runs" `Slow
         test_sampled_heap;
       Alcotest.test_case "the heap stays flat in a busy loop" `Quick
         test_busy_heap_stays_flat;
@@ -1376,7 +1376,7 @@ let suite =
         test_read_poll_stops;
       Alcotest.test_case "a stat poll under power cuts stops" `Quick
         test_crash_stat_poll_stops;
-      Alcotest.test_case "the heap stays flat under power cuts" `Quick
+      Alcotest.test_case "the heap stays flat under power cuts" `Slow
         test_crash_heap_stays_flat;
       Alcotest.test_case "a run that catches the cut hangs" `Quick
         test_kept_going;

@@ -1,6 +1,8 @@
 (test
  (name test)
  (package eio-fs)
+ (action
+  (run %{test} --quick-tests))
  (libraries
   eio
   eio.mock
@@ -11,3 +13,8 @@
   fmt
   cstruct
   optint))
+
+(rule
+ (alias slow)
+ (action
+  (run %{exe:test.exe})))

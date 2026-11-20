@@ -217,9 +217,9 @@ let test_drawn () =
 let suite =
   ( "blocks",
     [
-      Alcotest.test_case "an empty file, depth 5" `Quick
+      Alcotest.test_case "an empty file, depth 5" `Slow
         (check_scope ~init:"" ~depth:5 empty);
-      Alcotest.test_case "a file of 3 bytes, depth 5" `Quick
+      Alcotest.test_case "a file of 3 bytes, depth 5" `Slow
         (check_scope ~init:"pqr" ~depth:5 three);
       Alcotest.test_case "states the reference allows are drawn" `Quick
         test_drawn;
