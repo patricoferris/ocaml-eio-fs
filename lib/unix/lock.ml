@@ -2,6 +2,7 @@
    calls the rest of the library shares with them. *)
 
 external is_darwin : unit -> bool = "caml_eio_fs_is_darwin"
+external flock_is_separate : unit -> bool = "caml_eio_fs_flock_is_separate"
 
 (* A call that takes an [Eio.Path.t] or an [Eio.File.t] reports its failure as
    Eio's own backends do: the [Unix.Unix_error] beneath becomes [Eio.Io]. *)
@@ -651,10 +652,10 @@ end
 let take_record_lock ~taken ~patience ~on_wait ~name file path =
   match file_fd file with
   | Some fd ->
-      (* Darwin's record locks already conflict with BSD flock; taking both
-         on one descriptor would conflict with our own lock. Linux keeps the
-         two families independent, so its record-lock owner takes both. *)
-      if not (is_darwin ()) then
+      (* Only Linux keeps flock apart from record locks; elsewhere the two
+         conflict, and taking both on one descriptor would wait on our own
+         lock. *)
+      if flock_is_separate () then
         Eio_unix.Fd.use_exn "Eio_fs_unix.with_lock" fd (fun raw_fd ->
             Flock.use_os_lock ~shared:false ~patience
               ~refused:(fun () ->

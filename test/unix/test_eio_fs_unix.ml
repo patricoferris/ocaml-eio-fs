@@ -694,9 +694,12 @@ let test_seek_data_and_hole_walk_the_file () =
     "no hole past the end" true
     (Option.is_none (Eio_fs_unix.seek_hole fd ~file_offset:size))
 
-(* tmpfs and virtiofs have no FIEMAP: EOPNOTSUPP. *)
+(* tmpfs and virtiofs have no FIEMAP (EOPNOTSUPP), and the BSDs no call at
+   all (ENOSYS). *)
 let mapped f =
-  try f () with Unix.Unix_error (Unix.EOPNOTSUPP, _, _) -> Alcotest.skip ()
+  try f ()
+  with Unix.Unix_error ((Unix.EOPNOTSUPP | Unix.ENOSYS), _, _) ->
+    Alcotest.skip ()
 
 let test_extents_report_the_physical_map () =
   mapped @@ fun () ->
@@ -893,12 +896,10 @@ let test_path_usage_of_an_empty_tree_moves_nothing () =
   Alcotest.(check int) "no files" 0 usage.files;
   Alcotest.(check int64) "no bytes to carry" 0L usage.apparent_bytes
 
-(* renameat2(2) and renameatx_np(2) exist only on Linux and Darwin; elsewhere
-   [exclusive_rename] answers ENOSYS. *)
+(* renameat2(2) and renameatx_np(2) exist only on Linux, FreeBSD and Darwin;
+   elsewhere [exclusive_rename] is not available. *)
 let renames f =
-  try f ()
-  with Eio.Io (Eio.Exn.X (Eio_unix.Unix_error (Unix.ENOSYS, _, _)), _) ->
-    Alcotest.skip ()
+  try f () with Eio.Io (Eio.Exn.Not_available _, _) -> Alcotest.skip ()
 
 (* Linux renameat2(RENAME_NOREPLACE) and Darwin renameatx_np(RENAME_EXCL)
    require refusal when the destination already exists. The source survives. *)
@@ -1018,9 +1019,14 @@ let test_path_calls_raise_eio_io () =
     | () -> Alcotest.failf "%s of a missing path succeeded" name
     | exception Eio.Io (Eio.Fs.E (Eio.Fs.Not_found _), _) -> ()
   in
+  (* A host with no xattr(7) calls refuses before it looks at the path. *)
+  let xattr_not_found name f =
+    try not_found name f with Eio.Io (Eio.Exn.Not_available _, _) -> ()
+  in
   not_found "statvfs" (fun () -> ignore (Eio_fs_unix.statvfs missing));
-  not_found "xattrs" (fun () -> ignore (Eio_fs_unix.xattrs missing));
-  not_found "set_xattr" (fun () -> Eio_fs_unix.set_xattr missing "user.a" "v");
+  xattr_not_found "xattrs" (fun () -> ignore (Eio_fs_unix.xattrs missing));
+  xattr_not_found "set_xattr" (fun () ->
+      Eio_fs_unix.set_xattr missing "user.a" "v");
   Eio.Path.mkdir ~perm:0o755 (dir / "dst");
   match Eio_fs_unix.clone_tree missing (dir / "dst") with
   | false -> ()

@@ -296,9 +296,9 @@ val exclusive_rename : Eio_fs.Sync.Rename.t
 (** [exclusive_rename] is the POSIX backend for atomic no-replace publication.
     Directory wrappers are consulted before resolving the source and target
     parents through their capabilities. Linux uses
-    [renameat2(RENAME_NOREPLACE)], Darwin uses [renameatx_np(RENAME_EXCL)];
-    unsupported platforms or filesystems refuse. An existing target, including a
-    symbolic link, is never overwritten.
+    [renameat2(RENAME_NOREPLACE)], FreeBSD [renameat2(AT_RENAME_NOREPLACE)] and
+    Darwin [renameatx_np(RENAME_EXCL)]; unsupported platforms or filesystems
+    refuse. An existing target, including a symbolic link, is never overwritten.
 
     Through {!Eio_fs.Sync.Rename.exclusive}, it raises [Eio.Io] with
     {!Eio.Fs.Already_exists} for an existing target, [Eio.Io] as the platform

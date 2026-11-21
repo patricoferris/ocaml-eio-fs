@@ -65,6 +65,18 @@ CAMLprim value caml_eio_fs_is_darwin(value unit)
 #endif
 }
 
+/* Linux keeps flock(2) locks apart from fcntl(2) record locks. The BSDs and
+   Darwin keep both in one table, where they conflict. */
+CAMLprim value caml_eio_fs_flock_is_separate(value unit)
+{
+  (void)unit;
+#ifdef __linux__
+  return Val_true;
+#else
+  return Val_false;
+#endif
+}
+
 /* Acquire a BSD flock without waiting (LOCK_NB). The opened file description
    owns this lock, so a descriptor inherited by an execed supervisor keeps it
    held when the acquiring process closes its copy. */
@@ -747,7 +759,8 @@ CAMLprim value caml_eio_fs_extents(value fd_v, value offset_v, value length_v,
   CAMLreturn(list);
 }
 
-/* Linux renameat2(RENAME_NOREPLACE), Darwin renameatx_np(RENAME_EXCL).
+/* Linux renameat2(RENAME_NOREPLACE), FreeBSD renameat2(AT_RENAME_NOREPLACE),
+   Darwin renameatx_np(RENAME_EXCL).
    Both names are basenames under already-open directory descriptors. */
 CAMLprim value caml_eio_fs_rename_exclusive(value srcfd_v, value src_v,
                                           value dstfd_v, value dst_v)
@@ -765,6 +778,8 @@ CAMLprim value caml_eio_fs_rename_exclusive(value srcfd_v, value src_v,
     r = renameatx_np(srcfd, src, dstfd, dst, RENAME_EXCL);
 #elif defined(__linux__) && defined(SYS_renameat2)
     r = syscall(SYS_renameat2, srcfd, src, dstfd, dst, RENAME_NOREPLACE);
+#elif defined(__FreeBSD__) && defined(AT_RENAME_NOREPLACE)
+    r = renameat2(srcfd, src, dstfd, dst, AT_RENAME_NOREPLACE);
 #else
     (void)srcfd;
     (void)dstfd;

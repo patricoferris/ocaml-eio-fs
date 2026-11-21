@@ -587,6 +587,16 @@ let descriptors_on lock =
 let test_lock_asks_during_a_hold_keep_one_descriptor () =
   with_real_dir @@ fun dir ->
   let lock = dir / "lock" in
+  (* FreeBSD's [/dev/fd] lists only 0, 1 and 2 unless fdescfs is mounted. *)
+  Eio.Path.save ~create:(`Exclusive 0o644) lock "";
+  let seen =
+    let fd = Unix.openfile (Eio.Path.native_exn lock) [ O_RDONLY ] 0 in
+    Fun.protect
+      ~finally:(fun () -> Unix.close fd)
+      (fun () -> descriptors_on lock = 1)
+  in
+  Eio.Path.unlink lock;
+  if not seen then Alcotest.skip ();
   Eio_fs_unix.with_lock ~contents:"held for life\n" lock @@ fun () ->
   for round = 1 to 5 do
     (match Eio_fs_unix.with_lock ~block:`No lock (fun () -> ()) with
