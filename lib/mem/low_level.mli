@@ -77,6 +77,9 @@ val v :
   ?owner:User.t ->
   ?os:[< `Linux | `Macos | `Windows ] ->
   ?drives:char list ->
+  ?stdin:_ Eio.Flow.source ->
+  ?stdout:_ Eio.Flow.sink ->
+  ?stderr:_ Eio.Flow.sink ->
   unit ->
   t
 (** [v ~clock ~cwd ~owner ~os ~drives ()] is a new file system holding only an
@@ -87,6 +90,8 @@ val v :
     {!User.root}). Its times are read from [clock]; without one, they stay at
     [0.]. It answers as [os], [`Linux] by default. On Windows its root holds a
     directory for each of [drives] (defaults to [['C']]), named ["C:"].
+
+    Pass in a [stdin], [stdout] and [stderr] to connect them to the standard IO.
 
     @raise Invalid_argument if [drives] is given for another [os]. *)
 
@@ -199,6 +204,19 @@ val rename : ?replace:bool -> Dir.fd -> string -> Dir.fd -> string -> unit
 val symlinkat : link_to:string -> Dir.fd -> string -> unit
 (** [symlinkat ~link_to dir path] creates the symbolic link [path] pointing to
     [link_to]. *)
+
+val pipe : sw:Eio.Switch.t -> User.t -> t -> Fd.t * Fd.t
+(** [pipe ~sw user t] is a new connected pipe, returning the reading and the
+    writing end. Both ends of the pipe are closed when the switch finishes. *)
+
+val stdin : User.t -> t -> Fd.t
+(** [stdin user t] is the standard input. *)
+
+val stdout : User.t -> t -> Fd.t
+(** [stdout user t] is the standard output. *)
+
+val stderr : User.t -> t -> Fd.t
+(** [stderr user t] is the standard error. *)
 
 module Flow : sig
   val of_fd : Fd.t -> Eio.File.rw_ty Eio.Resource.t

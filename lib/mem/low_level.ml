@@ -188,23 +188,51 @@ module Symlink = struct
   let v ~link_to stat = { stat; link_to; to_dir = false }
 end
 
+module Pipe = struct
+  type t = { chunks : Cstruct.t option Eio.Stream.t; stat : Eio.File.Stat.t }
+
+  let make stat = { chunks = Eio.Stream.create max_int; stat }
+
+  let write t buf =
+    Eio.Stream.add t.chunks (Some buf);
+    Cstruct.length buf
+
+  let read t = Eio.Stream.take t.chunks
+  let close t = Eio.Stream.add t.chunks None
+end
+
 module File = File_node
 module Fd_table = Map.Make (Num)
 
 (* What the tree holds. *)
 module Resource = struct
-  type t = File of File.t | Dir of Dir_node.t | Symlink of Symlink.t
+  type 'a with_stat = Eio.File.Stat.t * 'a
+
+  type t =
+    | Stdin of Eio.Flow.source_ty Eio.Flow.source with_stat
+    | Stdout of Eio.Flow.sink_ty Eio.Flow.sink with_stat
+    | Stderr of Eio.Flow.sink_ty Eio.Flow.sink with_stat
+    | File of File.t
+    | Dir of Dir_node.t
+    | Symlink of Symlink.t
+    | Pipe of Pipe.t
 
   let stat = function
     | File f -> { f.stat with blocks = File.blocks f }
     | Dir dir -> dir.stat
     | Symlink s -> s.stat
+    | Stdin (s, _) | Stdout (s, _) | Stderr (s, _) -> s
+    | Pipe p -> p.stat
 
   let set_stat r stat =
     match r with
     | File f -> File { f with stat }
     | Dir d -> Dir { d with stat }
     | Symlink s -> Symlink { s with stat }
+    | Stdin (_, v) -> Stdin (stat, v)
+    | Stdout (_, v) -> Stdout (stat, v)
+    | Stderr (_, v) -> Stderr (stat, v)
+    | Pipe p -> Pipe { p with stat }
 
   let update r f = r := set_stat !r (f (stat !r))
 end
@@ -244,7 +272,7 @@ let truncate_file ~now r =
   | Resource.File f ->
       let stat = changed ~now { f.stat with size = Optint.Int63.zero } in
       r := File (File.v ~stat)
-  | Dir _ | Symlink _ -> ()
+  | Dir _ | Symlink _ | Stdin _ | Stderr _ | Stdout _ | Pipe _ -> ()
 
 (* Descriptors 0 to 2 stay reserved for the standard streams, so a number this
    backend hands out is never one a caller reads as stdin, stdout or stderr. *)
@@ -562,7 +590,8 @@ module Filesystem = struct
             follow_link w.follows;
             let target = link_target name s in
             walk (enter w target) (names target)
-        | File _ -> Error.not_a_directory name)
+        | File _ | Stdout _ | Stderr _ | Stdin _ | Pipe _ ->
+            Error.not_a_directory name)
 
   (* [locate w path] is the walk into the directory holding [path]'s last
      component, that component (["."] when [path] has none) and whether
@@ -741,7 +770,8 @@ module Filesystem = struct
               | Symlink s ->
                   follow_link follows;
                   relink (List.rev (c :: seen)) s rest
-              | File _ -> Error.directory_name path))
+              | File _ | Stdout _ | Stderr _ | Stdin _ | Pipe _ ->
+                  Error.directory_name path))
     in
     let target (s : Symlink.t) = Nt.link_target ~cwd:fs.cwd s.link_to in
     let rec from_drive nt =
@@ -869,7 +899,31 @@ let add_drive fs letter =
          (Fmt.str "%c:" (Char.uppercase_ascii letter))
          stat.ino d)
 
-let v ?clock ?cwd ?(owner = User.root) ?os ?drives () =
+let null = Eio.Flow.null
+
+let std_table ?stdin ?stdout ?stderr fs user =
+  let open Resource in
+  let stat = new_stat fs ~user ~kind:`Character_special ~perm:0o400 () in
+  let stdin =
+    match stdin with
+    | Some f -> (f :> Eio.Flow.source_ty Eio.Flow.source)
+    | None -> null
+  in
+  let stdout =
+    match stdout with
+    | Some f -> (f :> Eio.Flow.sink_ty Eio.Flow.sink)
+    | None -> null
+  in
+  let stderr =
+    match stderr with
+    | Some f -> (f :> Eio.Flow.sink_ty Eio.Flow.sink)
+    | None -> null
+  in
+  Fd_table.add (Num.of_int 0) (ref (Stdin (stat, stdin))) Fd_table.empty
+  |> Fd_table.add (Num.of_int 1) (ref (Stdout (stat, stdout)))
+  |> Fd_table.add (Num.of_int 2) (ref (Stderr (stat, stderr)))
+
+let v ?clock ?cwd ?(owner = User.root) ?os ?drives ?stdin ?stdout ?stderr () =
   let now =
     match clock with Some c -> fun () -> Eio.Time.now c | None -> Fun.const 0.
   in
@@ -903,6 +957,8 @@ let v ?clock ?cwd ?(owner = User.root) ?os ?drives () =
       now;
     }
   in
+  let stdio = std_table ?stdin ?stderr ?stdout fs owner in
+  let fs = { fs with fds = stdio } in
   List.iter (add_drive fs) drives;
   fs
 
@@ -914,6 +970,12 @@ let root_path fs =
 let win_path (fd : Fd.t) =
   locked fd.fs @@ fun () -> Filesystem.win_path fd.fs.tree (resource_of fd)
 
+let close_resource = function
+  | Resource.Pipe p ->
+      Pipe.close p;
+      Resource.Pipe p
+  | v -> v
+
 (* Closing an already-closed handle does nothing, as [Eio.Resource.close]
    specifies and eio's posix backend does. A handle with two owners, a caller
    closing early in front of its switch, is the ordinary reason. *)
@@ -921,6 +983,8 @@ let close (fd : Fd.t) =
   locked fd.fs @@ fun () ->
   if not fd.closed then begin
     fd.closed <- true;
+    let r = Fd_table.find fd.num fd.fs.fds in
+    r := close_resource !r;
     fd.fs.fds <- Fd_table.remove fd.num fd.fs.fds;
     fd.fs.shared <- Fd_table.remove fd.num fd.fs.shared
   end
@@ -941,6 +1005,7 @@ let rec inodes tree r acc =
           | None -> acc)
         d.entries (s.ino :: acc)
   | File _ | Symlink _ -> s.ino :: acc
+  | Stdout _ | Stderr _ | Stdin _ | Pipe _ -> acc
 
 (* Whether a program's descriptor holds [r] or anything below it open:
    eio_windows opens every handle without FILE_SHARE_DELETE, so Windows then
@@ -1149,6 +1214,20 @@ let openat ~mode ~sw dir_fd path flags =
   Eio.Switch.on_release sw (fun () -> close fd);
   fd
 
+let pipe ~sw user fs =
+  let stat = default_stat in
+  let pipe = Pipe.make stat in
+  let resource = ref (Resource.Pipe pipe) in
+  let r = next_fd_of_fds fs.fds in
+  fs.fds <- Fd_table.add r resource fs.fds;
+  let w = next_fd_of_fds fs.fds in
+  fs.fds <- Fd_table.add w resource fs.fds;
+  let r = Fd.v ~append:false ~writable:false ~positional:false ~user fs r in
+  let w = Fd.v ~append:false ~writable:true ~positional:false ~user fs w in
+  Eio.Switch.on_release sw (fun () -> close r);
+  Eio.Switch.on_release sw (fun () -> close w);
+  (r, w)
+
 let statat ~follow dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () ->
   Resource.stat !(Filesystem.lookup ~follow dir_fd path)
@@ -1157,7 +1236,7 @@ let held dir_fd path =
   locked (Dir.fs dir_fd) @@ fun () ->
   match !(Filesystem.lookup ~follow:true dir_fd path) with
   | Resource.File f -> Some f.held
-  | Dir _ | Symlink _ -> None
+  | Dir _ | Symlink _ | Stdout _ | Stderr _ | Stdin _ | Pipe _ -> None
 
 (* What a disk kept of an inode's times, as a power cut leaves them. *)
 let set_times dir_fd path ~atime ~mtime ~ctime =
@@ -1531,7 +1610,7 @@ let reparent res ~new_parent =
   match !res with
   | Resource.Dir d ->
       res := Resource.Dir { d with parent = (Resource.stat !new_parent).ino }
-  | File _ | Symlink _ -> ()
+  | File _ | Symlink _ | Stdout _ | Stderr _ | Stdin _ | Pipe _ -> ()
 
 (* rename(2) answers EBUSY for a last [.] or [..], or EEXIST for the target's
    when it must not replace it; macOS answers EINVAL. *)
@@ -1813,6 +1892,10 @@ let writev t bufs =
              (Cstruct.length src));
       t.pos <- Optint.Int63.add t.pos (Optint.Int63.of_int (Cstruct.length src));
       Cstruct.length src
+  | Stdout (_, v) -> Eio.Flow.single_write v bufs
+  | Stderr (_, v) -> Eio.Flow.single_write v bufs
+  | Pipe pipe ->
+      List.fold_left (fun acc buf -> Pipe.write pipe buf + acc) 0 bufs
   | r -> not_a_file "writev" r
 
 (* The bytes of [e] from [off] on into [bufs]: how many. At or past the end
@@ -1827,6 +1910,20 @@ let read_at (e : File.t) off bufs =
       read + n)
     0 bufs
 
+let blit_into_bufs buf bufs =
+  let i = ref 0 in
+  let len = Cstruct.length buf in
+  List.iter
+    (fun obuf ->
+      if !i >= len then ()
+      else
+        let olen = Cstruct.length obuf in
+        let actual_len = min (len - !i) olen in
+        Cstruct.blit buf !i obuf 0 actual_len;
+        i := !i + actual_len)
+    bufs;
+  !i
+
 let readv t bufs =
   locked t.Fd.fs @@ fun () ->
   let r = resource_of t in
@@ -1836,6 +1933,11 @@ let readv t bufs =
       let read = read_at e (Optint.Int63.to_int t.pos) bufs in
       t.pos <- Optint.Int63.add t.pos (Optint.Int63.of_int read);
       read
+  | Stdin (_, r) -> Eio.Flow.single_read r (List.hd bufs)
+  | Pipe p -> (
+      match Pipe.read p with
+      | None -> raise End_of_file
+      | Some buf -> blit_into_bufs buf bufs)
   | r -> not_a_file "readv" r
 
 (* Positioned reads and writes never move the cursor. *)
@@ -1948,3 +2050,12 @@ module Flow = struct
   let handler = Eio.File.Pi.rw (module Impl)
   let of_fd fd = Eio.Resource.T (fd, handler)
 end
+
+let stdin user t =
+  Fd.v ~append:false ~writable:false ~positional:false ~user t (Num.of_int 0)
+
+let stdout user t =
+  Fd.v ~append:false ~writable:true ~positional:false ~user t (Num.of_int 1)
+
+let stderr user t =
+  Fd.v ~append:false ~writable:true ~positional:false ~user t (Num.of_int 2)
