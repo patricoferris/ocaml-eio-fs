@@ -179,6 +179,9 @@ module Crunch = Crunch
 (** Directory trees embedded in an executable, loaded as {!load} loads a copy.
 *)
 
+module Resource = Eio_fs_mem_core.Low_level.Resource
+(** File descriptor-backed resources. *)
+
 type stdenv =
   < fs : Eio.Fs.dir_ty Eio.Path.t
   ; cwd : Eio.Fs.dir_ty Eio.Path.t
@@ -189,8 +192,8 @@ type stdenv =
 (** The type for the standard environment {!run} passes on: an in-memory
     filesystem, current directory and stdio.
 
-    The process manager only supports creating and using pipes. All other
-    kinds of functionality will fail. *)
+    The process manager only supports creating and using pipes. All other kinds
+    of functionality will fail. *)
 
 val run :
   ?os:[< `Linux | `Macos | `Windows ] ->

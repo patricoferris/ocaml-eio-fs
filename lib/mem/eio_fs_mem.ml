@@ -34,6 +34,7 @@ let load ?os ?clock ?filter path =
   Image.load ?os ?clock (Image.scan ?filter ~at:(snd path) path)
 
 module Crunch = Crunch
+module Resource = Low_level.Resource
 
 type stdenv =
   < fs : Eio.Fs.dir_ty Eio.Path.t

@@ -322,6 +322,15 @@ let test_pipe () =
   Eio.Flow.copy r (Eio.Flow.buffer_sink buf);
   Alcotest.(check string) "same output" "hello, world!" (Buffer.contents buf)
 
+let test_fd_resource () =
+  Eio_mock.Backend.run @@ fun () ->
+  Eio_fs_mem.run @@ fun env ->
+  Eio.Path.with_open_out ~create:(`Or_truncate 0o644) (env#fs / "hello.txt")
+  @@ fun sink ->
+  match Eio_fs_mem.Resource.fd_opt sink with
+  | Some _ -> ()
+  | None -> Alcotest.fail "Expected an FD on open file"
+
 let suite =
   ( "memfs",
     [
@@ -342,4 +351,6 @@ let suite =
         test_windows_run;
       Alcotest.test_case "standard IO behaves normally" `Quick test_stdio;
       Alcotest.test_case "pipes work" `Quick test_pipe;
+      Alcotest.test_case "accessing underlying FDs works" `Quick
+        test_fd_resource;
     ] )

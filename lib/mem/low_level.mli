@@ -105,6 +105,23 @@ module Fd : sig
   *)
 end
 
+(** File descriptor-backed resources. *)
+module Resource : sig
+  type 'a t = ([> `Mem_fd ] as 'a) Eio.Resource.t
+  (** Resources that have FDs are tagged with [`Mem_fd]. *)
+
+  type ('t, _, _) Eio.Resource.pi +=
+    | T : ('t, 't -> Fd.t, [> `Mem_fd ]) Eio.Resource.pi
+
+  val fd : _ t -> Fd.t
+  (** [fd t] returns the FD being wrapped by a resource. *)
+
+  val fd_opt : _ Eio.Resource.t -> Fd.t option
+  (** [fd_opt t] returns the FD being wrapped by a generic resource, if any.
+
+      This just probes [t] using {!extension-T}. *)
+end
+
 (** Directory descriptors. *)
 module Dir : sig
   (** The type for the directory a relative path resolves against: a file
